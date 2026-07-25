@@ -17,6 +17,9 @@
   },
   "private": true,
   "packageManager": "pnpm@10.22.0",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "dev": "pnpm --filter logcut dev",
     "build": "pnpm --filter logcut build",

@@ -26,6 +26,9 @@
   "bugs": {
     "url": "https://github.com/logcut/logcut/issues"
   },
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
