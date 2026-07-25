@@ -15,7 +15,7 @@ release/
 /.agentdocs/
 /AGENTS.md
 /DESIGN.md
-/plan
+/spec
 
 .playwright-mcp
 /.claude/skills/skill-publish
