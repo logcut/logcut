@@ -11,11 +11,11 @@ jobs:
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install build tools
         run: brew install -q autoconf automake libtool pkg-config meson ninja
       - name: Cache dependency sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/desktop/.ffmpeg-build/darwin-arm64/src/*.tar.*
           key: ffmpeg-src-${{ hashFiles('apps/desktop/scripts/ffmpeg-sources.env') }}
@@ -23,7 +23,7 @@ jobs:
         run: ./apps/desktop/scripts/build-ffmpeg-macos.sh
       - name: Pack
         run: tar -C apps/desktop/vendor/ffmpeg -czf ffmpeg-darwin-arm64.tar.gz darwin-arm64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ffmpeg-darwin-arm64
           path: ffmpeg-darwin-arm64.tar.gz
@@ -34,7 +34,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -47,7 +47,7 @@ jobs:
             mingw-w64-ucrt-x86_64-ninja
             mingw-w64-ucrt-x86_64-nasm
       - name: Cache dependency sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: apps/desktop/.ffmpeg-build/win32-x64/src/*.tar.*
           key: ffmpeg-src-win-${{ hashFiles('apps/desktop/scripts/ffmpeg-sources.env') }}
@@ -55,7 +55,7 @@ jobs:
         run: ./apps/desktop/scripts/build-ffmpeg-msys2.sh
       - name: Pack
         run: tar -C apps/desktop/vendor/ffmpeg -czf ffmpeg-win32-x64.tar.gz win32-x64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ffmpeg-win32-x64
           path: ffmpeg-win32-x64.tar.gz
@@ -66,8 +66,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
         with:
           merge-multiple: true
       - name: Extract SOURCES.md

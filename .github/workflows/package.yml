@@ -11,9 +11,9 @@ jobs:
   mac:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -25,13 +25,13 @@ jobs:
           mkdir -p apps/desktop/vendor/ffmpeg
           tar -xzf ffmpeg-darwin-arm64.tar.gz -C apps/desktop/vendor/ffmpeg
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:core && pnpm typecheck && pnpm test
+      - run: pnpm verify
       - run: pnpm build
       - name: Package (unsigned dmg)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: pnpm --filter logcut package:mac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: logcut-mac-arm64
           path: apps/desktop/release/*.dmg
@@ -39,9 +39,9 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -54,11 +54,11 @@ jobs:
           mkdir -p apps/desktop/vendor/ffmpeg
           tar -xzf ffmpeg-win32-x64.tar.gz -C apps/desktop/vendor/ffmpeg
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check:core && pnpm typecheck && pnpm test
+      - run: pnpm verify
       - run: pnpm build
       - name: Package (unsigned nsis)
         run: pnpm --filter logcut package:win
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: logcut-win-x64
           path: apps/desktop/release/*.exe
