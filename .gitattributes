@@ -1,0 +1,11 @@
+# Check out LF on every platform. Windows would otherwise check out CRLF —
+# core.autocrlf defaults to true on the GitHub Windows runner — and prettier,
+# whose endOfLine default is lf, then reports every file in the repository as
+# unformatted. That fails `pnpm verify` in the package workflow while the same
+# commit passes on macOS, which makes the cause easy to misread as a real
+# formatting regression.
+* text=auto eol=lf
+
+# The one tracked binary. Git detects this on its own; stated so that a future
+# addition next to it is an obvious place to add another line.
+*.png binary
