@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Tests run on `node --experimental-strip-types`, so they may use node:test
+    // and node:assert. The platform-purity rule applies to src, not to tests.
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["src"]
+}

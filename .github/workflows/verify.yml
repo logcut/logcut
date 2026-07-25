@@ -1,4 +1,4 @@
-name: license-check
+name: verify
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  check:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,5 +16,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The allow list and the reasoning behind it live in the script.
-      - run: node scripts/check-licenses.mjs
+      # The core must stay platform neutral: no runtime deps, no Node builtins,
+      # no DOM, no I/O. This is what lets the web app reuse it unchanged.
+      - run: pnpm check:core
+      - run: pnpm typecheck
+      - run: pnpm test

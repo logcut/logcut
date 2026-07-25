@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "dist",
+    // Relative imports are written with the .ts extension so Node can run the
+    // sources directly; emitting rewrites them to .js.
+    "rewriteRelativeImportExtensions": true
+  },
+  "exclude": ["src/**/*.test.ts"]
+}

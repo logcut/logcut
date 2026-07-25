@@ -37,26 +37,37 @@ Transcription in this milestone uses a cloud ASR provider (Volcano Engine).
 Cloud-dependent features will always be opt-in; local transcription is on the
 roadmap.
 
+## Layout
+
+This is a pnpm workspace:
+
+- `packages/core` — [`@logcut/core`](packages/core), the editing core: transcript model,
+  segmentation, SRT. It is platform neutral by design (no runtime dependencies, no Node
+  builtins, no DOM, no I/O) so the desktop app, the web app, and programmatic callers can all
+  share one implementation. CI enforces this.
+- `apps/desktop` — the Electron app.
+
 ## Development
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
-`npm run dev` starts electron-vite with hot reload for the renderer and automatic restarts for
-the main process.
+`pnpm dev` starts electron-vite with hot reload for the renderer and automatic restarts for
+the main process. `pnpm verify` runs the core boundary check, typecheck, and tests.
 
-During development, if no self-built ffmpeg exists under `vendor/ffmpeg/`, the app falls back
-to the `ffmpeg` found on `PATH` (for example a Homebrew build). That fallback is for local
-development only — system builds are usually GPL-enabled and must never be shipped.
+During development, if no self-built ffmpeg exists under `apps/desktop/vendor/ffmpeg/`, the
+app falls back to the `ffmpeg` found on `PATH` (for example a Homebrew build). That fallback
+is for local development only — system builds are usually GPL-enabled and must never be
+shipped.
 
 ## ffmpeg sidecar
 
 LogCut ships a self-built LGPL-only ffmpeg as a separate sidecar binary:
 
 ```bash
-./scripts/build-ffmpeg-macos.sh   # builds into vendor/ffmpeg/darwin-arm64/
+./apps/desktop/scripts/build-ffmpeg-macos.sh   # builds into apps/desktop/vendor/ffmpeg/darwin-arm64/
 ```
 
 The Windows binary is built by the `ffmpeg` GitHub Actions workflow (MSYS2, MediaFoundation
@@ -66,8 +77,8 @@ which fulfils the LGPL source-offer obligation.
 ## Packaging
 
 ```bash
-npm run build
-npx electron-builder --mac dmg --arm64   # unsigned local build
+pnpm build
+pnpm --filter logcut package:mac   # unsigned local build
 ```
 
 CI packaging for macOS and Windows lives in `.github/workflows/package.yml`.

@@ -1,9 +1,14 @@
 node_modules/
+dist/
 out/
 release/
-vendor/ffmpeg/
+# Leading ** matters: a pattern with a slash in the middle is anchored to this
+# file's directory, so a bare `vendor/ffmpeg/` would stop matching the moment
+# the app moved under apps/.
+**/vendor/ffmpeg/
 *.local
 .DS_Store
+*.tsbuildinfo
 
 .ffmpeg-build/
 

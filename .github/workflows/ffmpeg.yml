@@ -17,12 +17,12 @@ jobs:
       - name: Cache dependency sources
         uses: actions/cache@v4
         with:
-          path: .ffmpeg-build/darwin-arm64/src/*.tar.*
-          key: ffmpeg-src-${{ hashFiles('scripts/ffmpeg-sources.env') }}
+          path: apps/desktop/.ffmpeg-build/darwin-arm64/src/*.tar.*
+          key: ffmpeg-src-${{ hashFiles('apps/desktop/scripts/ffmpeg-sources.env') }}
       - name: Build
-        run: ./scripts/build-ffmpeg-macos.sh
+        run: ./apps/desktop/scripts/build-ffmpeg-macos.sh
       - name: Pack
-        run: tar -C vendor/ffmpeg -czf ffmpeg-darwin-arm64.tar.gz darwin-arm64
+        run: tar -C apps/desktop/vendor/ffmpeg -czf ffmpeg-darwin-arm64.tar.gz darwin-arm64
       - uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-darwin-arm64
@@ -49,12 +49,12 @@ jobs:
       - name: Cache dependency sources
         uses: actions/cache@v4
         with:
-          path: .ffmpeg-build/win32-x64/src/*.tar.*
-          key: ffmpeg-src-win-${{ hashFiles('scripts/ffmpeg-sources.env') }}
+          path: apps/desktop/.ffmpeg-build/win32-x64/src/*.tar.*
+          key: ffmpeg-src-win-${{ hashFiles('apps/desktop/scripts/ffmpeg-sources.env') }}
       - name: Build
-        run: ./scripts/build-ffmpeg-msys2.sh
+        run: ./apps/desktop/scripts/build-ffmpeg-msys2.sh
       - name: Pack
-        run: tar -C vendor/ffmpeg -czf ffmpeg-win32-x64.tar.gz win32-x64
+        run: tar -C apps/desktop/vendor/ffmpeg -czf ffmpeg-win32-x64.tar.gz win32-x64
       - uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-win32-x64

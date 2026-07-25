@@ -12,51 +12,53 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
       - name: Download ffmpeg sidecar
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "${{ inputs.ffmpeg_tag }}" -p 'ffmpeg-darwin-arm64.tar.gz'
-          mkdir -p vendor/ffmpeg
-          tar -xzf ffmpeg-darwin-arm64.tar.gz -C vendor/ffmpeg
-      - run: npm ci
-      - run: npm run typecheck && npm test
-      - run: npm run build
+          mkdir -p apps/desktop/vendor/ffmpeg
+          tar -xzf ffmpeg-darwin-arm64.tar.gz -C apps/desktop/vendor/ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:core && pnpm typecheck && pnpm test
+      - run: pnpm build
       - name: Package (unsigned dmg)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg --arm64 --publish never
+        run: pnpm --filter logcut package:mac
       - uses: actions/upload-artifact@v4
         with:
           name: logcut-mac-arm64
-          path: release/*.dmg
+          path: apps/desktop/release/*.dmg
 
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
       - name: Download ffmpeg sidecar
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           gh release download "${{ inputs.ffmpeg_tag }}" -p 'ffmpeg-win32-x64.tar.gz'
-          mkdir -p vendor/ffmpeg
-          tar -xzf ffmpeg-win32-x64.tar.gz -C vendor/ffmpeg
-      - run: npm ci
-      - run: npm run typecheck && npm test
-      - run: npm run build
+          mkdir -p apps/desktop/vendor/ffmpeg
+          tar -xzf ffmpeg-win32-x64.tar.gz -C apps/desktop/vendor/ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:core && pnpm typecheck && pnpm test
+      - run: pnpm build
       - name: Package (unsigned nsis)
-        run: npx electron-builder --win nsis --x64 --publish never
+        run: pnpm --filter logcut package:win
       - uses: actions/upload-artifact@v4
         with:
           name: logcut-win-x64
-          path: release/*.exe
+          path: apps/desktop/release/*.exe

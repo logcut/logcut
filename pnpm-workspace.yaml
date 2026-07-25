@@ -1,0 +1,9 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# pnpm blocks postinstall scripts by default. These two need theirs: esbuild
+# fetches its platform binary, electron-winstaller its Windows toolchain.
+onlyBuiltDependencies:
+  - esbuild
+  - electron-winstaller
