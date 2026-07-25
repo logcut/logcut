@@ -3,6 +3,19 @@
   "version": "0.1.2",
   "description": "LogCut desktop app — the open source AI video editor",
   "license": "Apache-2.0",
+  "author": {
+    "name": "Sigmify LLC",
+    "url": "https://logcut.com"
+  },
+  "homepage": "https://logcut.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/logcut/logcut.git",
+    "directory": "apps/desktop"
+  },
+  "bugs": {
+    "url": "https://github.com/logcut/logcut/issues"
+  },
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
