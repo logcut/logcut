@@ -1,7 +1,7 @@
 {
   "name": "logcut",
   "version": "0.1.2",
-  "description": "LogCut desktop app — the open source AI video editor",
+  "description": "LogCut desktop app — edit video by editing text",
   "license": "Apache-2.0",
   "author": {
     "name": "Sigmify LLC",
