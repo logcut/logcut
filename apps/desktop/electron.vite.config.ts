@@ -8,7 +8,12 @@ export default defineConfig({
   preload: {},
   renderer: {
     resolve: {
-      alias: { '@': resolve(__dirname, 'src/renderer/src') }
+      alias: {
+        '@': resolve(__dirname, 'src/renderer/src'),
+        // Repository-root brand assets. The mark has one source of truth, so
+        // the app imports it instead of restating its geometry and colors.
+        '@assets': resolve(__dirname, '../../assets')
+      }
     },
     plugins: [react(), tailwindcss()]
   }

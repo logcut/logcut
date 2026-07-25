@@ -4,9 +4,11 @@
   <head>
     <meta charset="UTF-8" />
     <title>LogCut</title>
+    <!-- img-src needs data: because Vite inlines assets under 4 KB, which is
+         how the imported brand mark reaches the renderer. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' logcut-media:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' logcut-media:"
     />
   </head>
   <body>

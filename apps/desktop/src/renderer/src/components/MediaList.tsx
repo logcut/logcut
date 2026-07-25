@@ -58,7 +58,7 @@ export default function MediaList({
               <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted/30">
                 <Video size={14} className="text-muted-foreground" />
               </div>
-              <h3 className="m-0 min-w-0 flex-1 truncate text-sm font-medium text-black/90 dark:text-white/90">
+              <h3 className="m-0 min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                 {project.fileName}
               </h3>
             </div>
