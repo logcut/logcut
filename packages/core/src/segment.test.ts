@@ -18,10 +18,7 @@ function utterance(text: string, tokens: string[]): Utterance {
 }
 
 test('cuts on sentence and clause punctuation', () => {
-  const u = utterance(
-    '你好，世界。再见了',
-    ['你', '好', '世', '界', '再', '见', '了']
-  )
+  const u = utterance('你好，世界。再见了', ['你', '好', '世', '界', '再', '见', '了'])
   const out = segmentUtterance(u, { minChars: 2 })
   assert.deepEqual(
     out.map((s) => s.text),
@@ -30,10 +27,20 @@ test('cuts on sentence and clause punctuation', () => {
 })
 
 test('joined line texts reconstruct the original minus trimming', () => {
-  const u = utterance(
-    '今天天气很好，我们出去玩吧。',
-    ['今', '天', '天', '气', '很', '好', '我', '们', '出', '去', '玩', '吧']
-  )
+  const u = utterance('今天天气很好，我们出去玩吧。', [
+    '今',
+    '天',
+    '天',
+    '气',
+    '很',
+    '好',
+    '我',
+    '们',
+    '出',
+    '去',
+    '玩',
+    '吧'
+  ])
   const joined = segmentUtterance(u, { maxChars: 6, minChars: 3 })
     .map((s) => s.text)
     .join('')
@@ -49,7 +56,14 @@ test('never splits a latin word across lines', () => {
     assert.ok(!/Mode$/.test(line.text), `split a word: ${line.text}`)
     assert.ok(!/Mod$/.test(line.text), `split a word: ${line.text}`)
   }
-  assert.equal(out.map((s) => s.text).join(' ').replace(/\s+/g, ' ').trim(), 'Model S Model 3')
+  assert.equal(
+    out
+      .map((s) => s.text)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    'Model S Model 3'
+  )
 })
 
 test('empty words returns the utterance unchanged', () => {
@@ -70,9 +84,7 @@ test('segmentTranscript flattens all utterances and preserves speaker', () => {
   const t = {
     sourcePath: '/x.mp4',
     audioDurationMs: 5000,
-    utterances: [
-      { ...utterance('你好，世界。', ['你', '好', '世', '界']), speakerId: '1' }
-    ]
+    utterances: [{ ...utterance('你好，世界。', ['你', '好', '世', '界']), speakerId: '1' }]
   }
   const out = segmentTranscript(t, { minChars: 2 })
   assert.equal(out.utterances.length, 2)

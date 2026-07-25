@@ -45,7 +45,9 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
       role="button"
       tabIndex={0}
       className={`flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed transition-colors ${
-        dragging ? 'border-primary bg-primary/10' : 'border-border hover:border-input hover:bg-muted/50'
+        dragging
+          ? 'border-primary bg-primary/10'
+          : 'border-border hover:border-input hover:bg-muted/50'
       }`}
       onDragOver={(event) => {
         event.preventDefault()

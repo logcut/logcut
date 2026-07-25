@@ -54,7 +54,11 @@ export interface LogcutApi {
   /** Open a native file picker for a video; resolves to the path or null if cancelled. */
   pickVideo(): Promise<string | null>
   /** Transcribe a video; reuses the saved project unless force is true or the language config changed. */
-  transcribeVideo(videoPath: string, force?: boolean, config?: TranscribeConfig): Promise<Transcript>
+  transcribeVideo(
+    videoPath: string,
+    force?: boolean,
+    config?: TranscribeConfig
+  ): Promise<Transcript>
   /** System UI locale (Electron app.getLocale), e.g. 'zh-CN', 'zh-TW', 'en-US'. */
   getSystemLocale(): Promise<string>
   /** The user's last chosen transcription language, or null if never set. */

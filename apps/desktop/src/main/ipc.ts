@@ -37,23 +37,20 @@ export function registerIpc(): void {
     return result.canceled || !result.filePaths[0] ? null : result.filePaths[0]
   })
 
-  ipcMain.handle(
-    'export:srt',
-    async (event, transcript: Transcript): Promise<ExportSrtResult> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const defaultName = `${path.parse(transcript.sourcePath).name}.srt`
-      const options = {
-        defaultPath: defaultName,
-        filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }]
-      }
-      const result = window
-        ? await dialog.showSaveDialog(window, options)
-        : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return {}
-      fs.writeFileSync(result.filePath, toSrt(transcript.utterances), 'utf8')
-      return { savedPath: result.filePath }
+  ipcMain.handle('export:srt', async (event, transcript: Transcript): Promise<ExportSrtResult> => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const defaultName = `${path.parse(transcript.sourcePath).name}.srt`
+    const options = {
+      defaultPath: defaultName,
+      filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }]
     }
-  )
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return {}
+    fs.writeFileSync(result.filePath, toSrt(transcript.utterances), 'utf8')
+    return { savedPath: result.filePath }
+  })
 
   ipcMain.handle(
     'transcribe:run',

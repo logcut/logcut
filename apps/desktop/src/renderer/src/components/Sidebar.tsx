@@ -20,11 +20,7 @@ export default function Sidebar({ view, onSelect }: SidebarProps): JSX.Element {
     <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-2 [-webkit-app-region:drag]">
       {/* Clears the macOS traffic lights, which overlap the top-left corner. */}
       <div className="mt-6 flex h-12 items-center gap-2 px-2">
-        <svg
-          viewBox="0 0 64 64"
-          aria-hidden="true"
-          className="h-8 w-8 shrink-0 rounded-md"
-        >
+        <svg viewBox="0 0 64 64" aria-hidden="true" className="h-8 w-8 shrink-0 rounded-md">
           <defs>
             <linearGradient id="logo-grade" x1="0" y1="1" x2="1" y2="0">
               <stop offset="0" stopColor="#2FB5A8" />

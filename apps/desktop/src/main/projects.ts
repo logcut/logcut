@@ -128,7 +128,11 @@ export function listProjects(): ProjectSummary[] {
 }
 
 /** True when the stored size/mtime no longer match the file on disk. */
-export function isStale(project: { videoPath: string; fileSize: number; fileMtimeMs: number }): boolean {
+export function isStale(project: {
+  videoPath: string
+  fileSize: number
+  fileMtimeMs: number
+}): boolean {
   const stat = statVideo(project.videoPath)
   if (!stat) return true
   return stat.fileSize !== project.fileSize || stat.fileMtimeMs !== project.fileMtimeMs

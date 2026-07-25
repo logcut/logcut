@@ -1,10 +1,4 @@
-export type {
-  LanguageOption,
-  Transcript,
-  TranscribeConfig,
-  Utterance,
-  Word
-} from './types.ts'
+export type { LanguageOption, Transcript, TranscribeConfig, Utterance, Word } from './types.ts'
 
 export {
   configCacheKey,

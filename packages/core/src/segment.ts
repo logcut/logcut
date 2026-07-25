@@ -76,7 +76,10 @@ function buildUtterance(group: Piece[], speakerId?: string): Utterance {
     id: randomId(),
     start: timed.length ? timed[0].word.start : group[0].effStart,
     end: timed.length ? timed[timed.length - 1].word.end : group[group.length - 1].effEnd,
-    text: group.map((p) => p.text).join('').trim(),
+    text: group
+      .map((p) => p.text)
+      .join('')
+      .trim(),
     speakerId,
     // Words are the timestamp anchors and stay verbatim (spacers keep start=-1).
     words: group.map((p) => p.word)
@@ -93,13 +96,24 @@ export function segmentUtterance(u: Utterance, options: SegmentOptions = {}): Ut
   let cur: Piece[] = []
   const flush = (): void => {
     if (cur.length === 0) return
-    if (cur.map((p) => p.text).join('').trim() !== '') result.push(buildUtterance(cur, u.speakerId))
+    if (
+      cur
+        .map((p) => p.text)
+        .join('')
+        .trim() !== ''
+    )
+      result.push(buildUtterance(cur, u.speakerId))
     cur = []
   }
 
   for (let i = 0; i < pieces.length; i++) {
     cur.push(pieces[i])
-    const len = [...cur.map((p) => p.text).join('').trim()].length
+    const len = [
+      ...cur
+        .map((p) => p.text)
+        .join('')
+        .trim()
+    ].length
     const next = pieces[i + 1]
     const gap = next ? next.effStart - pieces[i].effEnd : 0
     const word = pieces[i].word.word
