@@ -19,5 +19,8 @@ jobs:
       # The core must stay platform neutral: no runtime deps, no Node builtins,
       # no DOM, no I/O. This is what lets the web app reuse it unchanged.
       - run: pnpm check:core
+      - run: pnpm format:check
+      # Hook call order and dependency arrays only; see apps/desktop/eslint.config.mjs.
+      - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test

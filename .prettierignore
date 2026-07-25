@@ -1,0 +1,16 @@
+node_modules
+dist
+out
+release
+vendor
+.ffmpeg-build
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# Symlinks into the private planning repository.
+AGENTS.md
+DESIGN.md
+spec
+
+# Upstream text, kept byte-identical to apache.org.
+LICENSE

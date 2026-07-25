@@ -22,10 +22,14 @@
     "build": "pnpm --filter logcut build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "check:core": "node scripts/check-core-boundary.mjs",
-    "verify": "pnpm check:core && pnpm typecheck && pnpm test"
+    "verify": "pnpm check:core && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
+    "prettier": "^3.9.6",
     "typescript": "^5.9.0"
   },
   "pnpm": {
