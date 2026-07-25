@@ -12,7 +12,7 @@ interface ProjectFile {
   fileMtimeMs: number
   createdAt: number
   updatedAt: number
-  /** Normalized language config the transcript was produced with (see shared/language). */
+  /** Normalized language config the transcript was produced with (see @logcut/core). */
   configKey?: string
   /** True when an immutable <id>.raw.json holds the original provider response. */
   hasRaw?: boolean
