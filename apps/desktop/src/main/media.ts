@@ -1,8 +1,7 @@
-import { net } from 'electron'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import { open } from 'node:fs/promises'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 export const MEDIA_SCHEME = 'logcut-media'
 
@@ -39,10 +38,15 @@ const MAX_CHUNK_BYTES = 8 * 1024 * 1024
 /**
  * Handler for the logcut-media:// protocol.
  *
- * File bytes are read through net.fetch (Chromium's file loader honours the
- * Range header but always reports a bare 200), then rewrapped into a proper
- * 206 with Accept-Ranges/Content-Range/Content-Length so the media stack can
- * establish seekable ranges.
+ * Bytes are read straight off the file descriptor at the requested offset.
+ * Going through net.fetch('file://…') instead looked simpler but relied on
+ * Chromium's file loader honouring an outgoing Range header, which it does
+ * not do on Windows: every chunk after the first came back from offset 0, so
+ * playback died at the first chunk boundary (a couple of seconds in at
+ * typical bitrates).
+ *
+ * The reply is a proper 206 with Accept-Ranges/Content-Range/Content-Length
+ * so the media stack can establish seekable ranges.
  */
 export async function handleMediaRequest(request: Request): Promise<Response> {
   const url = new URL(request.url)
@@ -54,7 +58,6 @@ export async function handleMediaRequest(request: Request): Promise<Response> {
 
   const { size } = fs.statSync(filePath)
   const mime = MIME_BY_EXTENSION[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream'
-  const fileUrl = pathToFileURL(filePath).toString()
 
   const rangeHeader = request.headers.get('range')
   const match = rangeHeader ? /bytes=(\d+)-(\d*)/.exec(rangeHeader) : null
@@ -68,18 +71,23 @@ export async function handleMediaRequest(request: Request): Promise<Response> {
   const requestedEnd = match && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
   const end = Math.min(requestedEnd, start + MAX_CHUNK_BYTES - 1)
 
-  const upstream = await net.fetch(fileUrl, {
-    headers: { Range: `bytes=${start}-${end}` },
-    bypassCustomProtocolHandlers: true
-  })
-  const body = await upstream.arrayBuffer()
+  const chunk = new Uint8Array(new ArrayBuffer(end - start + 1))
+  const handle = await open(filePath, 'r')
+  let bytesRead: number
+  try {
+    ;({ bytesRead } = await handle.read(chunk, 0, chunk.byteLength, start))
+  } finally {
+    await handle.close()
+  }
+  const body = bytesRead === chunk.byteLength ? chunk : chunk.subarray(0, bytesRead)
 
   return new Response(body, {
     status: 206,
     headers: {
       'Content-Type': mime,
       'Accept-Ranges': 'bytes',
-      'Content-Range': `bytes ${start}-${end}/${size}`,
+      // A short read (file truncated under us) must not claim the full range.
+      'Content-Range': `bytes ${start}-${start + body.byteLength - 1}/${size}`,
       'Content-Length': String(body.byteLength)
     }
   })
