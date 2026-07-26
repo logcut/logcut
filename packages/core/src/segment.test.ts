@@ -82,12 +82,12 @@ test('line start/end come from real word times, skipping leading spacer', () => 
 
 test('segmentTranscript flattens all utterances and preserves speaker', () => {
   const t = {
-    sourcePath: '/x.mp4',
     audioDurationMs: 5000,
     utterances: [{ ...utterance('你好，世界。', ['你', '好', '世', '界']), speakerId: '1' }]
   }
   const out = segmentTranscript(t, { minChars: 2 })
   assert.equal(out.utterances.length, 2)
   assert.ok(out.utterances.every((u) => u.speakerId === '1'))
-  assert.equal(out.sourcePath, '/x.mp4')
+  // Fields other than utterances survive the rewrite.
+  assert.equal(out.audioDurationMs, 5000)
 })

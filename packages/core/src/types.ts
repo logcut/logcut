@@ -20,8 +20,12 @@ export interface Utterance {
   words: Word[]
 }
 
+/**
+ * The spoken content of one media asset. It carries no reference back to the
+ * file it came from: which asset a transcript belongs to is the project's
+ * business, and a path in here is a platform concept the core has no use for.
+ */
 export interface Transcript {
-  sourcePath: string
   audioDurationMs: number
   utterances: Utterance[]
 }

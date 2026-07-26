@@ -3,12 +3,90 @@ import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ExportSrtResult, OpenProjectResult, TranscribeProgress } from '../shared/ipc'
+import type {
+  ExportSrtResult,
+  ImportMediaResult,
+  MediaAssetSummary,
+  ProjectDetail,
+  ProjectSummary,
+  TranscribePhase,
+  TranscribeResult
+} from '../shared/ipc'
+import { VIDEO_EXTENSIONS } from '../shared/media'
 import { transcribeAudio } from './asr'
 import { extractAudio } from './ffmpeg'
 import { registerMediaPath } from './media'
+import { importMedia } from './media-import'
 import * as projects from './projects'
 import * as settings from './settings'
+
+/** Registration requires the file to exist; a poster may not be written yet. */
+function mediaUrlIfPresent(filePath: string): string | null {
+  try {
+    return registerMediaPath(filePath)
+  } catch {
+    return null
+  }
+}
+
+function toSummary(project: projects.ProjectFile): ProjectSummary {
+  const active =
+    project.assets.find((asset) => asset.id === project.activeAssetId) ?? project.assets[0]
+  return {
+    id: project.id,
+    name: project.name,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    assetCount: project.assets.length,
+    durationMs: project.assets.reduce((total, asset) => total + asset.durationMs, 0),
+    thumbnailUrl: active?.thumbnail
+      ? mediaUrlIfPresent(projects.thumbnailPath(project.id, active.thumbnail))
+      : null
+  }
+}
+
+function toAssetSummary(projectId: string, asset: projects.MediaAsset): MediaAssetSummary {
+  const state = projects.assetState(asset)
+  return {
+    id: asset.id,
+    fileName: asset.fileName,
+    path: asset.path,
+    kind: asset.kind,
+    durationMs: asset.durationMs,
+    width: asset.width,
+    height: asset.height,
+    mediaUrl: state.missing ? '' : (mediaUrlIfPresent(asset.path) ?? ''),
+    thumbnailUrl: asset.thumbnail
+      ? mediaUrlIfPresent(projects.thumbnailPath(projectId, asset.thumbnail))
+      : null,
+    missing: state.missing,
+    stale: state.stale,
+    transcriptStatus: asset.transcriptStatus
+  }
+}
+
+function toDetail(project: projects.ProjectFile): ProjectDetail {
+  return {
+    id: project.id,
+    name: project.name,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    activeAssetId: project.activeAssetId,
+    assets: project.assets.map((asset) => toAssetSummary(project.id, asset))
+  }
+}
+
+function requireProject(projectId: string): projects.ProjectFile {
+  const project = projects.loadProject(projectId)
+  if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+  return project
+}
+
+function requireAsset(projectId: string, assetId: string): projects.MediaAsset {
+  const asset = requireProject(projectId).assets.find((candidate) => candidate.id === assetId)
+  if (!asset) throw new Error('ASSET_MISSING: This media is no longer part of the project')
+  return asset
+}
 
 /** Single registration point for every ipcMain handler. */
 export function registerIpc(): void {
@@ -23,47 +101,92 @@ export function registerIpc(): void {
     settings.setLanguageOption(option)
   })
 
-  ipcMain.handle('media:register', (_event, videoPath: string) => registerMediaPath(videoPath))
+  ipcMain.handle('project:create', (_event, name?: string): ProjectSummary =>
+    toSummary(projects.createProject(name))
+  )
 
-  ipcMain.handle('dialog:pick-video', async (event): Promise<string | null> => {
+  ipcMain.handle('project:list', (): ProjectSummary[] => projects.listProjects().map(toSummary))
+
+  ipcMain.handle('project:open', (_event, projectId: string): ProjectDetail =>
+    toDetail(requireProject(projectId))
+  )
+
+  ipcMain.handle('project:rename', (_event, projectId: string, name: string): ProjectDetail => {
+    const project = projects.renameProject(projectId, name)
+    if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+    return toDetail(project)
+  })
+
+  ipcMain.handle('project:delete', (_event, projectId: string) => {
+    projects.deleteProject(projectId)
+  })
+
+  ipcMain.handle('dialog:pick-media', async (event): Promise<string[]> => {
     const window = BrowserWindow.fromWebContents(event.sender)
     const options = {
-      properties: ['openFile' as const],
-      filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'm4v', 'avi'] }]
+      properties: ['openFile' as const, 'multiSelections' as const],
+      filters: [
+        { name: 'Video', extensions: VIDEO_EXTENSIONS.map((extension) => extension.slice(1)) }
+      ]
     }
     const result = window
       ? await dialog.showOpenDialog(window, options)
       : await dialog.showOpenDialog(options)
-    return result.canceled || !result.filePaths[0] ? null : result.filePaths[0]
-  })
-
-  ipcMain.handle('export:srt', async (event, transcript: Transcript): Promise<ExportSrtResult> => {
-    const window = BrowserWindow.fromWebContents(event.sender)
-    const defaultName = `${path.parse(transcript.sourcePath).name}.srt`
-    const options = {
-      defaultPath: defaultName,
-      filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }]
-    }
-    const result = window
-      ? await dialog.showSaveDialog(window, options)
-      : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return {}
-    fs.writeFileSync(result.filePath, toSrt(transcript.utterances), 'utf8')
-    return { savedPath: result.filePath }
+    return result.canceled ? [] : result.filePaths
   })
 
   ipcMain.handle(
-    'transcribe:run',
+    'media:import',
+    async (_event, projectId: string, paths: string[]): Promise<ImportMediaResult> => {
+      const outcome = await importMedia(projectId, paths)
+      if (!outcome) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return { project: toDetail(outcome.project), rejected: outcome.rejected }
+    }
+  )
+
+  ipcMain.handle('media:remove', (_event, projectId: string, assetId: string): ProjectDetail => {
+    const project = projects.removeAsset(projectId, assetId)
+    if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+    return toDetail(project)
+  })
+
+  ipcMain.handle(
+    'media:set-active',
+    (_event, projectId: string, assetId: string): ProjectDetail => {
+      const project = projects.setActiveAsset(projectId, assetId)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return toDetail(project)
+    }
+  )
+
+  ipcMain.handle(
+    'transcript:get',
+    (_event, projectId: string, assetId: string): Transcript | null =>
+      projects.loadTranscript(projectId, assetId)
+  )
+
+  ipcMain.handle(
+    'transcript:save',
+    (_event, projectId: string, assetId: string, transcript: Transcript) => {
+      projects.saveTranscript(projectId, assetId, transcript)
+    }
+  )
+
+  ipcMain.handle(
+    'transcript:transcribe',
     async (
       event,
-      videoPath: string,
-      force = false,
-      config: TranscribeConfig = {}
-    ): Promise<Transcript> => {
+      projectId: string,
+      assetId: string,
+      options: { force?: boolean; config?: TranscribeConfig } = {}
+    ): Promise<TranscribeResult> => {
+      const asset = requireAsset(projectId, assetId)
+      const config = options.config ?? {}
       const cacheKey = configCacheKey(config)
-      if (!force) {
-        const cached = projects.findFreshByVideoPath(videoPath, cacheKey)
-        if (cached) return cached
+
+      if (!options.force && projects.canReuseTranscript(asset, cacheKey)) {
+        const cached = projects.loadTranscript(projectId, assetId)
+        if (cached) return { transcript: cached, fromCache: true }
       }
 
       const apiKey = settings.getApiKey()
@@ -71,51 +194,58 @@ export function registerIpc(): void {
         throw new Error('API_KEY_MISSING: Configure the Volcano Engine API key in Settings first')
       }
 
-      const sendProgress = (progress: TranscribeProgress): void => {
-        if (!event.sender.isDestroyed()) event.sender.send('transcribe:progress', progress)
+      const sendProgress = (phase: TranscribePhase): void => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send('transcribe:progress', { projectId, assetId, phase })
+        }
       }
 
-      sendProgress({ phase: 'extracting' })
-      const audioPath = await extractAudio(videoPath)
+      sendProgress('extracting')
+      const audioPath = await extractAudio(asset.path)
       try {
-        sendProgress({ phase: 'transcribing' })
-        const { transcript: rawTranscript, raw } = await transcribeAudio(
-          audioPath,
-          apiKey,
-          videoPath,
-          config
-        )
+        sendProgress('transcribing')
+        const { transcript: rawTranscript, raw } = await transcribeAudio(audioPath, apiKey, config)
         // Re-split long ASR utterances into subtitle-length lines before saving;
         // the untouched provider response is archived alongside as the rollback source.
         const transcript = segmentTranscript(rawTranscript)
-        projects.saveProject(transcript, cacheKey, raw)
-        return transcript
+        projects.saveTranscript(projectId, assetId, transcript, { immediate: true })
+        projects.saveRaw(projectId, assetId, raw)
+        projects.updateAsset(projectId, assetId, {
+          transcriptStatus: 'ready',
+          transcriptConfigKey: cacheKey,
+          hasRaw: true,
+          rawProvider: 'volcano'
+        })
+        return { transcript, fromCache: false }
+      } catch (error) {
+        // Persisted so a crash or a closed window leaves the asset showing
+        // "failed, retry" instead of looking like it was never attempted.
+        projects.updateAsset(projectId, assetId, { transcriptStatus: 'failed' })
+        throw error
       } finally {
         fs.rm(audioPath, { force: true }, () => {})
       }
     }
   )
 
-  ipcMain.handle('project:list', () => projects.listProjects())
+  ipcMain.handle(
+    'export:srt',
+    async (event, projectId: string, assetId: string): Promise<ExportSrtResult> => {
+      const asset = requireAsset(projectId, assetId)
+      const transcript = projects.loadTranscript(projectId, assetId)
+      if (!transcript) throw new Error('TRANSCRIPT_MISSING: Recognize the subtitles first')
 
-  ipcMain.handle('project:open', (_event, id: string): OpenProjectResult => {
-    const project = projects.loadProject(id)
-    if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
-    if (!fs.existsSync(project.videoPath)) {
-      throw new Error(`VIDEO_MISSING: The video file was not found at ${project.videoPath}`)
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const options = {
+        defaultPath: `${path.parse(asset.fileName).name}.srt`,
+        filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }]
+      }
+      const result = window
+        ? await dialog.showSaveDialog(window, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return {}
+      fs.writeFileSync(result.filePath, toSrt(transcript.utterances), 'utf8')
+      return { savedPath: result.filePath }
     }
-    return {
-      transcript: project.transcript,
-      mediaUrl: registerMediaPath(project.videoPath),
-      stale: projects.isStale(project)
-    }
-  })
-
-  ipcMain.handle('project:save', (_event, transcript: Transcript) => {
-    projects.saveProject(transcript)
-  })
-
-  ipcMain.handle('project:delete', (_event, id: string) => {
-    projects.deleteProject(id)
-  })
+  )
 }

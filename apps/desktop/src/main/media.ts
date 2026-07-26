@@ -14,7 +14,13 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
   '.mkv': 'video/x-matroska',
-  '.avi': 'video/x-msvideo'
+  '.avi': 'video/x-msvideo',
+  // Poster frames go through this protocol too, rather than being inlined as
+  // data URLs: the project list would otherwise carry every card's image
+  // through structured clone on each refresh.
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png'
 }
 
 export function registerMediaPath(filePath: string): string {

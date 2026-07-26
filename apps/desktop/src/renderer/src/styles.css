@@ -224,6 +224,15 @@
     letter-spacing: var(--text-timecode-tracking);
     font-variant-numeric: tabular-nums;
   }
+  /* Page title bars start at the container inset. On macOS the window is
+     frameless, so they start past the traffic lights instead; `is-mac` is set
+     on <html> at startup. */
+  .titlebar {
+    padding-left: var(--spacing-inset);
+  }
+  .is-mac .titlebar {
+    padding-left: var(--titlebar-traffic-lights);
+  }
 }
 
 /* ---- Subtitle panel scroll area ---- */

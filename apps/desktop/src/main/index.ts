@@ -2,6 +2,7 @@ import { app, BrowserWindow, protocol } from 'electron'
 import path from 'node:path'
 import { registerIpc } from './ipc'
 import { handleMediaRequest, MEDIA_SCHEME } from './media'
+import { flushTranscripts } from './projects'
 
 // standard is required: without it the media stack fails with
 // PIPELINE_ERROR_READ on seekable (Range) responses.
@@ -46,6 +47,13 @@ void app.whenReady().then(() => {
   })
 })
 
+// Transcript writes are debounced, so the last edits before a quit are still
+// only in memory at this point.
+app.on('before-quit', () => {
+  flushTranscripts()
+})
+
 app.on('window-all-closed', () => {
+  flushTranscripts()
   if (process.platform !== 'darwin') app.quit()
 })

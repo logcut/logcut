@@ -8,10 +8,12 @@ export {
   orderedOptions
 } from './language.ts'
 
+export { randomId } from './id.ts'
+
 export { segmentTranscript, segmentUtterance } from './segment.ts'
 export type { SegmentOptions } from './segment.ts'
 
 export { formatSrtTimestamp, toSrt } from './srt.ts'
 
-export { replaceAllText, setUtteranceText } from './transcript.ts'
+export { findUtteranceIndexAt, replaceAllText, setUtteranceText } from './transcript.ts'
 export type { ReplaceAllResult } from './transcript.ts'

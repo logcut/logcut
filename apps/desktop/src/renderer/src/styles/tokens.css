@@ -289,4 +289,13 @@
   --editor-waveform-muted: rgba(138, 144, 150, 0.35); /* muted/unselected waveform */
   --editor-recording: var(--red-500); /* recording indicator */
   --editor-render-progress: var(--gradient-grade); /* render/export progress bar */
+
+  /* Timeline geometry. The strip is as tall as its tracks; only its horizontal
+     scale responds to the window. */
+  --timeline-ruler-height: 24px;
+  --timeline-subtitle-height: 28px;
+  --timeline-media-height: 40px;
+
+  /* Width the macOS traffic lights need at the top-left of a frameless window. */
+  --titlebar-traffic-lights: 80px;
 }

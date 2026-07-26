@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { replaceAllText, setUtteranceText } from './transcript.ts'
-import type { Transcript } from './types.ts'
+import { findUtteranceIndexAt, replaceAllText, setUtteranceText } from './transcript.ts'
+import type { Transcript, Utterance } from './types.ts'
 
 function fixture(): Transcript {
   return {
-    sourcePath: '/tmp/a.mp4',
     audioDurationMs: 1000,
     utterances: [
       { id: 'a', start: 0, end: 400, text: 'AI 卷子来了', words: [] },
@@ -42,4 +41,50 @@ test('replaceAllText with empty find is a no-op', () => {
   const { transcript, count } = replaceAllText(original, '', 'x')
   assert.equal(count, 0)
   assert.equal(transcript, original)
+})
+
+function gapped(): Utterance[] {
+  // Deliberately not contiguous: real transcripts have silence between
+  // utterances, and a time landing there has no active utterance.
+  return [
+    { id: 'a', start: 0, end: 400, text: 'a', words: [] },
+    { id: 'b', start: 1000, end: 1500, text: 'b', words: [] },
+    { id: 'c', start: 1500, end: 2000, text: 'c', words: [] }
+  ]
+}
+
+test('findUtteranceIndexAt finds the covering utterance', () => {
+  const utterances = gapped()
+  assert.equal(findUtteranceIndexAt(utterances, 0), 0)
+  assert.equal(findUtteranceIndexAt(utterances, 399), 0)
+  assert.equal(findUtteranceIndexAt(utterances, 1200), 1)
+  assert.equal(findUtteranceIndexAt(utterances, 1999), 2)
+})
+
+test('findUtteranceIndexAt treats end as exclusive', () => {
+  const utterances = gapped()
+  // 1500 is b.end and c.start: it belongs to c, not b.
+  assert.equal(findUtteranceIndexAt(utterances, 1500), 2)
+  // 400 is a.end with nothing starting there, so it is a gap.
+  assert.equal(findUtteranceIndexAt(utterances, 400), -1)
+})
+
+test('findUtteranceIndexAt returns -1 in gaps and out of range', () => {
+  const utterances = gapped()
+  assert.equal(findUtteranceIndexAt(utterances, 700), -1)
+  assert.equal(findUtteranceIndexAt(utterances, -1), -1)
+  assert.equal(findUtteranceIndexAt(utterances, 2000), -1)
+  assert.equal(findUtteranceIndexAt(utterances, 99999), -1)
+})
+
+test('findUtteranceIndexAt handles an empty transcript', () => {
+  assert.equal(findUtteranceIndexAt([], 0), -1)
+})
+
+test('findUtteranceIndexAt agrees with a linear scan', () => {
+  const utterances = gapped()
+  for (let t = -50; t <= 2100; t += 1) {
+    const expected = utterances.findIndex((u) => t >= u.start && t < u.end)
+    assert.equal(findUtteranceIndexAt(utterances, t), expected, `mismatch at ${t}ms`)
+  }
 })

@@ -6,20 +6,23 @@ import path from 'node:path'
 
 export type FfmpegSource = 'bundled' | 'vendor' | 'system'
 
-function sidecarName(): string {
-  return process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+/** Both sidecars are built and shipped together; see scripts/build-ffmpeg-*.sh. */
+type SidecarName = 'ffmpeg' | 'ffprobe'
+
+function executableName(name: SidecarName): string {
+  return process.platform === 'win32' ? `${name}.exe` : name
 }
 
 /**
- * Locate the ffmpeg binary.
- * Packaged builds must use the bundled LGPL sidecar and never fall back to PATH.
- * Development falls back to the system ffmpeg (usually a GPL build) with a warning.
+ * Locate one of the sidecar binaries.
+ * Packaged builds must use the bundled LGPL sidecars and never fall back to PATH.
+ * Development falls back to the system binary (usually a GPL build) with a warning.
  */
-export function resolveFfmpeg(): { binary: string; source: FfmpegSource } {
+function resolveBinary(name: SidecarName): { binary: string; source: FfmpegSource } {
   if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, 'ffmpeg', sidecarName())
+    const bundled = path.join(process.resourcesPath, 'ffmpeg', executableName(name))
     if (!fs.existsSync(bundled)) {
-      throw new Error('Bundled ffmpeg is missing; the application package is broken')
+      throw new Error(`Bundled ${name} is missing; the application package is broken`)
     }
     return { binary: bundled, source: 'bundled' }
   }
@@ -29,32 +32,59 @@ export function resolveFfmpeg(): { binary: string; source: FfmpegSource } {
     'vendor',
     'ffmpeg',
     `${process.platform}-${process.arch}`,
-    sidecarName()
+    executableName(name)
   )
   if (fs.existsSync(vendor)) {
     return { binary: vendor, source: 'vendor' }
   }
 
   console.warn(
-    '[ffmpeg] Using system ffmpeg from PATH (dev only, likely a GPL build — never ship this)'
+    `[ffmpeg] Using system ${name} from PATH (dev only, likely a GPL build — never ship this)`
   )
-  return { binary: sidecarName(), source: 'system' }
+  return { binary: executableName(name), source: 'system' }
 }
 
-function runFfmpeg(args: string[]): Promise<void> {
-  const { binary } = resolveFfmpeg()
+export function resolveFfmpeg(): { binary: string; source: FfmpegSource } {
+  return resolveBinary('ffmpeg')
+}
+
+export function resolveFfprobe(): { binary: string; source: FfmpegSource } {
+  return resolveBinary('ffprobe')
+}
+
+/**
+ * stdout is only piped when the caller wants it: ffprobe reports on stdout,
+ * while ffmpeg writes its output to a file and would otherwise fill a pipe
+ * nobody drains.
+ */
+function run(
+  binary: string,
+  args: string[],
+  options: { captureStdout?: boolean } = {}
+): Promise<string> {
+  const label = path.basename(binary)
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    const child = spawn(binary, args, {
+      stdio: ['ignore', options.captureStdout ? 'pipe' : 'ignore', 'pipe']
+    })
+    let stdout = ''
     let stderrTail = ''
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+    })
+    child.stderr?.on('data', (chunk: Buffer) => {
       stderrTail = (stderrTail + chunk.toString()).slice(-2000)
     })
-    child.on('error', (error) => reject(new Error(`Failed to start ffmpeg: ${error.message}`)))
+    child.on('error', (error) => reject(new Error(`Failed to start ${label}: ${error.message}`)))
     child.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`ffmpeg exited with code ${code}:\n${stderrTail}`))
+      if (code === 0) resolve(stdout)
+      else reject(new Error(`${label} exited with code ${code}:\n${stderrTail}`))
     })
   })
+}
+
+function runFfmpeg(args: string[]): Promise<string> {
+  return run(resolveFfmpeg().binary, args)
 }
 
 /**
@@ -83,4 +113,80 @@ export async function extractAudio(videoPath: string): Promise<string> {
     outputPath
   ])
   return outputPath
+}
+
+export interface MediaProbe {
+  /** Container duration. Distinct from Transcript.audioDurationMs, which the
+   *  ASR reports after decoding and which differs by tens of milliseconds. */
+  durationMs: number
+  width?: number
+  height?: number
+  hasVideo: boolean
+  hasAudio: boolean
+}
+
+interface FfprobeStream {
+  codec_type?: string
+  width?: number
+  height?: number
+}
+
+interface FfprobeOutput {
+  format?: { duration?: string }
+  streams?: FfprobeStream[]
+}
+
+/**
+ * Read duration and dimensions from the container.
+ * Throws when the file cannot be probed — callers on the import path must
+ * degrade to a zero duration rather than reject the file.
+ */
+export async function probeMedia(filePath: string): Promise<MediaProbe> {
+  const stdout = await run(
+    resolveFfprobe().binary,
+    ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath],
+    { captureStdout: true }
+  )
+  const probe = JSON.parse(stdout) as FfprobeOutput
+  const streams = probe.streams ?? []
+  const video = streams.find((stream) => stream.codec_type === 'video')
+  const seconds = Number(probe.format?.duration)
+  return {
+    durationMs: Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 0,
+    width: video?.width,
+    height: video?.height,
+    hasVideo: video !== undefined,
+    hasAudio: streams.some((stream) => stream.codec_type === 'audio')
+  }
+}
+
+/** Write a single frame as JPEG, for project cards. */
+export async function extractPoster(
+  filePath: string,
+  atMs: number,
+  outPath: string,
+  maxWidth = 640
+): Promise<void> {
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  await runFfmpeg([
+    '-y',
+    '-hide_banner',
+    // Seeking before -i makes ffmpeg jump to the nearest keyframe instead of
+    // decoding everything up to that point: milliseconds rather than minutes
+    // on a multi-gigabyte file.
+    '-ss',
+    (atMs / 1000).toFixed(3),
+    '-i',
+    filePath,
+    '-frames:v',
+    '1',
+    // Without -update the image2 muxer warns that it expects a numbered
+    // sequence rather than a single file.
+    '-update',
+    '1',
+    // -2 keeps the height even, which the JPEG encoder requires.
+    '-vf',
+    `scale=${maxWidth}:-2`,
+    outPath
+  ])
 }

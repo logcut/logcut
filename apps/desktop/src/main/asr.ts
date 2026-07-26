@@ -56,7 +56,6 @@ export interface TranscribeResult {
 export async function transcribeAudio(
   audioPath: string,
   apiKey: string,
-  sourcePath: string,
   config: TranscribeConfig = {}
 ): Promise<TranscribeResult> {
   const audioBase64 = fs.readFileSync(audioPath).toString('base64')
@@ -111,7 +110,6 @@ export async function transcribeAudio(
 
   return {
     transcript: {
-      sourcePath,
       audioDurationMs: data.audio_info?.duration ?? 0,
       utterances
     },

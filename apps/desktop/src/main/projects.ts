@@ -1,150 +1,300 @@
-import type { Transcript } from '@logcut/core'
+import { randomId, type Transcript } from '@logcut/core'
 import { app } from 'electron'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { ProjectSummary } from '../shared/ipc'
 
-interface ProjectFile {
+/**
+ * Bumped on any incompatible on-disk change. loadProject returns null for
+ * anything else, so leftovers from an older layout are ignored rather than
+ * crashing the project list.
+ */
+const PROJECT_SCHEMA_VERSION = 2
+
+export type MediaKind = 'video' | 'audio'
+
+/** Persisted transcription state; 'running' is live-only and never written. */
+export type StoredTranscriptStatus = 'none' | 'ready' | 'failed'
+
+export interface MediaAsset {
   id: string
-  videoPath: string
+  /** Absolute path as of import. Never used for identity. */
+  path: string
+  fileName: string
+  kind: MediaKind
   fileSize: number
   fileMtimeMs: number
-  createdAt: number
-  updatedAt: number
-  /** Normalized language config the transcript was produced with (see @logcut/core). */
-  configKey?: string
-  /** True when an immutable <id>.raw.json holds the original provider response. */
+  /** Container duration from ffprobe; 0 when probing failed. */
+  durationMs: number
+  width?: number
+  height?: number
+  addedAt: number
+  /** File name inside <projectDir>/thumbs/, absent until a poster exists. */
+  thumbnail?: string
+  transcriptStatus: StoredTranscriptStatus
+  /** configCacheKey of the language config the stored transcript came from. */
+  transcriptConfigKey?: string
   hasRaw?: boolean
-  /** ASR provider whose raw format is in the raw file (for future format handling). */
   rawProvider?: string
-  transcript: Transcript
 }
 
-/** Cache key for the default (auto/simplified) language; also the fallback for pre-config projects. */
-const DEFAULT_CONFIG_KEY = '|'
+export interface ProjectFile {
+  version: number
+  /** Unrelated to any file path: a project outlives and precedes its media. */
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  /** The asset the editor shows; null for an empty project. */
+  activeAssetId: string | null
+  assets: MediaAsset[]
+}
+
+export const DEFAULT_PROJECT_NAME = 'Untitled project'
 
 function projectsDir(): string {
   return path.join(app.getPath('userData'), 'projects')
 }
 
-export function projectIdForVideoPath(videoPath: string): string {
-  return crypto.createHash('sha1').update(videoPath).digest('hex').slice(0, 16)
+function projectDir(id: string): string {
+  return path.join(projectsDir(), id)
 }
 
-function projectPath(id: string): string {
-  return path.join(projectsDir(), `${id}.json`)
+function projectFilePath(id: string): string {
+  return path.join(projectDir(id), 'project.json')
 }
 
-function rawPath(id: string): string {
-  return path.join(projectsDir(), `${id}.raw.json`)
+function transcriptPath(id: string, assetId: string): string {
+  return path.join(projectDir(id), 'transcripts', `${assetId}.json`)
 }
 
-function statVideo(videoPath: string): { fileSize: number; fileMtimeMs: number } | null {
-  try {
-    const stat = fs.statSync(videoPath)
-    return { fileSize: stat.size, fileMtimeMs: Math.round(stat.mtimeMs) }
-  } catch {
-    return null
-  }
+function rawPath(id: string, assetId: string): string {
+  return path.join(projectDir(id), 'raw', `${assetId}.json`)
+}
+
+export function thumbnailPath(id: string, fileName: string): string {
+  return path.join(projectDir(id), 'thumbs', fileName)
+}
+
+/**
+ * Write through a temp file. Transcript saves are frequent, and a plain
+ * writeFileSync interrupted mid-flight leaves truncated JSON that loadProject
+ * reports as "no such project" — the user sees their work vanish.
+ */
+function writeJsonAtomic(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  const temp = `${filePath}.tmp`
+  fs.writeFileSync(temp, JSON.stringify(data))
+  fs.renameSync(temp, filePath)
 }
 
 export function loadProject(id: string): ProjectFile | null {
   try {
-    return JSON.parse(fs.readFileSync(projectPath(id), 'utf8')) as ProjectFile
+    const project = JSON.parse(fs.readFileSync(projectFilePath(id), 'utf8')) as ProjectFile
+    return project.version === PROJECT_SCHEMA_VERSION ? project : null
   } catch {
     return null
   }
 }
 
-/**
- * Persist a project. On transcription `raw` is the provider response, written
- * once to an immutable <id>.raw.json. Edit re-saves pass no raw and keep it.
- */
-export function saveProject(transcript: Transcript, configKey?: string, raw?: unknown): void {
-  const id = projectIdForVideoPath(transcript.sourcePath)
-  const existing = loadProject(id)
-  const stat = statVideo(transcript.sourcePath)
+export function createProject(name?: string): ProjectFile {
   const now = Date.now()
-  fs.mkdirSync(projectsDir(), { recursive: true })
-  if (raw !== undefined) fs.writeFileSync(rawPath(id), JSON.stringify(raw))
   const project: ProjectFile = {
-    id,
-    videoPath: transcript.sourcePath,
-    fileSize: stat?.fileSize ?? existing?.fileSize ?? 0,
-    fileMtimeMs: stat?.fileMtimeMs ?? existing?.fileMtimeMs ?? 0,
-    createdAt: existing?.createdAt ?? now,
+    version: PROJECT_SCHEMA_VERSION,
+    id: randomId(),
+    name: name?.trim() || DEFAULT_PROJECT_NAME,
+    createdAt: now,
     updatedAt: now,
-    // Edit re-saves pass no configKey/raw; preserve what the transcription set.
-    configKey: configKey ?? existing?.configKey,
-    hasRaw: raw !== undefined ? true : existing?.hasRaw,
-    rawProvider: raw !== undefined ? 'volcano' : existing?.rawProvider,
-    transcript
+    activeAssetId: null,
+    assets: []
   }
-  fs.writeFileSync(projectPath(id), JSON.stringify(project))
+  writeJsonAtomic(projectFilePath(project.id), project)
+  return project
+}
+
+/** Load, mutate, stamp updatedAt, persist. Returns null if the project is gone. */
+function update(id: string, mutate: (project: ProjectFile) => void): ProjectFile | null {
+  const project = loadProject(id)
+  if (!project) return null
+  mutate(project)
+  project.updatedAt = Date.now()
+  writeJsonAtomic(projectFilePath(id), project)
+  return project
+}
+
+export function renameProject(id: string, name: string): ProjectFile | null {
+  return update(id, (project) => {
+    project.name = name.trim() || DEFAULT_PROJECT_NAME
+  })
 }
 
 export function deleteProject(id: string): void {
-  fs.rmSync(projectPath(id), { force: true })
-  fs.rmSync(rawPath(id), { force: true })
-}
-
-const EXCERPT_MAX_LENGTH = 120
-
-function buildExcerpt(transcript: Transcript): string {
-  let text = ''
-  for (const utterance of transcript.utterances) {
-    text = text === '' ? utterance.text : `${text} ${utterance.text}`
-    if (text.length >= EXCERPT_MAX_LENGTH) break
+  for (const key of [...pendingTranscripts.keys()]) {
+    if (key.startsWith(`${id}/`)) discardPendingTranscript(key)
   }
-  return text.slice(0, EXCERPT_MAX_LENGTH)
+  fs.rmSync(projectDir(id), { recursive: true, force: true })
 }
 
-export function listProjects(): ProjectSummary[] {
-  let files: string[]
+/** Directories are projects; anything else in here is ignored. */
+export function listProjects(): ProjectFile[] {
+  let entries: fs.Dirent[]
   try {
-    files = fs
-      .readdirSync(projectsDir())
-      .filter((name) => name.endsWith('.json') && !name.endsWith('.raw.json'))
+    entries = fs.readdirSync(projectsDir(), { withFileTypes: true })
   } catch {
     return []
   }
-  const summaries: ProjectSummary[] = []
-  for (const file of files) {
-    const project = loadProject(path.basename(file, '.json'))
-    if (!project) continue
-    summaries.push({
-      id: project.id,
-      videoPath: project.videoPath,
-      fileName: path.basename(project.videoPath),
-      updatedAt: project.updatedAt,
-      utteranceCount: project.transcript.utterances.length,
-      audioDurationMs: project.transcript.audioDurationMs,
-      excerpt: buildExcerpt(project.transcript),
-      fileExists: fs.existsSync(project.videoPath)
-    })
+  const projects: ProjectFile[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const project = loadProject(entry.name)
+    if (project) projects.push(project)
   }
-  return summaries.sort((a, b) => b.updatedAt - a.updatedAt)
+  return projects.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-/** True when the stored size/mtime no longer match the file on disk. */
-export function isStale(project: {
-  videoPath: string
-  fileSize: number
-  fileMtimeMs: number
-}): boolean {
-  const stat = statVideo(project.videoPath)
-  if (!stat) return true
-  return stat.fileSize !== project.fileSize || stat.fileMtimeMs !== project.fileMtimeMs
+export function addAsset(id: string, asset: MediaAsset): ProjectFile | null {
+  return update(id, (project) => {
+    project.assets.push(asset)
+    project.activeAssetId ??= asset.id
+  })
 }
 
-/** Cached transcript for a video path, only if the file and language config are unchanged. */
-export function findFreshByVideoPath(videoPath: string, configKey?: string): Transcript | null {
-  const project = loadProject(projectIdForVideoPath(videoPath))
-  if (!project) return null
-  if (isStale(project)) return null
-  // Missing configKey (pre-config projects) counts as the default language.
-  const wanted = configKey ?? DEFAULT_CONFIG_KEY
-  if ((project.configKey ?? DEFAULT_CONFIG_KEY) !== wanted) return null
-  return project.transcript
+export function removeAsset(id: string, assetId: string): ProjectFile | null {
+  const project = loadProject(id)
+  const asset = project?.assets.find((candidate) => candidate.id === assetId)
+  if (!project || !asset) return project
+
+  discardPendingTranscript(transcriptKey(id, assetId))
+  fs.rmSync(transcriptPath(id, assetId), { force: true })
+  fs.rmSync(rawPath(id, assetId), { force: true })
+  if (asset.thumbnail) fs.rmSync(thumbnailPath(id, asset.thumbnail), { force: true })
+
+  return update(id, (current) => {
+    current.assets = current.assets.filter((candidate) => candidate.id !== assetId)
+    if (current.activeAssetId === assetId) {
+      current.activeAssetId = current.assets[0]?.id ?? null
+    }
+  })
+}
+
+export function setActiveAsset(id: string, assetId: string): ProjectFile | null {
+  return update(id, (project) => {
+    if (project.assets.some((asset) => asset.id === assetId)) project.activeAssetId = assetId
+  })
+}
+
+export function updateAsset(
+  id: string,
+  assetId: string,
+  patch: Partial<Omit<MediaAsset, 'id'>>
+): ProjectFile | null {
+  return update(id, (project) => {
+    const asset = project.assets.find((candidate) => candidate.id === assetId)
+    if (asset) Object.assign(asset, patch)
+  })
+}
+
+/**
+ * Transcript writes are debounced: every keystroke that commits an edit calls
+ * this, and the whole transcript is rewritten each time. The pending value is
+ * the source of truth until it lands, so reads go through the same buffer.
+ */
+const TRANSCRIPT_WRITE_DELAY_MS = 500
+
+interface PendingTranscript {
+  timer: NodeJS.Timeout
+  transcript: Transcript
+}
+
+const pendingTranscripts = new Map<string, PendingTranscript>()
+
+function transcriptKey(id: string, assetId: string): string {
+  return `${id}/${assetId}`
+}
+
+function flushTranscript(key: string): void {
+  const pending = pendingTranscripts.get(key)
+  if (!pending) return
+  clearTimeout(pending.timer)
+  pendingTranscripts.delete(key)
+  const separator = key.indexOf('/')
+  writeJsonAtomic(
+    transcriptPath(key.slice(0, separator), key.slice(separator + 1)),
+    pending.transcript
+  )
+}
+
+function discardPendingTranscript(key: string): void {
+  const pending = pendingTranscripts.get(key)
+  if (!pending) return
+  clearTimeout(pending.timer)
+  pendingTranscripts.delete(key)
+}
+
+/** Must run before the app quits, or the last edits are lost. */
+export function flushTranscripts(): void {
+  for (const key of [...pendingTranscripts.keys()]) flushTranscript(key)
+}
+
+export function saveTranscript(
+  id: string,
+  assetId: string,
+  transcript: Transcript,
+  options: { immediate?: boolean } = {}
+): void {
+  const key = transcriptKey(id, assetId)
+  const pending = pendingTranscripts.get(key)
+  if (pending) clearTimeout(pending.timer)
+  pendingTranscripts.set(key, {
+    timer: setTimeout(() => flushTranscript(key), TRANSCRIPT_WRITE_DELAY_MS),
+    transcript
+  })
+  // A finished transcription is worth a synchronous write: it cost money and
+  // several minutes, and losing it to a crash inside the debounce window would
+  // mean paying for it again.
+  if (options.immediate) flushTranscript(key)
+}
+
+export function loadTranscript(id: string, assetId: string): Transcript | null {
+  const pending = pendingTranscripts.get(transcriptKey(id, assetId))
+  if (pending) return pending.transcript
+  try {
+    return JSON.parse(fs.readFileSync(transcriptPath(id, assetId), 'utf8')) as Transcript
+  } catch {
+    return null
+  }
+}
+
+/** Written once when a transcription completes; never read back so far. */
+export function saveRaw(id: string, assetId: string, raw: unknown): void {
+  writeJsonAtomic(rawPath(id, assetId), raw)
+}
+
+export interface AssetState {
+  missing: boolean
+  /** File is present but its size/mtime no longer match what import recorded. */
+  stale: boolean
+}
+
+export function assetState(asset: MediaAsset): AssetState {
+  try {
+    const stat = fs.statSync(asset.path)
+    return {
+      missing: false,
+      stale: stat.size !== asset.fileSize || Math.round(stat.mtimeMs) !== asset.fileMtimeMs
+    }
+  } catch {
+    return { missing: true, stale: false }
+  }
+}
+
+/**
+ * Whether the stored transcript can stand in for a fresh recognition. Guards
+ * the only call that costs money, so it errs toward re-running: a changed file
+ * or a different language config both miss.
+ */
+export function canReuseTranscript(asset: MediaAsset, configKey: string): boolean {
+  if (asset.transcriptStatus !== 'ready') return false
+  if ((asset.transcriptConfigKey ?? '') !== configKey) return false
+  const state = assetState(asset)
+  return !state.missing && !state.stale
 }

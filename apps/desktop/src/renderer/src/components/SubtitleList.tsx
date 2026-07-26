@@ -1,24 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import type {
-  FocusEvent,
-  JSX,
-  KeyboardEvent,
-  MouseEvent as ReactMouseEvent,
-  ReactNode
-} from 'react'
+import type { FocusEvent, JSX, KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { Utterance } from '@logcut/core'
-
-function formatTime(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-}
+import { formatTimecode } from '@/lib/format'
 
 interface SubtitleListProps {
   utterances: Utterance[]
   activeId: string | null
-  toolbar?: ReactNode
   onSelect(utterance: Utterance): void
   onEditSave(id: string, text: string): void
 }
@@ -26,7 +13,6 @@ interface SubtitleListProps {
 export default function SubtitleList({
   utterances,
   activeId,
-  toolbar,
   onSelect,
   onEditSave
 }: SubtitleListProps): JSX.Element {
@@ -108,8 +94,7 @@ export default function SubtitleList({
   }
 
   return (
-    <div className="TranscribePanel flex min-h-0 min-w-0 flex-1 flex-col border-l border-border">
-      {toolbar}
+    <div className="TranscribePanel flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="ConvertResult min-h-0 flex-1 overflow-x-hidden overflow-y-auto pt-2">
         {utterances.map((utterance, index) => {
           const selected = utterance.id === selectedId
@@ -133,7 +118,7 @@ export default function SubtitleList({
                   <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-xs opacity-0 transition-opacity duration-300 group-hover:text-primary group-hover:opacity-100">
                     #{index + 1}
                   </span>
-                  {formatTime(utterance.start)}
+                  {formatTimecode(utterance.start)}
                 </div>
                 {editing ? (
                   <textarea

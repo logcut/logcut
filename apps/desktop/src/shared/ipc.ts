@@ -14,28 +14,75 @@ export interface SettingsStatus {
 
 export type TranscribePhase = 'extracting' | 'transcribing'
 
+/**
+ * Addressed by project and asset from the start, so moving recognition onto a
+ * background queue later does not change the payload.
+ */
 export interface TranscribeProgress {
+  projectId: string
+  assetId: string
   phase: TranscribePhase
+}
+
+export type MediaKind = 'video' | 'audio'
+
+/** 'running' reflects an in-flight request and is never persisted. */
+export type TranscriptStatus = 'none' | 'running' | 'ready' | 'failed'
+
+export interface MediaAssetSummary {
+  id: string
+  fileName: string
+  /** Absolute path, for "missing file" messaging. */
+  path: string
+  kind: MediaKind
+  /** Container duration from ffprobe; 0 when probing failed. */
+  durationMs: number
+  width?: number
+  height?: number
+  /** Playback URL, empty when the file is missing. */
+  mediaUrl: string
+  /** Poster frame URL, null until one has been generated. */
+  thumbnailUrl: string | null
+  /** The file is no longer at `path`. */
+  missing: boolean
+  /** Present but changed since import: transcript and poster may not match. */
+  stale: boolean
+  transcriptStatus: TranscriptStatus
 }
 
 export interface ProjectSummary {
   id: string
-  videoPath: string
-  fileName: string
+  name: string
+  createdAt: number
   updatedAt: number
-  utteranceCount: number
-  audioDurationMs: number
-  /** Leading transcript text for list previews, at most 120 characters; empty without utterances. */
-  excerpt: string
-  /** False when the source video no longer exists on disk. */
-  fileExists: boolean
+  assetCount: number
+  /** Sum of asset durations; 0 for an empty project. */
+  durationMs: number
+  /** Poster of the active asset, or null so the card renders a placeholder. */
+  thumbnailUrl: string | null
 }
 
-export interface OpenProjectResult {
+export interface ProjectDetail {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  activeAssetId: string | null
+  assets: MediaAssetSummary[]
+}
+
+export type ImportRejectReason = 'UNSUPPORTED' | 'UNREADABLE'
+
+export interface ImportMediaResult {
+  project: ProjectDetail
+  /** Paths that could not be imported; the rest still were. */
+  rejected: { path: string; reason: ImportRejectReason }[]
+}
+
+export interface TranscribeResult {
   transcript: Transcript
-  mediaUrl: string
-  /** True when the video file changed since the transcript was saved. */
-  stale: boolean
+  /** True when a stored transcript was reused and no paid request was made. */
+  fromCache: boolean
 }
 
 export interface ExportSrtResult {
@@ -49,31 +96,45 @@ export interface ExportSrtResult {
 export interface LogcutApi {
   getSettingsStatus(): Promise<SettingsStatus>
   setApiKey(key: string): Promise<void>
-  /** Resolve a dropped File to its filesystem path (webUtils.getPathForFile). */
-  getPathForFile(file: File): string
-  /** Open a native file picker for a video; resolves to the path or null if cancelled. */
-  pickVideo(): Promise<string | null>
-  /** Transcribe a video; reuses the saved project unless force is true or the language config changed. */
-  transcribeVideo(
-    videoPath: string,
-    force?: boolean,
-    config?: TranscribeConfig
-  ): Promise<Transcript>
   /** System UI locale (Electron app.getLocale), e.g. 'zh-CN', 'zh-TW', 'en-US'. */
   getSystemLocale(): Promise<string>
   /** The user's last chosen transcription language, or null if never set. */
   getLanguagePreference(): Promise<LanguageOption | null>
   /** Persist the user's transcription language choice. */
   setLanguagePreference(option: LanguageOption): Promise<void>
+
+  /** Create an empty project; the editor opens on it right away. */
+  createProject(name?: string): Promise<ProjectSummary>
+  listProjects(): Promise<ProjectSummary[]>
+  /** Registers a playback URL for every present asset. Throws PROJECT_MISSING. */
+  openProject(projectId: string): Promise<ProjectDetail>
+  renameProject(projectId: string, name: string): Promise<ProjectDetail>
+  deleteProject(projectId: string): Promise<void>
+
+  /** Resolve a dropped File to its filesystem path (webUtils.getPathForFile). */
+  getPathForFile(file: File): string
+  /** Native picker; resolves to an empty array when cancelled. */
+  pickMedia(): Promise<string[]>
+  importMedia(projectId: string, paths: string[]): Promise<ImportMediaResult>
+  removeMedia(projectId: string, assetId: string): Promise<ProjectDetail>
+  setActiveMedia(projectId: string, assetId: string): Promise<ProjectDetail>
+
+  /** null when this asset has never been recognized. */
+  getTranscript(projectId: string, assetId: string): Promise<Transcript | null>
+  /** Called after every edit; debounced and written atomically in main. */
+  saveTranscript(projectId: string, assetId: string, transcript: Transcript): Promise<void>
+  /**
+   * Explicit user action, the only call that spends API credit.
+   * Throws API_KEY_MISSING / API_KEY_INVALID / NETWORK / ASR_FAILED.
+   */
+  transcribeAsset(
+    projectId: string,
+    assetId: string,
+    options?: { force?: boolean; config?: TranscribeConfig }
+  ): Promise<TranscribeResult>
   /** Subscribe to transcription progress. Returns an unsubscribe function. */
   onTranscribeProgress(callback: (progress: TranscribeProgress) => void): () => void
-  /** Register a local video for playback; returns an logcut-media:// URL. */
-  registerMedia(videoPath: string): Promise<string>
-  /** Export the transcript as SRT via a save dialog. Empty result if cancelled. */
-  exportSrt(transcript: Transcript): Promise<ExportSrtResult>
-  listProjects(): Promise<ProjectSummary[]>
-  openProject(id: string): Promise<OpenProjectResult>
-  /** Persist the current transcript (called after every edit mutation). */
-  saveProject(transcript: Transcript): Promise<void>
-  deleteProject(id: string): Promise<void>
+
+  /** Export an asset's transcript as SRT via a save dialog. Empty if cancelled. */
+  exportSrt(projectId: string, assetId: string): Promise<ExportSrtResult>
 }

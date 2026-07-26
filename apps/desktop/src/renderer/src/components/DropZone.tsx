@@ -1,15 +1,9 @@
 import { useState } from 'react'
 import type { DragEvent, JSX } from 'react'
-
-const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm', '.m4v', '.avi']
-
-function isVideoFile(name: string): boolean {
-  const lower = name.toLowerCase()
-  return VIDEO_EXTENSIONS.some((ext) => lower.endsWith(ext))
-}
+import { isSupportedMediaFile } from '../../../shared/media'
 
 interface DropZoneProps {
-  onSelect(videoPath: string): void
+  onSelect(paths: string[]): void
 }
 
 export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
@@ -20,33 +14,34 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
     event.preventDefault()
     setDragging(false)
     setError('')
-    const file = event.dataTransfer.files[0]
-    if (!file) return
-    if (!isVideoFile(file.name)) {
+    const files = [...event.dataTransfer.files]
+    if (files.length === 0) return
+    const supported = files.filter((file) => isSupportedMediaFile(file.name))
+    if (supported.length === 0) {
       setError('Please drop a video file.')
       return
     }
-    const videoPath = window.logcut.getPathForFile(file)
-    if (!videoPath) {
+    const paths = supported.map((file) => window.logcut.getPathForFile(file)).filter(Boolean)
+    if (paths.length === 0) {
       setError('Could not resolve the file path.')
       return
     }
-    onSelect(videoPath)
+    onSelect(paths)
   }
 
   const handleClick = async (): Promise<void> => {
     setError('')
-    const videoPath = await window.logcut.pickVideo()
-    if (videoPath) onSelect(videoPath)
+    const paths = await window.logcut.pickMedia()
+    if (paths.length > 0) onSelect(paths)
   }
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed transition-colors ${
+      className={`flex flex-1 cursor-pointer flex-col items-center justify-center gap-inline rounded-lg border-2 border-dashed transition-colors ${
         dragging
-          ? 'border-primary bg-primary/10'
+          ? 'border-accent bg-accent/10'
           : 'border-border hover:border-input hover:bg-muted/50'
       }`}
       onDragOver={(event) => {
@@ -60,9 +55,9 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
         if (event.key === 'Enter' || event.key === ' ') void handleClick()
       }}
     >
-      <p className="m-0 text-lg font-semibold">Drop a video here, or click to browse</p>
-      <p className="m-0 text-muted-foreground">MP4, MOV, MKV, WebM…</p>
-      {error !== '' && <p className="text-destructive">{error}</p>}
+      <p className="m-0 text-body font-medium">Drop a video here, or click to browse</p>
+      <p className="m-0 text-caption font-normal text-muted-foreground">MP4, MOV, MKV, WebM…</p>
+      {error !== '' && <p className="m-0 text-caption font-normal text-destructive">{error}</p>}
     </div>
   )
 }
