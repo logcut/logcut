@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import { open } from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 
 export const MEDIA_SCHEME = 'logcut-media'
 
@@ -28,27 +28,18 @@ export function registerMediaPath(filePath: string): string {
 }
 
 /**
- * Upper bound for a single 206 response. Range replies are buffered (streamed
- * Responses with explicit lengths are unreliable in protocol.handle), so the
- * chunk size caps memory usage; Chromium follows up with further Range
- * requests as playback progresses.
- */
-const MAX_CHUNK_BYTES = 8 * 1024 * 1024
-
-/**
  * Handler for the logcut-media:// protocol.
  *
- * Bytes are read straight off the file descriptor at the requested offset.
- * Going through net.fetch('file://…') instead looked simpler but relied on
- * Chromium's file loader honouring an outgoing Range header, which it does
- * not do on Windows: every chunk after the first came back from offset 0, so
- * playback died at the first chunk boundary (a couple of seconds in at
- * typical bitrates).
- *
- * The reply is a proper 206 with Accept-Ranges/Content-Range/Content-Length
- * so the media stack can establish seekable ranges.
+ * The whole requested range is streamed. Capping the reply at a chunk size
+ * and letting Chromium ask for the rest does not work: on this path it takes
+ * Content-Length as the size of the entire resource and ignores the total in
+ * Content-Range, so it reports the file as fully buffered, never issues a
+ * second request, and the decoder fails with PIPELINE_ERROR_DECODE the moment
+ * playback runs past the bytes it was handed — a 20 Mbit/s file died 3s in on
+ * an 8 MiB cap. Memory stays bounded because Chromium applies backpressure,
+ * suspending the read once it has buffered enough.
  */
-export async function handleMediaRequest(request: Request): Promise<Response> {
+export function handleMediaRequest(request: Request): Response {
   const url = new URL(request.url)
   const id = url.pathname.replace(/^\//, '')
   const filePath = registeredPaths.get(id)
@@ -68,27 +59,19 @@ export async function handleMediaRequest(request: Request): Promise<Response> {
       headers: { 'Content-Range': `bytes */${size}` }
     })
   }
-  const requestedEnd = match && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
-  const end = Math.min(requestedEnd, start + MAX_CHUNK_BYTES - 1)
+  const end = match && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
 
-  const chunk = new Uint8Array(new ArrayBuffer(end - start + 1))
-  const handle = await open(filePath, 'r')
-  let bytesRead: number
-  try {
-    ;({ bytesRead } = await handle.read(chunk, 0, chunk.byteLength, start))
-  } finally {
-    await handle.close()
-  }
-  const body = bytesRead === chunk.byteLength ? chunk : chunk.subarray(0, bytesRead)
+  const body = Readable.toWeb(
+    fs.createReadStream(filePath, { start, end })
+  ) as ReadableStream<Uint8Array>
 
   return new Response(body, {
     status: 206,
     headers: {
       'Content-Type': mime,
       'Accept-Ranges': 'bytes',
-      // A short read (file truncated under us) must not claim the full range.
-      'Content-Range': `bytes ${start}-${start + body.byteLength - 1}/${size}`,
-      'Content-Length': String(body.byteLength)
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': String(end - start + 1)
     }
   })
 }
