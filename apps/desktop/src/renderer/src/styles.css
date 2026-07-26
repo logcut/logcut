@@ -34,9 +34,11 @@
   --background: var(--color-bg-page);
   --foreground: var(--color-text-primary);
 
-  --card: var(--color-bg-page);
+  /* One step up from the page, so panels read as surfaces floating on the
+     background rather than as regions divided by borders. */
+  --card: var(--color-bg-subtle);
   --card-foreground: var(--color-text-primary);
-  --popover: var(--color-bg-page);
+  --popover: var(--color-bg-subtle);
   --popover-foreground: var(--color-text-primary);
 
   --primary: var(--color-accent);
@@ -45,7 +47,10 @@
   --secondary: var(--color-bg-hover);
   --secondary-foreground: var(--color-text-primary);
 
-  --muted: var(--color-bg-subtle);
+  /* One step above --card, which now occupies bg-subtle: a muted fill has to
+     stay visible *on* a panel (tab strips, thumbnail placeholders, drop
+     targets), and same-colour-on-same-colour reads as nothing at all. */
+  --muted: var(--color-bg-hover);
   --muted-foreground: var(--color-text-muted);
 
   /* Note: shadcn's `accent` is the hover surface (menu-item hover bg),
@@ -162,6 +167,14 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* Semantic radii must be registered here to exist as utilities at all —
+     defining them in tokens.css alone generates nothing, so `rounded-card`
+     silently did nothing until this was noticed. */
+  --radius-panel: var(--radius-panel);
+  --radius-card: var(--radius-card);
+
+  /* size-window-control for the hand-drawn traffic lights. */
+  --spacing-window-control: var(--window-control-size);
 
   /* ---- Semantic spacing → Tailwind utilities.
      App code uses p-inset / gap-stack / mb-block, not numeric p-4 / gap-3
@@ -224,14 +237,11 @@
     letter-spacing: var(--text-timecode-tracking);
     font-variant-numeric: tabular-nums;
   }
-  /* Page title bars start at the container inset. On macOS the window is
-     frameless, so they start past the traffic lights instead; `is-mac` is set
-     on <html> at startup. */
+  /* Page title bars start at the container inset. The traffic lights are laid
+     out inside the bar as ordinary elements (see WindowControls), so no
+     platform-specific inset is needed. */
   .titlebar {
     padding-left: var(--spacing-inset);
-  }
-  .is-mac .titlebar {
-    padding-left: var(--titlebar-traffic-lights);
   }
 }
 

@@ -18,10 +18,14 @@ function createWindow(): void {
     // Matches --ink-page so the window doesn't flash white before the
     // dark renderer paints.
     backgroundColor: '#101214',
-    // macOS only: hide the title bar so the app content reaches the top edge and
-    // keep the traffic lights inset. Other platforms keep their native title bar,
-    // otherwise the window would lose its close/minimize controls.
-    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
+    // macOS only: hide the title bar so content reaches the top edge, and hide
+    // the system buttons too (below) because the renderer draws its own. The
+    // AppKit ones cannot be resized or recoloured — only placed — and we want
+    // 12px circles that dim to the panel colour when the window loses focus.
+    //
+    // Other platforms keep their native title bar and its native controls;
+    // nothing here applies to them.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -29,6 +33,12 @@ function createWindow(): void {
       sandbox: false
     }
   })
+
+  if (process.platform === 'darwin') {
+    // The renderer draws the traffic lights; leaving the AppKit ones visible
+    // would stack two sets of buttons on top of each other.
+    win.setWindowButtonVisibility(false)
+  }
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(process.env['ELECTRON_RENDERER_URL'])

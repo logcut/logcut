@@ -94,6 +94,15 @@ export interface ExportSrtResult {
  * The plaintext API key never crosses this boundary.
  */
 export interface LogcutApi {
+  /**
+   * macOS draws its own traffic lights in the renderer, so the window actions
+   * have to come back over IPC. On other platforms the native title bar owns
+   * them and these are never called.
+   */
+  closeWindow(): Promise<void>
+  minimizeWindow(): Promise<void>
+  toggleMaximizeWindow(): Promise<void>
+
   getSettingsStatus(): Promise<SettingsStatus>
   setApiKey(key: string): Promise<void>
   /** System UI locale (Electron app.getLocale), e.g. 'zh-CN', 'zh-TW', 'en-US'. */

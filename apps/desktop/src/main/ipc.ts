@@ -90,6 +90,21 @@ function requireAsset(projectId: string, assetId: string): projects.MediaAsset {
 
 /** Single registration point for every ipcMain handler. */
 export function registerIpc(): void {
+  // Window controls exist because macOS draws its traffic lights in the
+  // renderer (see main/index.ts); on other platforms the native title bar
+  // still owns these actions and the renderer never calls them.
+  ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
+  ipcMain.handle('window:minimize', (event) =>
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+  )
+  ipcMain.handle('window:toggle-maximize', (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return
+    // Matches what the green button does on macOS: zoom, not maximize.
+    if (window.isMaximized()) window.unmaximize()
+    else window.maximize()
+  })
+
   ipcMain.handle('settings:get-status', () => settings.getStatus())
   ipcMain.handle('settings:set-api-key', (_event, key: string) => {
     settings.setApiKey(key)

@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { LogcutApi, TranscribeProgress } from '../shared/ipc'
 
 const api: LogcutApi = {
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
+
   getSettingsStatus: () => ipcRenderer.invoke('settings:get-status'),
   setApiKey: (key) => ipcRenderer.invoke('settings:set-api-key', key),
   getSystemLocale: () => ipcRenderer.invoke('system:get-locale'),

@@ -2,6 +2,7 @@ import type { Utterance } from '@logcut/core'
 import { Scissors, Search, Undo2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { JSX } from 'react'
+import Panel from '@/components/Panel'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,9 +51,9 @@ export default function SubtitleDialog({
   }
 
   return (
-    // Exactly as wide as the tab panel it covers, so the player keeps its full
+    // Covers exactly the tab panel it replaces, so the player keeps its full
     // width and playback stays watchable while editing.
-    <div className="absolute inset-y-0 left-0 z-50 flex w-96 flex-col border-r border-border bg-card shadow-lg">
+    <Panel className="absolute inset-0 z-50 flex flex-col shadow-lg">
       <div className="flex shrink-0 items-center gap-component border-b border-border p-component">
         <span className="flex-1 text-label font-medium text-foreground">Subtitles</span>
         <Button variant="ghost" size="icon-sm" title="Undo" disabled={!canUndo} onClick={onUndo}>
@@ -106,6 +107,6 @@ export default function SubtitleDialog({
         onSelect={onSeek}
         onEditSave={onEditSave}
       />
-    </div>
+    </Panel>
   )
 }

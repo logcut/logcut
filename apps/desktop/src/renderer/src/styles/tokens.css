@@ -263,6 +263,7 @@
   /* ---- Radius responsibilities ---- */
   --radius-control: var(--radius-8); /* buttons, inputs, small widgets */
   --radius-card: var(--radius-12); /* cards, overlays */
+  --radius-panel: var(--radius-8); /* editor panes floating on the page */
   --radius-pill: var(--radius-full); /* badges, tags */
 
   /* ---- Shadow responsibilities ---- */
@@ -296,6 +297,18 @@
   --timeline-subtitle-height: 28px;
   --timeline-media-height: 40px;
 
-  /* Width the macOS traffic lights need at the top-left of a frameless window. */
-  --titlebar-traffic-lights: 80px;
+  /* Traffic lights, drawn by the renderer on macOS (AppKit's own cannot be
+     resized or recoloured). The inactive fill is deliberately the panel
+     surface, so the buttons recede into the chrome when the window is not
+     focused. */
+  --window-control-size: 12px;
+  --window-close: #ff5f57;
+  --window-minimize: #febc2e;
+  --window-zoom: #28c840;
+  --window-inactive: var(--color-bg-subtle);
+  /* The traffic lights (12pt, system-drawn) are centred in this strip by
+     main/index.ts's trafficLightPosition — the two values are set together.
+     Also mirrored by TOP_BAR_HEIGHT in EditorPage, which needs the number in
+     JS to split the remaining height. */
+  --titlebar-height: 36px;
 }

@@ -3,6 +3,7 @@ import { Plus, Settings } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import ProjectCard from '@/components/ProjectCard'
+import SettingsDialog from '@/components/SettingsDialog'
 import TitleBar from '@/components/TitleBar'
 import { Button } from '@/components/ui/button'
 import { errorMessageOf } from '@/lib/format'
@@ -10,12 +11,12 @@ import type { ProjectSummary } from '../../../shared/ipc'
 
 interface HomePageProps {
   onOpenProject(projectId: string): void
-  onOpenSettings(): void
 }
 
-export default function HomePage({ onOpenProject, onOpenSettings }: HomePageProps): JSX.Element {
+export default function HomePage({ onOpenProject }: HomePageProps): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [message, setMessage] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -54,7 +55,7 @@ export default function HomePage({ onOpenProject, onOpenSettings }: HomePageProp
           size="icon-sm"
           title="Settings"
           className="[-webkit-app-region:no-drag]"
-          onClick={onOpenSettings}
+          onClick={() => setSettingsOpen(true)}
         >
           <Settings size={16} />
         </Button>
@@ -90,6 +91,8 @@ export default function HomePage({ onOpenProject, onOpenSettings }: HomePageProp
           </div>
         )}
       </div>
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }
