@@ -16,9 +16,9 @@
 LogCut is built on a simple idea: **editing video should feel like editing text**. Cut a
 sentence in the transcript and the timeline cuts with it.
 
-The desktop app keeps your media on your own disk and runs on your own API keys. Code that has
-been open sourced stays open source: we will not relicense it, and we will not move a shipped
-feature out of the open source project.
+The desktop app keeps your media on your own disk and runs on your own API keys. What we have
+released as open source stays open source: we will not relicense it under restrictive terms,
+and we will not withdraw it from the open source project.
 
 ## Development
 
