@@ -8,6 +8,27 @@ import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timelin
 /** Matches the platform default closely enough for a scrub-or-edit decision. */
 const DOUBLE_CLICK_MS = 400
 
+/** The editor opens split 60/40 between the panes above and the timeline. */
+const DEFAULT_HEIGHT_RATIO = 0.4
+const MAX_HEIGHT_RATIO = 0.75
+const MIN_HEIGHT = 96
+/** EditorTopBar is h-12; everything below it is what the split divides. */
+const TOP_BAR_HEIGHT = 48
+
+function availableHeight(): number {
+  return Math.max(0, window.innerHeight - TOP_BAR_HEIGHT)
+}
+
+function defaultHeight(): number {
+  return Math.max(MIN_HEIGHT, Math.round(availableHeight() * DEFAULT_HEIGHT_RATIO))
+}
+
+/** Recomputed on every drag rather than cached, so resizing the window
+ *  does not leave the limit stuck at an old value. */
+function maxHeight(): number {
+  return Math.max(MIN_HEIGHT, Math.round(availableHeight() * MAX_HEIGHT_RATIO))
+}
+
 interface TimelineProps {
   durationMs: number
   utterances: Utterance[]
@@ -29,7 +50,9 @@ export default function Timeline({
   const containerRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const lastPressRef = useRef(0)
+  const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null)
   const [width, setWidth] = useState(0)
+  const [height, setHeight] = useState(defaultHeight)
 
   useEffect(() => {
     const container = containerRef.current
@@ -114,16 +137,52 @@ export default function Timeline({
     }
   }
 
+  // The grip sits inside the timeline, so every handler here has to stop
+  // propagation: otherwise dragging it would also scrub.
+  const handleResizeDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    resizeRef.current = { startY: event.clientY, startHeight: height }
+  }
+
+  const handleResizeMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const resize = resizeRef.current
+    if (!resize) return
+    event.stopPropagation()
+    // Dragging up grows the timeline, so the delta is inverted.
+    const next = resize.startHeight + (resize.startY - event.clientY)
+    setHeight(Math.min(Math.max(next, MIN_HEIGHT), maxHeight()))
+  }
+
+  const handleResizeUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
+    resizeRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
   return (
     <div
       ref={containerRef}
       data-duration-ms={durationMs}
-      className="relative shrink-0 touch-none overflow-hidden border-t border-border bg-card pb-component select-none"
+      className="relative shrink-0 touch-none overflow-hidden border-t border-border bg-card select-none"
+      style={{ height: `${height}px` }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
     >
+      {/* Resize grip, overlapping the top border. */}
+      <div
+        className="absolute inset-x-0 top-0 z-10 h-adjust cursor-ns-resize hover:bg-accent/40"
+        title="Drag to resize the timeline"
+        onPointerDown={handleResizeDown}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeUp}
+        onPointerCancel={handleResizeUp}
+      />
+
       {/* Ruler */}
       <div
         className="relative border-b border-border"
