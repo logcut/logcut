@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // No DOM, no @types/node: production sources must typecheck with zero
+    // platform globals. Anything genuinely needed is declared locally (id.ts).
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

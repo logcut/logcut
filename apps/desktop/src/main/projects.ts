@@ -2,6 +2,7 @@ import { randomId, type Transcript } from '@logcut/core'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import type { MediaKind, TranscriptStatus } from '../shared/ipc'
 
 /**
  * Bumped on any incompatible on-disk change. loadProject returns null for
@@ -10,10 +11,12 @@ import path from 'node:path'
  */
 const PROJECT_SCHEMA_VERSION = 2
 
-export type MediaKind = 'video' | 'audio'
-
-/** Persisted transcription state; 'running' is live-only and never written. */
-export type StoredTranscriptStatus = 'none' | 'ready' | 'failed'
+/**
+ * The persisted subset of the wire status: 'running' describes an in-flight
+ * request and has no meaning on disk. Deriving it rather than restating the
+ * members keeps the two from drifting.
+ */
+export type StoredTranscriptStatus = Exclude<TranscriptStatus, 'running'>
 
 export interface MediaAsset {
   id: string

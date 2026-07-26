@@ -1,5 +1,5 @@
 import { defaultOption, languageOptionToConfig, orderedOptions } from '@logcut/core'
-import type { LanguageOption, Transcript } from '@logcut/core'
+import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
 import { Captions, Download, Loader2, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
@@ -17,7 +17,7 @@ interface SubtitleTabProps {
   asset: MediaAssetSummary | null
   transcript: Transcript | null
   asr: AsrState
-  onTranscribe(config: ReturnType<typeof languageOptionToConfig>, force: boolean): void
+  onTranscribe(config: TranscribeConfig, force: boolean): void
   onExportSrt(): Promise<string | null>
   onOpenSettings(): void
 }

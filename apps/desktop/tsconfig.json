@@ -1,11 +1,17 @@
 {
-  "extends": "../../tsconfig.base.json",
+  // Solution-style: this file owns no files, it only points the editor at the
+  // two real projects. Without it, anything under src/renderer/src belongs to
+  // no project the language server can find, so VS Code falls back to an
+  // inferred project — no strict, no jsx, no DOM lib, no @/* paths — and
+  // reports errors (implicit any, unresolved imports) that `pnpm typecheck`
+  // never sees.
+  // shadcn CLI reads this file for its "@" alias; the references below have
+  // no bearing on that lookup.
   "compilerOptions": {
-    "types": ["node"],
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/renderer/src/*"]
+      "@/*": ["./src/renderer/src/*"]
     }
   },
-  "include": ["src/main", "src/preload", "src/shared", "electron.vite.config.ts"]
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
 }

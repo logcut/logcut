@@ -1,11 +1,8 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    // No DOM, no @types/node: production sources must typecheck with zero
-    // platform globals. Anything genuinely needed is declared locally (id.ts).
-    "lib": ["ES2022"],
-    "types": []
-  },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  // Solution-style: owns no files, only points the editor at the two real
+  // projects. The src project excludes tests (they may use node globals), so
+  // without this file the test files would belong to no project the language
+  // server can find and the editor would fall back to an inferred one.
+  "files": [],
+  "references": [{ "path": "./tsconfig.src.json" }, { "path": "./tsconfig.test.json" }]
 }

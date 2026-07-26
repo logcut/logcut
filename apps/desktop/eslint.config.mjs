@@ -14,13 +14,30 @@ import tseslint from 'typescript-eslint'
  * rewriting correct code.
  */
 export default tseslint.config(
-  { ignores: ['out/**', 'release/**', 'vendor/**'] },
+  { ignores: ['out/**', 'release/**', 'release-zip/**', 'vendor/**'] },
   {
-    files: ['src/renderer/**/*.{ts,tsx}'],
+    /**
+     * Every source file is parsed through the TypeScript project service —
+     * the same resolution a language server performs. A file belonging to no
+     * tsconfig fails here with "was not found by the project service", which
+     * is precisely the gap `pnpm typecheck` cannot see: it passes an explicit
+     * `-p` per project, so it covers files the editor would silently hand to
+     * an inferred project (no strict, no jsx, no lib, no path aliases) and
+     * report phantom errors on. This block carries no rules — the parse is
+     * the check.
+     */
+    files: ['src/**/*.{ts,tsx}', '*.ts'],
     languageOptions: {
       parser: tseslint.parser,
-      parserOptions: { ecmaFeatures: { jsx: true } }
-    },
+      parserOptions: {
+        ecmaFeatures: { jsx: true },
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname
+      }
+    }
+  },
+  {
+    files: ['src/renderer/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks },
     rules: {
       'react-hooks/rules-of-hooks': 'error',
