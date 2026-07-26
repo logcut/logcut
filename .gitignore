@@ -2,6 +2,7 @@ node_modules/
 dist/
 out/
 release/
+release-zip/
 # Leading ** matters: a pattern with a slash in the middle is anchored to this
 # file's directory, so a bare `vendor/ffmpeg/` would stop matching the moment
 # the app moved under apps/.

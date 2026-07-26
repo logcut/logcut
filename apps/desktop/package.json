@@ -27,7 +27,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json",
     "lint": "eslint .",
     "package:mac": "electron-builder --mac dmg --arm64 --publish never",
-    "package:win": "electron-builder --win nsis --x64 --publish never"
+    "package:win": "electron-builder --win nsis --x64 --publish never",
+    "package:win:zip": "electron-builder --win zip --x64 --publish never -c.directories.output=release-zip"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "^5.3.0",

@@ -62,3 +62,13 @@ jobs:
         with:
           name: logcut-win-x64
           path: apps/desktop/release/*.exe
+      # A no-installer build for testing: the nsis installer refuses to
+      # overwrite an existing install of the same version, which makes it
+      # useless for trying a fix before the version is bumped. Kept in its own
+      # output directory so it never lands among the release assets.
+      - name: Package (unsigned zip)
+        run: pnpm --filter logcut package:win:zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: logcut-win-x64-zip
+          path: apps/desktop/release-zip/*.zip
