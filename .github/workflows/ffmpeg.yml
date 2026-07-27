@@ -60,8 +60,33 @@ jobs:
           name: ffmpeg-win32-x64
           path: ffmpeg-win32-x64.tar.gz
 
+  # 22.04, not latest: the sidecar links glibc dynamically and glibc is only
+  # forward compatible, so the build host's version becomes the oldest distro
+  # the app can run on.
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq autoconf automake libtool pkg-config meson ninja-build nasm yasm
+      - name: Cache dependency sources
+        uses: actions/cache@v6
+        with:
+          path: apps/desktop/.ffmpeg-build/linux-x64/src/*.tar.*
+          key: ffmpeg-src-linux-${{ hashFiles('apps/desktop/scripts/ffmpeg-sources.env') }}
+      - name: Build
+        run: ./apps/desktop/scripts/build-ffmpeg-linux.sh
+      - name: Pack
+        run: tar -C apps/desktop/vendor/ffmpeg -czf ffmpeg-linux-x64.tar.gz linux-x64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-linux-x64
+          path: ffmpeg-linux-x64.tar.gz
+
   publish:
-    needs: [macos, windows]
+    needs: [macos, windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -77,6 +102,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "${{ inputs.release_tag }}"
-          ffmpeg-darwin-arm64.tar.gz ffmpeg-win32-x64.tar.gz SOURCES.md
+          ffmpeg-darwin-arm64.tar.gz ffmpeg-win32-x64.tar.gz ffmpeg-linux-x64.tar.gz SOURCES.md
           --title "LGPL ffmpeg sidecar ${{ inputs.release_tag }}"
           --notes "LGPL-only ffmpeg sidecar builds. SOURCES.md lists the exact source tarballs (LGPL source offer)."

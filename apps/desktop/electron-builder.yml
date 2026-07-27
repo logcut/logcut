@@ -41,6 +41,20 @@ win:
     - from: vendor/ffmpeg/win32-${arch}/
       to: ffmpeg/
 
+linux:
+  category: AudioVideo
+  icon: assets/app-icon.png
+  # AppImage only, and that is a deliberate narrowing: it is the one Linux
+  # format electron-updater can install into. A .deb would have to be updated
+  # through the distro's package manager, which we do not publish to, so it
+  # would be a build that silently never updates.
+  target:
+    - target: AppImage
+      arch: [x64]
+  extraResources:
+    - from: vendor/ffmpeg/linux-${arch}/
+      to: ffmpeg/
+
 nsis:
   oneClick: true
   deleteAppDataOnUninstall: false

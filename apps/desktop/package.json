@@ -28,6 +28,7 @@
     "lint": "eslint .",
     "package:mac": "electron-builder --mac --arm64 --publish always",
     "package:win": "electron-builder --win nsis --x64 --publish always",
+    "package:linux": "electron-builder --linux AppImage --x64 --publish always",
     "package:win:zip": "electron-builder --win zip --x64 --publish never -c.directories.output=release-zip"
   },
   "dependencies": {

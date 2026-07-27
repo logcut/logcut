@@ -14,7 +14,28 @@ permissions:
   contents: write
 
 jobs:
+  # electron-builder creates the release lazily, from inside each upload task.
+  # Those tasks run concurrently, so several of them find "release doesn't
+  # exist" at the same millisecond and all try to create it — one wins, the
+  # losers drop their upload, and the job still exits 0. v0.1.3 came out of
+  # this with a 0.12MB blockmap and no installer.
+  #
+  # Creating it up front means every uploader finds it already there.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create the draft release if it is missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="v$(node -p "require('./apps/desktop/package.json').version")"
+          gh release view "$V" > /dev/null 2>&1 && { echo "$V already exists"; exit 0; }
+          gh release create "$V" --draft --title "$V" \
+            --notes "Draft — assets are uploaded by the package workflow."
+
   mac:
+    needs: release
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v7
@@ -52,6 +73,7 @@ jobs:
           path: apps/desktop/release/*.dmg
 
   windows:
+    needs: release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -92,3 +114,37 @@ jobs:
         with:
           name: logcut-win-x64-zip
           path: apps/desktop/release-zip/*.zip
+
+  # 22.04 to match the ffmpeg sidecar's build host: the AppImage bundles
+  # Electron and the sidecar, both dynamically linked against glibc, and glibc
+  # is only forward compatible.
+  linux:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Download ffmpeg sidecar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.ffmpeg_tag }}" -p 'ffmpeg-linux-x64.tar.gz'
+          mkdir -p apps/desktop/vendor/ffmpeg
+          tar -xzf ffmpeg-linux-x64.tar.gz -C apps/desktop/vendor/ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+      - run: pnpm build
+      # Unsigned, like Windows. AppImage auto-update does not verify a
+      # signature. Publishes AppImage, latest-linux.yml and the blockmap.
+      - name: Package (unsigned AppImage) and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter logcut package:linux
+      - uses: actions/upload-artifact@v7
+        with:
+          name: logcut-linux-x64
+          path: apps/desktop/release/*.AppImage
