@@ -50,6 +50,8 @@ export default function VideoPlayer({
   const [elementMs, setElementMs] = useState(0)
   const [paused, setPaused] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
+  /** The picture's size on screen — the letterbox around it is not it. */
+  const [frame, setFrame] = useState({ width: 0, height: 0 })
 
   // Escape and the platform's own shortcut leave fullscreen without touching
   // the button, so the icon follows the document rather than the last click.
@@ -58,6 +60,25 @@ export default function VideoPlayer({
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
+
+  // The caption belongs to the picture, so it has to be laid out against the
+  // picture's box rather than the pane's — otherwise a frame that does not fill
+  // the pane leaves the caption stranded in the letterbox beside it.
+  //
+  // Measuring beats deriving the box from the aspect ratio: a replaced element
+  // bounded on both axes already sizes itself to the picture exactly, and CSS
+  // has no way to hand that result to a sibling. It moves whenever the pane
+  // resizes or a clip of another shape loads, both of which the observer sees.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry?.contentRect
+      if (box) setFrame({ width: box.width, height: box.height })
+    })
+    observer.observe(video)
+    return () => observer.disconnect()
+  }, [videoRef])
 
   const togglePlay = (): void => {
     const video = videoRef.current
@@ -72,8 +93,15 @@ export default function VideoPlayer({
   }
 
   return (
-    <div ref={paneRef} className="flex min-h-0 min-w-0 flex-1 flex-col bg-card">
-      <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center bg-black">
+    // Letterboxing is the panel surface showing through, so a frame that does
+    // not fill the pane reads as one continuous panel rather than a black box
+    // sitting in it. Fullscreen is the exception: there the surround has to be
+    // black, because nothing else is on screen to judge the picture against.
+    <div
+      ref={paneRef}
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-card [&:fullscreen]:bg-black"
+    >
+      <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center">
         <video
           ref={videoRef}
           className="max-h-full max-w-full"
@@ -91,11 +119,18 @@ export default function VideoPlayer({
           onPause={() => setPaused(true)}
           onEnded={onEnded}
         />
-        {captionText && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-block flex justify-center px-inset">
-            <span className="max-w-[90%] rounded-panel bg-black/60 px-stack py-inline text-center text-body-lg leading-snug text-white [text-wrap:balance]">
-              {captionText}
-            </span>
+        {captionText && frame.width > 0 && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            {/* Sized to the picture, so the caption sits inside the frame
+                wherever the letterbox happens to leave it. */}
+            <div
+              className="flex items-end justify-center px-inset pb-block"
+              style={{ width: frame.width, height: frame.height }}
+            >
+              <span className="max-w-full rounded-panel bg-black/60 px-stack py-inline text-center text-body-lg leading-snug text-white [text-wrap:balance]">
+                {captionText}
+              </span>
+            </div>
           </div>
         )}
       </div>

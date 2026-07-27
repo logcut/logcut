@@ -87,6 +87,14 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   /** The clip the timeline has selected — what Delete removes. */
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  /**
+   * Whose subtitles the editor is showing. Deliberately not selectedClipId:
+   * selection is a timeline gesture that arms Delete, while opening the editor
+   * is a subtitle gesture. Sharing one state made double-clicking to edit put
+   * a selection border on the clip, which reads as "this is about to be
+   * deleted" when nothing of the sort is happening.
+   */
+  const [subtitleClipId, setSubtitleClipId] = useState<string | null>(null)
   /** The line the user is pointed at: nearest, so a gap still has an answer. */
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
@@ -138,7 +146,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const utterances = useMemo(() => layUtterances(clips, transcripts), [clips, transcripts])
 
   /** Subtitle work targets the selected clip, or the first one laid down. */
-  const subtitleClip = clips.find((clip) => clip.id === selectedClipId) ?? clips[0] ?? null
+  const subtitleClip = clips.find((clip) => clip.id === subtitleClipId) ?? clips[0] ?? null
   const subtitleAssetId = subtitleClip?.assetId ?? null
   const subtitleTranscript = subtitleAssetId ? (transcripts[subtitleAssetId] ?? null) : null
 
@@ -165,6 +173,10 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    *  ones — the same line has two names and this is the crossing point. */
   const activeSourceId =
     utterances.find((utterance) => utterance.id === activeUtteranceId)?.sourceId ?? null
+
+  /** Both the list and the inspector offer the same speakers. */
+  const speakerIds = subtitleTranscript ? speakerIdsOf(subtitleTranscript) : []
+  const newSpeakerId = subtitleTranscript ? nextSpeakerId(subtitleTranscript) : '1'
 
   const captionText =
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
@@ -213,9 +225,9 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const openSubtitlesAt = (timeMs: number): void => {
     const index = findNearestUtteranceIndex(utterances, timeMs)
     const line = utterances[index]
-    // Opening on the clip the line came from is what makes the dialog show the
+    // Opening on the clip the line came from is what makes the editor show the
     // right transcript when several clips are laid down.
-    if (line) setSelectedClipId(line.clipId)
+    if (line) setSubtitleClipId(line.clipId)
     seekTo(line?.start ?? timeMs)
     // The editor is a face of the Subtitles tab now, so getting there means
     // selecting that tab — otherwise a double-click on the timeline would
@@ -278,6 +290,13 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * timeupdate: that arrives ~4Hz and only once the seek has completed, which
    * is long enough for the highlight to visibly lag the click.
    */
+  const togglePlay = (): void => {
+    const video = videoRef.current
+    if (!video || playback.src === '') return
+    if (video.paused) void video.play()
+    else video.pause()
+  }
+
   const seekToUtterance = (utterance: Utterance): void => {
     const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
     seekTo(start)
@@ -287,8 +306,10 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   return (
     // Panels are surfaces floating on the page background; the space between
     // them is the background showing through, and is also what resizes them.
-    // The 650px floor mirrors the window's minHeight (see main/index.ts).
-    <div className="flex h-screen min-h-[650px] flex-col overflow-hidden bg-background">
+    // The floors mirror the window's minWidth/minHeight (see main/index.ts).
+    // They matter on the web build and while the window is being resized, where
+    // the renderer can briefly be smaller than the shell allows.
+    <div className="flex h-screen min-h-[650px] min-w-[1180px] flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
         onBack={onBack}
@@ -345,8 +366,8 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                       onTimeSave={handleTimeSave}
                       onAdd={handleAdd}
                       onMerge={handleMerge}
-                      speakerIds={speakerIdsOf(subtitleTranscript)}
-                      nextSpeakerId={nextSpeakerId(subtitleTranscript)}
+                      speakerIds={speakerIds}
+                      nextSpeakerId={newSpeakerId}
                       onSpeakerSave={handleSpeakerSave}
                       onUndo={undo}
                       onResegment={handleResegment}
@@ -420,6 +441,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
             onSeek={playback.seek}
             onScrub={applyTime}
             onDropAsset={(assetId) => void addClip(assetId)}
+            onTogglePlay={togglePlay}
             onEditSubtitlesAt={openSubtitlesAt}
           />
         </Panel>

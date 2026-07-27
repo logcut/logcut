@@ -1,7 +1,13 @@
 import { ChevronDown, Merge, Plus, UserRound } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { FocusEvent, JSX, KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { formatTimecodeFull, parseTimecode } from '@logcut/core'
+import type {
+  FocusEvent,
+  JSX,
+  KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent
+} from 'react'
+import { clampUtteranceTime, formatTimecodeFull, parseTimecode } from '@logcut/core'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -13,6 +19,17 @@ import {
 import type { Utterance } from '@logcut/core'
 
 type TimeEdge = 'start' | 'end'
+
+/**
+ * How far a timecode moves per pixel dragged, and how far the pointer has to
+ * travel before a press counts as a drag at all.
+ *
+ * 10ms is the grid the field displays anyway (see core/timecode.md), so a drag
+ * cannot produce a value the label could not show. The threshold is what keeps
+ * click-to-type working: a click always jitters a pixel or two.
+ */
+const MS_PER_PIXEL = 10
+const DRAG_THRESHOLD_PX = 3
 
 interface SubtitleListProps {
   utterances: Utterance[]
@@ -67,6 +84,19 @@ export default function SubtitleList({
   const [timeDraft, setTimeDraft] = useState('')
   const timeEditRef = useRef<{ id: string; edge: TimeEdge } | null>(null)
   const timeDraftRef = useRef('')
+  // A drag in progress. Entirely in a ref, and the preview is written straight
+  // to the element's text: this fires per pointermove, and re-rendering a list
+  // of a thousand rows at that rate is exactly the kind of thing the playhead
+  // avoids the same way.
+  const scrubRef = useRef<{
+    id: string
+    edge: TimeEdge
+    element: HTMLElement
+    originX: number
+    originMs: number
+    valueMs: number
+    moved: boolean
+  } | null>(null)
 
   useEffect(() => {
     if (editingId === null) activeRef.current?.scrollIntoView({ block: 'nearest' })
@@ -167,6 +197,65 @@ export default function SubtitleList({
     return range.startOffset
   }
 
+  const beginScrub = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    utterance: Utterance,
+    edge: TimeEdge
+  ): void => {
+    // Stops the press from selecting text across the list while dragging.
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    selectRow(utterance)
+    scrubRef.current = {
+      id: utterance.id,
+      edge,
+      element: event.currentTarget,
+      originX: event.clientX,
+      originMs: utterance[edge],
+      valueMs: utterance[edge],
+      moved: false
+    }
+  }
+
+  const moveScrub = (event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const scrub = scrubRef.current
+    if (scrub === null) return
+    const dx = event.clientX - scrub.originX
+    if (!scrub.moved && Math.abs(dx) < DRAG_THRESHOLD_PX) return
+    scrub.moved = true
+    // The same clamp the commit will apply, so the number never jumps on
+    // release.
+    scrub.valueMs = clampUtteranceTime(
+      utterances,
+      scrub.id,
+      scrub.edge,
+      scrub.originMs + dx * MS_PER_PIXEL
+    )
+    scrub.element.textContent = formatTimecodeFull(scrub.valueMs)
+  }
+
+  const endScrub = (event: ReactPointerEvent<HTMLButtonElement>, utterance: Utterance): void => {
+    const scrub = scrubRef.current
+    scrubRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    if (scrub === null) return
+
+    // Never moved: it was a click, so open the field instead.
+    if (!scrub.moved) {
+      beginTimeEdit(utterance, scrub.edge)
+      return
+    }
+    if (scrub.valueMs !== scrub.originMs) {
+      onTimeSave(scrub.id, scrub.edge, scrub.valueMs)
+      return
+    }
+    // Dragged but landed back on the original — nothing will re-render, so the
+    // text written during the drag has to be put back by hand.
+    scrub.element.textContent = formatTimecodeFull(scrub.originMs)
+  }
+
   /**
    * One timecode cell. A function rather than a component so the two calls
    * cannot remount their input on re-render, and so the caller can place each
@@ -193,12 +282,11 @@ export default function SubtitleList({
       <button
         type="button"
         title="Click to retype this time"
-        className={`timecode cursor-text rounded border border-transparent px-inline py-inline text-left text-caption transition-colors hover:border-input ${className}`}
-        onMouseDown={(event) => {
-          event.preventDefault()
-          selectRow(utterance)
-          beginTimeEdit(utterance, edge)
-        }}
+        className={`timecode cursor-ew-resize rounded border border-transparent px-inline py-inline text-left text-caption transition-colors hover:border-input ${className}`}
+        onPointerDown={(event) => beginScrub(event, utterance, edge)}
+        onPointerMove={moveScrub}
+        onPointerUp={(event) => endScrub(event, utterance)}
+        onPointerCancel={(event) => endScrub(event, utterance)}
       >
         {formatTimecodeFull(utterance[edge])}
       </button>
@@ -231,13 +319,15 @@ export default function SubtitleList({
               data-index={index}
               ref={utterance.id === activeId ? activeRef : undefined}
             >
-              {/* Its own hover target: 2px of rule with 4px of slack either
-                  side. No spacing token is 10px, and this is not spacing — it
+              {/* Its own hover target: 2px of rule with 6px of slack either
+                  side. No spacing token is 14px, and this is not spacing — it
                   is a hit target, sized from what it has to catch.
-                  The rows' 4px of padding leaves 8px of dead space between
-                  them, so the outermost pixel at each end laps onto the very
-                  top of the timecode button below and the bottom of the text
-                  above. Both are border, not glyph, and neither is a target. The
+                  The rows' 4px of padding leaves only 8px of dead space, so the
+                  outer 3px at each end laps onto the row beyond: the very top
+                  of the timecode button below, the bottom of the text above.
+                  That band is border and half-leading rather than glyph, but it
+                  does sit over the timecode, which is now draggable — press
+                  within 3px of a row's top edge and this catches it instead. The
                   whole row used to be the trigger, which meant the divider and
                   its buttons appeared over the line above whenever the text was
                   merely being read or typed into.
@@ -249,7 +339,7 @@ export default function SubtitleList({
                   `pointer-events-none` so the invisible band never swallows a
                   click meant for a row. */}
               {previous && (
-                <div className="group/gap absolute inset-x-0 top-0 z-10 flex h-[10px] -translate-y-1/2 items-center gap-component">
+                <div className="group/gap absolute inset-x-0 top-0 z-10 flex h-[14px] -translate-y-1/2 items-center gap-component">
                   <span className="h-adjust flex-1 rounded-full bg-primary opacity-0 transition-opacity group-hover/gap:opacity-100" />
                   {/* Left in place rather than hidden when there is no gap: the
                       two kinds of boundary then look identical, nothing jumps
@@ -263,7 +353,17 @@ export default function SubtitleList({
                         ? 'Add a subtitle in this silence'
                         : 'These lines already touch — no silence to fill'
                     }
-                    className="pointer-events-none flex h-control-sm cursor-pointer items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground opacity-0 shadow-md transition-opacity group-hover/gap:pointer-events-auto group-hover/gap:opacity-100 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 group-hover/gap:disabled:opacity-40"
+                    // Exactly one `group-hover/gap:opacity-*` may be present:
+                    // two of them are the same variant, so which wins comes
+                    // down to emission order. A bare `disabled:opacity-40`
+                    // alongside `opacity-0` is worse still — it outranks the
+                    // unqualified rule and left every disabled Add sitting at
+                    // 40% with no pointer anywhere near it.
+                    className={`pointer-events-none flex h-control-sm items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground opacity-0 shadow-md transition-opacity group-hover/gap:pointer-events-auto ${
+                      canAdd
+                        ? 'cursor-pointer group-hover/gap:opacity-100 hover:bg-primary/90'
+                        : 'cursor-not-allowed group-hover/gap:opacity-40'
+                    }`}
                     onClick={() => onAdd(previous.id)}
                   >
                     <Plus size={12} />

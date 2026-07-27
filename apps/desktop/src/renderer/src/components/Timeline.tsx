@@ -111,6 +111,8 @@ interface TimelineProps {
    * the playhead would jump back to the left at each boundary.
    */
   clipOffsetMs: number
+  /** Space, while the strip has focus. */
+  onTogglePlay(): void
   /** An asset was dragged here from the media library. */
   onDropAsset(assetId: string): void
   /** Double-click on a subtitle block, with the time that was clicked. */
@@ -180,6 +182,7 @@ export default function Timeline({
   onScrub,
   onSeek,
   clipOffsetMs,
+  onTogglePlay,
   onDropAsset,
   onEditSubtitlesAt
 }: TimelineProps): JSX.Element {
@@ -377,6 +380,13 @@ export default function Timeline({
   // The strip takes focus on press (tabIndex), which is what makes Delete
   // reach here at all rather than the document.
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    // Space is the one shortcut that needs nothing selected: the strip having
+    // focus is enough. preventDefault, or the page scrolls with it.
+    if (event.key === ' ') {
+      event.preventDefault()
+      onTogglePlay()
+      return
+    }
     if (event.key !== 'Delete' && event.key !== 'Backspace') return
     if (selectedClipId === null) return
     event.preventDefault()

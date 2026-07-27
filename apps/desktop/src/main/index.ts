@@ -13,10 +13,12 @@ protocol.registerSchemesAsPrivileged([
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    // Below this the editor's three panes (media, preview, timeline) stop
-    // being usable, so the window refuses to shrink any further.
+    width: 1400,
+    height: 850,
+    // Below these the editor's panes stop being usable, so the window refuses
+    // to shrink any further. The width has to hold four columns at once — the
+    // tab panel, the player, the inspector, and the gaps between them.
+    minWidth: 1180,
     minHeight: 650,
     title: 'LogCut',
     // Matches --ink-page so the window doesn't flash white before the

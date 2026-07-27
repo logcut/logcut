@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  clampUtteranceTime,
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
   insertUtteranceAfter,
@@ -261,4 +262,15 @@ test('setUtteranceSpeaker is a no-op for the same value or an unknown id', () =>
   const source = spoken()
   assert.equal(setUtteranceSpeaker(source, 'a', '2'), source)
   assert.equal(setUtteranceSpeaker(source, 'nope', '3'), source)
+})
+
+test('clampUtteranceTime agrees with what setUtteranceTime commits', () => {
+  const source = fixture() // a 0-400, b 400-800, c 800-1000
+  for (const timeMs of [-500, 0, 100, 400, 500, 790, 800, 5000]) {
+    for (const edge of ['start', 'end'] as const) {
+      const previewed = clampUtteranceTime(source.utterances, 'b', edge, timeMs)
+      const committed = setUtteranceTime(source, 'b', edge, timeMs).utterances[1][edge]
+      assert.equal(previewed, committed, `drifted at ${edge} ${timeMs}`)
+    }
+  }
 })

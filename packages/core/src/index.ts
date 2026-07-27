@@ -18,6 +18,7 @@ export { formatSrtTimestamp, toSrt } from './srt.ts'
 export { formatTimecode, formatTimecodeFull, parseTimecode } from './timecode.ts'
 
 export {
+  clampUtteranceTime,
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
   insertUtteranceAfter,

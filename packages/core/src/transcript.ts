@@ -183,14 +183,41 @@ export function insertUtteranceAfter(transcript: Transcript, afterId: string): T
 const MIN_DURATION_MS = 10
 
 /**
- * Move one edge of a line, clamped into the room its neighbours leave.
+ * Where an edge would actually land, clamped into the room its neighbours
+ * leave. Returns `timeMs` rounded when the line is unknown.
  *
- * Clamping rather than rejecting: the field is free text, and silently
- * refusing a typed time leaves the user staring at a number that did not take.
- * Landing on the nearest legal value is visible and undoable.
+ * Exported so a live preview — a field being dragged — can show the same value
+ * the commit will produce. Two copies of this arithmetic would drift, and the
+ * drift would only show as a number that jumps when the mouse is released.
  *
  * The bounds are the neighbours themselves, so `utterances` stays sorted and
  * non-overlapping — which every lookup in this file assumes.
+ */
+export function clampUtteranceTime(
+  utterances: Utterance[],
+  id: string,
+  edge: 'start' | 'end',
+  timeMs: number
+): number {
+  const index = utterances.findIndex((utterance) => utterance.id === id)
+  const utterance = utterances[index]
+  if (!utterance) return Math.round(timeMs)
+
+  const previous = utterances[index - 1]
+  const next = utterances[index + 1]
+  const lower = edge === 'start' ? (previous?.end ?? 0) : utterance.start + MIN_DURATION_MS
+  const upper =
+    edge === 'start' ? utterance.end - MIN_DURATION_MS : (next?.start ?? Number.MAX_SAFE_INTEGER)
+
+  return Math.round(Math.min(Math.max(timeMs, lower), Math.max(lower, upper)))
+}
+
+/**
+ * Move one edge of a line.
+ *
+ * Clamping rather than rejecting: the field is free text and also draggable,
+ * and silently refusing a value leaves the user staring at a number that did
+ * not take. Landing on the nearest legal value is visible and undoable.
  */
 export function setUtteranceTime(
   transcript: Transcript,
@@ -202,13 +229,7 @@ export function setUtteranceTime(
   const utterance = transcript.utterances[index]
   if (!utterance) return transcript
 
-  const previous = transcript.utterances[index - 1]
-  const next = transcript.utterances[index + 1]
-  const lower = edge === 'start' ? (previous?.end ?? 0) : utterance.start + MIN_DURATION_MS
-  const upper =
-    edge === 'start' ? utterance.end - MIN_DURATION_MS : (next?.start ?? Number.MAX_SAFE_INTEGER)
-
-  const clamped = Math.round(Math.min(Math.max(timeMs, lower), Math.max(lower, upper)))
+  const clamped = clampUtteranceTime(transcript.utterances, id, edge, timeMs)
   if (clamped === utterance[edge]) return transcript
 
   const moved: Utterance =
