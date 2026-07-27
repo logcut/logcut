@@ -7,6 +7,12 @@ on:
         description: 'ffmpeg release tag to bundle (e.g. ffmpeg-b1)'
         required: true
 
+# electron-builder --publish creates the release and uploads to it, and the
+# default GITHUB_TOKEN is read-only: without this the build succeeds and the
+# upload fails with "Resource not accessible by integration".
+permissions:
+  contents: write
+
 jobs:
   mac:
     runs-on: macos-14
