@@ -7,7 +7,7 @@ import {
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
 import MediaTab from '@/components/MediaTab'
@@ -17,9 +17,13 @@ import SettingsDialog from '@/components/SettingsDialog'
 import SubtitleDialog from '@/components/SubtitleDialog'
 import SubtitleTab from '@/components/SubtitleTab'
 import Timeline from '@/components/Timeline'
+import type { TimelineClipView } from '@/components/Timeline'
 import VideoPlayer from '@/components/VideoPlayer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useProject } from '@/hooks/useProject'
+import { useTimelinePlayback } from '@/hooks/useTimelinePlayback'
+import { layUtterances } from '@/lib/timeline'
+import type { MediaAssetSummary } from '../../../shared/ipc'
 
 /** The editor opens split 60/40 between the panes and the timeline. */
 const TIMELINE_HEIGHT_RATIO = 0.4
@@ -56,23 +60,27 @@ interface EditorPageProps {
 export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.Element {
   const {
     project,
-    activeAsset,
-    transcript,
+    transcripts,
     loading,
     error,
     asr,
     importMedia,
     removeMedia,
-    setActiveMedia,
+    addClip,
+    removeClip,
     rename,
     transcribe,
     applyTranscript,
     undo,
-    canUndo,
+    undoableAssetId,
     exportSrt
   } = useProject(projectId)
 
   const [tab, setTab] = useState('media')
+  /** Media-library highlight only. What is being edited is on the timeline. */
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  /** The clip the timeline has selected — what Delete removes. */
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   /** The line the user is pointed at: nearest, so a gap still has an answer. */
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
@@ -87,6 +95,43 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     )
   )
   const videoRef = useRef<HTMLVideoElement>(null)
+
+  const clips = useMemo(() => project?.timeline ?? [], [project])
+  const assets = useMemo(() => project?.assets ?? [], [project])
+  const playback = useTimelinePlayback(videoRef, clips, assets)
+
+  const assetOf = (assetId: string): MediaAssetSummary | null =>
+    assets.find((asset) => asset.id === assetId) ?? null
+
+  /** Clips with their asset's artwork folded in, ready to draw. */
+  const clipViews = useMemo<TimelineClipView[]>(
+    () =>
+      clips.map((clip) => {
+        const asset = assets.find((candidate) => candidate.id === clip.assetId)
+        return {
+          id: clip.id,
+          startMs: clip.startMs,
+          durationMs: clip.durationMs,
+          name: asset?.fileName ?? 'Missing media',
+          filmstripUrl: asset?.filmstripUrl ?? null,
+          waveformUrl: asset?.waveformUrl ?? null,
+          missing: asset?.missing ?? true
+        }
+      }),
+    [clips, assets]
+  )
+
+  /**
+   * Every clip's subtitles on the timeline's own clock. Downstream this reads
+   * exactly like one transcript, which is what keeps the searches, the block
+   * merging and the highlight unaware that the timeline is made of pieces.
+   */
+  const utterances = useMemo(() => layUtterances(clips, transcripts), [clips, transcripts])
+
+  /** Subtitle work targets the selected clip, or the first one laid down. */
+  const subtitleClip = clips.find((clip) => clip.id === selectedClipId) ?? clips[0] ?? null
+  const subtitleAssetId = subtitleClip?.assetId ?? null
+  const subtitleTranscript = subtitleAssetId ? (transcripts[subtitleAssetId] ?? null) : null
 
   // Limits are recomputed per drag rather than cached, so a resized window
   // never leaves a stale bound behind. The ratio only seeds the initial
@@ -107,7 +152,11 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     )
   }
 
-  const utterances = transcript?.utterances ?? []
+  /** The dialog speaks the transcript's own ids, the timeline speaks composite
+   *  ones — the same line has two names and this is the crossing point. */
+  const activeSourceId =
+    utterances.find((utterance) => utterance.id === activeUtteranceId)?.sourceId ?? null
+
   const captionText =
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
 
@@ -140,9 +189,8 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   }
 
   const seekTo = (timeMs: number): void => {
-    const video = videoRef.current
-    if (!video) return
-    video.currentTime = timeMs / 1000
+    playback.seek(timeMs)
+    applyTime(timeMs)
   }
 
   /**
@@ -155,38 +203,43 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    */
   const openSubtitlesAt = (timeMs: number): void => {
     const index = findNearestUtteranceIndex(utterances, timeMs)
-    const target = utterances[index]?.start ?? timeMs
-    seekTo(target)
-    applyTime(target)
+    const line = utterances[index]
+    // Opening on the clip the line came from is what makes the dialog show the
+    // right transcript when several clips are laid down.
+    if (line) setSelectedClipId(line.clipId)
+    seekTo(line?.start ?? timeMs)
     setSubtitlesOpen(true)
   }
 
   const handleEditSave = (id: string, text: string): void => {
-    if (!transcript) return
-    applyTranscript(setUtteranceText(transcript, id, text))
+    if (!subtitleTranscript || !subtitleAssetId) return
+    applyTranscript(subtitleAssetId, setUtteranceText(subtitleTranscript, id, text))
   }
 
   const handleResegment = (): void => {
-    if (transcript) applyTranscript(segmentTranscript(transcript))
+    if (!subtitleTranscript || !subtitleAssetId) return
+    applyTranscript(subtitleAssetId, segmentTranscript(subtitleTranscript))
   }
 
   const handleReplaceAll = (find: string, replace: string): number => {
-    if (!transcript) return 0
-    const result = replaceAllText(transcript, find, replace)
-    if (result.count > 0) applyTranscript(result.transcript)
+    if (!subtitleTranscript || !subtitleAssetId) return 0
+    const result = replaceAllText(subtitleTranscript, find, replace)
+    if (result.count > 0) applyTranscript(subtitleAssetId, result.transcript)
     return result.count
   }
 
+  /** The dialog speaks the transcript's own ids; the timeline speaks its own. */
   const seekToUtterance = (utterance: Utterance): void => {
-    seekTo(utterance.start)
-    applyTime(utterance.start)
+    const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
+    seekTo(start)
     void videoRef.current?.play()
   }
 
   return (
     // Panels are surfaces floating on the page background; the space between
     // them is the background showing through, and is also what resizes them.
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
+    // The 650px floor mirrors the window's minHeight (see main/index.ts).
+    <div className="flex h-screen min-h-[650px] flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
         onBack={onBack}
@@ -221,19 +274,24 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                 <TabsContent value="media" className="flex min-h-0 flex-col">
                   <MediaTab
                     assets={project?.assets ?? []}
-                    activeAssetId={project?.activeAssetId ?? null}
+                    selectedAssetId={selectedAssetId}
+                    timelineAssetIds={clips.map((clip) => clip.assetId)}
                     onImport={(paths) => void importMedia(paths)}
-                    onSelect={(assetId) => void setActiveMedia(assetId)}
+                    onSelect={setSelectedAssetId}
                     onRemove={(assetId) => void removeMedia(assetId)}
                   />
                 </TabsContent>
                 <TabsContent value="subtitle" className="flex min-h-0 flex-col">
                   <SubtitleTab
-                    asset={activeAsset}
-                    transcript={transcript}
+                    asset={subtitleAssetId ? assetOf(subtitleAssetId) : null}
+                    transcript={subtitleTranscript}
                     asr={asr}
-                    onTranscribe={(config, force) => void transcribe(config, force)}
-                    onExportSrt={exportSrt}
+                    onTranscribe={(config, force) => {
+                      if (subtitleAssetId) void transcribe(subtitleAssetId, config, force)
+                    }}
+                    onExportSrt={() =>
+                      subtitleAssetId ? exportSrt(subtitleAssetId) : Promise.resolve(null)
+                    }
                     onOpenSettings={() => setSettingsOpen(true)}
                   />
                 </TabsContent>
@@ -242,9 +300,9 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
 
             {subtitlesOpen && (
               <SubtitleDialog
-                utterances={utterances}
-                activeId={activeUtteranceId}
-                canUndo={canUndo}
+                utterances={subtitleTranscript?.utterances ?? []}
+                activeId={activeSourceId}
+                canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
                 onClose={() => setSubtitlesOpen(false)}
                 onSeek={seekToUtterance}
                 onEditSave={handleEditSave}
@@ -258,11 +316,14 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
           <ResizeHandle orientation="vertical" onResize={resizeLeftPanel} />
 
           <Panel className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {activeAsset && !activeAsset.missing ? (
+            {playback.src !== '' ? (
               <VideoPlayer
                 ref={videoRef}
-                src={activeAsset.mediaUrl}
-                onTimeUpdate={applyTime}
+                src={playback.src}
+                // The element's clock restarts on every clip; the timeline's
+                // does not, so element time is translated before use.
+                onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}
+                onEnded={playback.advance}
                 captionText={captionText}
               />
             ) : (
@@ -271,9 +332,11 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                 <p className="m-0 text-body font-normal">
                   {loading
                     ? 'Opening project…'
-                    : activeAsset?.missing
+                    : clips.length > 0
                       ? 'The media file is missing from disk.'
-                      : 'Import a video to get started.'}
+                      : assets.length > 0
+                        ? 'Drag a video onto the timeline to start editing.'
+                        : 'Import a video to get started.'}
                 </p>
               </div>
             )}
@@ -284,14 +347,18 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
 
         <Panel className="shrink-0" style={{ height: timelineHeight }}>
           <Timeline
-            durationMs={activeAsset?.durationMs ?? 0}
+            durationMs={playback.durationMs}
+            clips={clipViews}
             utterances={utterances}
             activeUtteranceId={activeUtteranceId}
+            selectedClipId={selectedClipId}
             videoRef={videoRef}
-            assetName={activeAsset?.fileName ?? null}
-            filmstripUrl={activeAsset?.filmstripUrl ?? null}
-            waveformUrl={activeAsset?.waveformUrl ?? null}
+            clipOffsetMs={playback.clip?.startMs ?? 0}
+            onSelectClip={setSelectedClipId}
+            onRemoveClip={(clipId) => void removeClip(clipId)}
+            onSeek={playback.seek}
             onScrub={applyTime}
+            onDropAsset={(assetId) => void addClip(assetId)}
             onEditSubtitlesAt={openSubtitlesAt}
           />
         </Panel>

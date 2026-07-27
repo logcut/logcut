@@ -5,7 +5,11 @@ import { Slot } from 'radix-ui'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  // Heights come from --size-control-* (see styles.css); nothing here hardcodes
+  // one. Icons are pinned to --icon-sm because a control this short cannot take
+  // shadcn's 16px default, and callers pass lucide `size` as an attribute,
+  // which a class always beats.
+  "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-label font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[2px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-icon-sm",
   {
     variants: {
       variant: {
@@ -19,14 +23,14 @@ const buttonVariants = cva(
         link: 'text-primary underline-offset-4 hover:underline'
       },
       size: {
-        default: 'h-9 px-4 py-2 has-[>svg]:px-3',
-        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
-        sm: 'h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5',
-        lg: 'h-10 rounded-md px-6 has-[>svg]:px-4',
-        icon: 'size-9',
-        'icon-xs': "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
-        'icon-sm': 'size-8',
-        'icon-lg': 'size-10'
+        default: 'h-control-md px-stack',
+        xs: "h-control-sm gap-1 rounded-md px-compact text-caption [&_svg:not([class*='size-'])]:size-3",
+        sm: 'h-control-sm rounded-md px-component text-caption',
+        lg: 'h-control-lg rounded-md px-inset',
+        icon: 'size-control-md',
+        'icon-xs': "size-control-sm rounded-md [&_svg:not([class*='size-'])]:size-3",
+        'icon-sm': 'size-control-sm',
+        'icon-lg': 'size-control-lg'
       }
     },
     defaultVariants: {

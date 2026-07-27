@@ -109,13 +109,13 @@ export default function SubtitleList({
             >
               <div className="AimText group flex items-start gap-2 pl-4">
                 <div
-                  className="relative w-12 shrink-0 cursor-pointer pt-3 text-center text-xs text-muted-foreground select-none transition-colors duration-[160ms] ease-linear hover:text-primary"
+                  className="relative w-12 shrink-0 cursor-pointer pt-3 text-center text-caption text-muted-foreground select-none transition-colors duration-[160ms] ease-linear hover:text-primary"
                   onMouseDown={() => {
                     selectRow(utterance)
                     onSelect(utterance)
                   }}
                 >
-                  <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-xs opacity-0 transition-opacity duration-300 group-hover:text-primary group-hover:opacity-100">
+                  <span className="absolute -top-1 left-1/2 -translate-x-1/2 text-caption opacity-0 transition-opacity duration-300 group-hover:text-primary group-hover:opacity-100">
                     #{index + 1}
                   </span>
                   {formatTimecode(utterance.start)}
@@ -124,7 +124,7 @@ export default function SubtitleList({
                   <textarea
                     autoFocus
                     maxLength={10000}
-                    className="block flex-1 resize-none bg-transparent p-2 text-base leading-[1.6] outline-none [field-sizing:content]"
+                    className="block flex-1 resize-none bg-transparent p-2 text-body-lg leading-[1.6] outline-none [field-sizing:content]"
                     value={draft}
                     onFocus={placeCaret}
                     onChange={(event) => {
@@ -136,7 +136,7 @@ export default function SubtitleList({
                   />
                 ) : (
                   <div
-                    className={`flex-1 cursor-text p-2 text-base leading-[1.6] break-words whitespace-pre-wrap transition-colors duration-[160ms] ease-linear ${
+                    className={`flex-1 cursor-text p-2 text-body-lg leading-[1.6] break-words whitespace-pre-wrap transition-colors duration-[160ms] ease-linear ${
                       selected || active ? 'bg-primary/30' : 'hover:text-muted-foreground'
                     }`}
                     onMouseDown={(event) => {

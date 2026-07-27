@@ -80,13 +80,13 @@ export default function SubtitleDialog({
           <Input
             placeholder="Find"
             value={findText}
-            className="h-8"
+            className="h-control-sm"
             onChange={(event) => setFindText(event.target.value)}
           />
           <Input
             placeholder="Replace"
             value={replaceText}
-            className="h-8"
+            className="h-control-sm"
             onChange={(event) => setReplaceText(event.target.value)}
           />
           <Button size="sm" disabled={findText === ''} onClick={replaceAll}>

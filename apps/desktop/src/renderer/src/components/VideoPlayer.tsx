@@ -4,6 +4,8 @@ import type { JSX } from 'react'
 interface VideoPlayerProps {
   src: string
   onTimeUpdate(currentTimeMs: number): void
+  /** The loaded file ran out. The timeline uses this to roll onto the next clip. */
+  onEnded(): void
   /** Text of the utterance playing now; null or empty renders no caption. */
   captionText: string | null
 }
@@ -18,7 +20,7 @@ interface VideoPlayerProps {
  * placement already allows.
  */
 const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function VideoPlayer(
-  { src, onTimeUpdate, captionText },
+  { src, onTimeUpdate, onEnded, captionText },
   ref
 ) {
   return (
@@ -29,6 +31,7 @@ const VideoPlayer = forwardRef<HTMLVideoElement, VideoPlayerProps>(function Vide
         src={src}
         controls
         onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime * 1000)}
+        onEnded={onEnded}
       />
       {captionText && (
         // bottom-14 keeps the caption clear of the native <video controls> bar.

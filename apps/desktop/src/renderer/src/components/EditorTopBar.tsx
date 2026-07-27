@@ -59,7 +59,7 @@ export default function EditorTopBar({
           <Input
             autoFocus
             value={draft}
-            className="pointer-events-auto h-7 w-56 text-center text-caption [-webkit-app-region:no-drag]"
+            className="pointer-events-auto w-56 text-center text-caption [-webkit-app-region:no-drag]"
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commit}
             onKeyDown={(event) => {

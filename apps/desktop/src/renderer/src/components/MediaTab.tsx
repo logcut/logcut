@@ -1,21 +1,31 @@
-import { AlertTriangle, Film, Trash2 } from 'lucide-react'
+import { AlertTriangle, Film, ListVideo, Trash2 } from 'lucide-react'
 import type { JSX } from 'react'
 import DropZone from '@/components/DropZone'
 import { Button } from '@/components/ui/button'
 import { formatDuration } from '@/lib/format'
+import { MEDIA_ASSET_DRAG } from '@/lib/drag'
 import type { MediaAssetSummary } from '../../../shared/ipc'
 
 interface MediaTabProps {
   assets: MediaAssetSummary[]
-  activeAssetId: string | null
+  /** Highlighted here only; the timeline decides what is being edited. */
+  selectedAssetId: string | null
+  /** Assets with at least one clip on the timeline, badged as such. */
+  timelineAssetIds: string[]
   onImport(paths: string[]): void
   onSelect(assetId: string): void
   onRemove(assetId: string): void
 }
 
+/**
+ * The library, not the edit. Selecting an entry only highlights it — an asset
+ * reaches the timeline by being dragged there, which is what MEDIA_ASSET_DRAG
+ * carries.
+ */
 export default function MediaTab({
   assets,
-  activeAssetId,
+  selectedAssetId,
+  timelineAssetIds,
   onImport,
   onSelect,
   onRemove
@@ -25,15 +35,21 @@ export default function MediaTab({
       {assets.length > 0 && (
         <div className="flex min-h-0 flex-col gap-component overflow-y-auto">
           {assets.map((asset) => {
-            const active = asset.id === activeAssetId
+            const selected = asset.id === selectedAssetId
             return (
               <div
                 key={asset.id}
                 role="button"
                 tabIndex={0}
-                className={`group flex cursor-pointer items-center gap-component rounded-lg border p-component transition-colors ${
-                  active ? 'border-primary bg-primary/10' : 'border-border hover:border-input'
+                draggable
+                className={`group flex cursor-grab items-center gap-component rounded-lg border p-component transition-colors active:cursor-grabbing ${
+                  selected ? 'border-primary bg-primary/10' : 'border-border hover:border-input'
                 }`}
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(MEDIA_ASSET_DRAG, asset.id)
+                  event.dataTransfer.effectAllowed = 'copy'
+                  onSelect(asset.id)
+                }}
                 onClick={() => onSelect(asset.id)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' || event.key === ' ') onSelect(asset.id)
@@ -48,8 +64,15 @@ export default function MediaTab({
                   )}
                 </div>
                 <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-label font-medium text-foreground">
-                    {asset.fileName}
+                  <span className="flex items-center gap-inline">
+                    <span className="truncate text-label font-medium text-foreground">
+                      {asset.fileName}
+                    </span>
+                    {/* Which entry is actually being edited is a property of
+                        the timeline, not of the selection above. */}
+                    {timelineAssetIds.includes(asset.id) && (
+                      <ListVideo size={12} className="shrink-0 text-primary" />
+                    )}
                   </span>
                   <span className="flex items-center gap-inline text-caption font-normal text-muted-foreground">
                     <span className="timecode">{formatDuration(asset.durationMs)}</span>

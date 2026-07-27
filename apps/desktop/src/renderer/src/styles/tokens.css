@@ -36,6 +36,7 @@
   --space-96: 96px;
 
   /* ---- Font size scale ---- */
+  --font-size-11: 0.6875rem;
   --font-size-12: 0.75rem;
   --font-size-13: 0.8125rem;
   --font-size-14: 0.875rem;
@@ -121,13 +122,17 @@
   --radius-12: 12px;
   --radius-full: 9999px;
 
-  /* ---- Sizing: three control heights + icons ---- */
-  --size-control-sm: 32px; /* compact button/input */
-  --size-control-md: 36px; /* default */
-  --size-control-lg: 40px; /* large / marketing CTA */
-  --icon-sm: 16px; /* pairs with label/body text */
-  --icon-md: 20px;
-  --icon-lg: 24px;
+  /* ---- Sizing: three control heights + icons ----
+     Desktop-editor density, not web density. shadcn ships 32/36/40, which are
+     touch targets; this is a dense tool window where a row of controls has to
+     read as one strip, the way it does in a desktop NLE. Changing these three
+     numbers is how the whole UI is scaled — every control derives from them. */
+  --size-control-sm: 20px; /* inline / row actions */
+  --size-control-md: 22px; /* default */
+  --size-control-lg: 28px; /* the one primary action on a screen */
+  --icon-sm: 14px; /* fits inside a control */
+  --icon-md: 16px; /* pairs with label/body text */
+  --icon-lg: 20px;
 
   /* ---- z-index scale (never write a raw z-index) ---- */
   --z-dropdown: 100;
@@ -179,16 +184,21 @@
   --grid-gutter: var(--space-block);
   --page-max-width: 1200px;
 
-  /* ---- Text roles (size / leading / weight used as a set) ---- */
-  --text-caption-size: var(--font-size-12); /* helper text, timestamps */
+  /* ---- Text roles (size / leading / weight used as a set) ----
+     The three panel roles sit one step below web convention, matching the
+     density of desktop NLEs: 12px is their workhorse, 10-11px
+     their helper text, 13-14px reserved for emphasis. At web sizes (14/13/12)
+     the whole UI read one size too large, and 13px text in a 22px control left
+     no room to breathe. */
+  --text-caption-size: var(--font-size-11); /* helper text, timestamps */
   --text-caption-leading: var(--leading-snug);
   --text-caption-weight: var(--font-weight-regular);
 
-  --text-label-size: var(--font-size-13); /* form labels, button text, small labels */
+  --text-label-size: var(--font-size-12); /* form labels, button text, small labels */
   --text-label-leading: var(--leading-snug);
   --text-label-weight: var(--font-weight-medium);
 
-  --text-body-size: var(--font-size-14); /* app UI default body */
+  --text-body-size: var(--font-size-13); /* app UI default body */
   --text-body-leading: var(--leading-normal);
   --text-body-weight: var(--font-weight-regular);
 
@@ -216,7 +226,9 @@
 
   /* Timecode role: mono + tabular-nums + wide tracking.
      Usage: font-family var(--font-mono); font-variant-numeric: tabular-nums */
-  --text-timecode-size: var(--font-size-13);
+  /* One step above caption, which is what it usually sits inline with: a mono
+     face at the same nominal size reads smaller than the sans around it. */
+  --text-timecode-size: var(--font-size-12);
   --text-timecode-leading: var(--leading-snug);
   --text-timecode-weight: var(--font-weight-regular);
   --text-timecode-tracking: var(--tracking-wide);
@@ -296,7 +308,12 @@
   --timeline-ruler-height: 24px;
   --timeline-head-width: 40px;
   --timeline-subtitle-height: 28px;
-  --timeline-media-height: 40px;
+  /* The media track is three stacked bands; the total is their sum, so all
+     four move together. */
+  --timeline-media-header-height: 18px;
+  --timeline-media-strip-height: 39px;
+  --timeline-media-wave-height: 16px;
+  --timeline-media-height: 73px;
 
   /* Traffic lights, drawn by the renderer on macOS (AppKit's own cannot be
      resized or recoloured). The inactive fill is deliberately the panel

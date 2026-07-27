@@ -14,6 +14,9 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    // Below this the editor's three panes (media, preview, timeline) stop
+    // being usable, so the window refuses to shrink any further.
+    minHeight: 650,
     title: 'LogCut',
     // Matches --ink-page so the window doesn't flash white before the
     // dark renderer paints.

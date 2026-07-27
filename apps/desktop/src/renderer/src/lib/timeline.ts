@@ -74,13 +74,44 @@ export function mergeBlocks(
   return blocks
 }
 
-/** Where each asset starts when they are laid end to end. */
-export function mediaOffsets(durations: number[]): number[] {
-  const offsets: number[] = []
-  let total = 0
-  for (const duration of durations) {
-    offsets.push(total)
-    total += duration
+/**
+ * An utterance moved onto the timeline's clock.
+ *
+ * `id` is scoped to the clip, because the same asset can be laid down twice
+ * and its transcript would otherwise contribute the same id at two different
+ * times. `sourceId` is what the transcript itself calls the line, and is what
+ * an edit has to be addressed by.
+ */
+export interface TimelineUtterance extends Utterance {
+  clipId: string
+  assetId: string
+  sourceId: string
+}
+
+/**
+ * Every clip's subtitles, shifted to where that clip sits and concatenated.
+ *
+ * The result reads exactly like one transcript, so everything downstream —
+ * the binary searches, the block merging, the highlight — stays unaware that
+ * the timeline is made of pieces.
+ */
+export function layUtterances(
+  clips: { id: string; assetId: string; startMs: number }[],
+  transcripts: Record<string, { utterances: Utterance[] } | null>
+): TimelineUtterance[] {
+  const laid: TimelineUtterance[] = []
+  for (const clip of clips) {
+    for (const utterance of transcripts[clip.assetId]?.utterances ?? []) {
+      laid.push({
+        ...utterance,
+        id: `${clip.id}:${utterance.id}`,
+        start: utterance.start + clip.startMs,
+        end: utterance.end + clip.startMs,
+        clipId: clip.id,
+        assetId: clip.assetId,
+        sourceId: utterance.id
+      })
+    }
   }
-  return offsets
+  return laid
 }

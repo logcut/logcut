@@ -51,9 +51,28 @@ export interface ProjectFile {
   name: string
   createdAt: number
   updatedAt: number
-  /** The asset the editor shows; null for an empty project. */
-  activeAssetId: string | null
+  /**
+   * Clips laid end to end, in order. Empty until something is dragged in —
+   * importing alone puts nothing on the timeline.
+   *
+   * Projects written before this field existed read as an empty timeline;
+   * their assets and transcripts are untouched, so no schema bump.
+   */
+  timeline: TimelineClip[]
   assets: MediaAsset[]
+}
+
+/**
+ * One entry on the timeline.
+ *
+ * A clip references an asset rather than being one: the same file can sit on
+ * the timeline twice, and removing a clip must not touch the library. There is
+ * deliberately no in/out point yet — v1 clips are always the whole asset, and
+ * the moment trimming arrives it belongs here and nowhere else.
+ */
+export interface TimelineClip {
+  id: string
+  assetId: string
 }
 
 export const DEFAULT_PROJECT_NAME = 'Untitled project'
@@ -101,7 +120,12 @@ function writeJsonAtomic(filePath: string, data: unknown): void {
 export function loadProject(id: string): ProjectFile | null {
   try {
     const project = JSON.parse(fs.readFileSync(projectFilePath(id), 'utf8')) as ProjectFile
-    return project.version === PROJECT_SCHEMA_VERSION ? project : null
+    if (project.version !== PROJECT_SCHEMA_VERSION) return null
+    // Files written before the timeline existed have no such field. Filling it
+    // in here is why that change needed no schema bump: every reader past this
+    // point can assume the array.
+    project.timeline ??= []
+    return project
   } catch {
     return null
   }
@@ -115,7 +139,7 @@ export function createProject(name?: string): ProjectFile {
     name: name?.trim() || DEFAULT_PROJECT_NAME,
     createdAt: now,
     updatedAt: now,
-    activeAssetId: null,
+    timeline: [],
     assets: []
   }
   writeJsonAtomic(projectFilePath(project.id), project)
@@ -165,7 +189,6 @@ export function listProjects(): ProjectFile[] {
 export function addAsset(id: string, asset: MediaAsset): ProjectFile | null {
   return update(id, (project) => {
     project.assets.push(asset)
-    project.activeAssetId ??= asset.id
   })
 }
 
@@ -183,15 +206,24 @@ export function removeAsset(id: string, assetId: string): ProjectFile | null {
 
   return update(id, (current) => {
     current.assets = current.assets.filter((candidate) => candidate.id !== assetId)
-    if (current.activeAssetId === assetId) {
-      current.activeAssetId = current.assets[0]?.id ?? null
+    // Every clip cut from this asset goes with it; a clip pointing at a file
+    // that is no longer in the library has nothing to play.
+    current.timeline = current.timeline.filter((clip) => clip.assetId !== assetId)
+  })
+}
+
+/** Append an asset to the end of the timeline. */
+export function addTimelineClip(id: string, assetId: string): ProjectFile | null {
+  return update(id, (project) => {
+    if (project.assets.some((asset) => asset.id === assetId)) {
+      project.timeline.push({ id: randomId(), assetId })
     }
   })
 }
 
-export function setActiveAsset(id: string, assetId: string): ProjectFile | null {
+export function removeTimelineClip(id: string, clipId: string): ProjectFile | null {
   return update(id, (project) => {
-    if (project.assets.some((asset) => asset.id === assetId)) project.activeAssetId = assetId
+    project.timeline = project.timeline.filter((clip) => clip.id !== clipId)
   })
 }
 

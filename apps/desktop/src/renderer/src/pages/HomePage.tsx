@@ -45,7 +45,8 @@ export default function HomePage({ onOpenProject }: HomePageProps): JSX.Element 
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    // The 650px floor mirrors the window's minHeight (see main/index.ts).
+    <div className="flex h-screen min-h-[650px] flex-col overflow-hidden">
       <TitleBar>
         {/* The brand mark's only place in the UI since the sidebar went away. */}
         <img src={logoUrl} alt="" className="size-5 shrink-0" />

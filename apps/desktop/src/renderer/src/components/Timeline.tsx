@@ -1,9 +1,17 @@
 import { findNearestUtteranceIndex } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
+import type {
+  DragEvent as ReactDragEvent,
+  JSX,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  RefObject
+} from 'react'
 import { Film, Type } from 'lucide-react'
 import { usePlaybackClock } from '@/hooks/usePlaybackClock'
+import { MEDIA_ASSET_DRAG } from '@/lib/drag'
 import { formatTimecode } from '@/lib/format'
 import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timeline'
 
@@ -21,21 +29,44 @@ const DOUBLE_CLICK_MS = 600
  */
 const MIN_BLOCK_PX = 4
 
-interface TimelineProps {
+/** A clip as the timeline draws it: its position plus its asset's artwork. */
+export interface TimelineClipView {
+  id: string
+  startMs: number
   durationMs: number
-  utterances: Utterance[]
-  activeUtteranceId: string | null
-  videoRef: RefObject<HTMLVideoElement | null>
-  assetName: string | null
-  /** Row of frames for the media track; null until generated. */
+  name: string
+  /** Row of frames for the clip's body; null until generated. */
   filmstripUrl: string | null
   /** White-on-transparent envelope, tinted here; null until generated. */
   waveformUrl: string | null
+  missing: boolean
+}
+
+interface TimelineProps {
+  durationMs: number
+  clips: TimelineClipView[]
+  /** Already on the timeline's clock — see lib/timeline.ts layUtterances. */
+  utterances: Utterance[]
+  activeUtteranceId: string | null
+  selectedClipId: string | null
+  videoRef: RefObject<HTMLVideoElement | null>
+  onSelectClip(clipId: string | null): void
+  onRemoveClip(clipId: string): void
   /**
    * The time the playhead was just moved to by a click or drag, reported the
    * moment it happens rather than when the element catches up.
    */
   onScrub(timeMs: number): void
+  /** Move playback to this timeline position; the clip switch is not ours. */
+  onSeek(timelineMs: number): void
+  /**
+   * Where the clip the element is currently playing starts on the timeline.
+   * The element's own clock restarts at zero on every clip, so without this
+   * the playhead would jump back to the left at each boundary.
+   */
+  clipOffsetMs: number
+  /** An asset was dragged here from the media library. */
+  onDropAsset(assetId: string): void
   /** Double-click on a subtitle block, with the time that was clicked. */
   onEditSubtitlesAt(timeMs: number): void
 }
@@ -49,13 +80,16 @@ function TimelineTrack({
   icon,
   label,
   main,
+  hidden,
   children
 }: {
   icon: JSX.Element
   label: string
   main?: boolean
+  hidden?: boolean
   children: ReactNode
-}): JSX.Element {
+}): JSX.Element | null {
+  if (hidden === true) return null
   return (
     <div
       className="flex"
@@ -79,13 +113,18 @@ export default function Timeline({
   durationMs,
   utterances,
   activeUtteranceId,
+  clips,
+  selectedClipId,
   videoRef,
-  assetName,
-  filmstripUrl,
-  waveformUrl,
+  onSelectClip,
+  onRemoveClip,
   onScrub,
+  onSeek,
+  clipOffsetMs,
+  onDropAsset,
   onEditSubtitlesAt
 }: TimelineProps): JSX.Element {
+  const [dropTarget, setDropTarget] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** The area clips occupy, i.e. everything right of the track heads. All
    *  time↔pixel conversion is against this, never the whole container. */
@@ -96,6 +135,7 @@ export default function Timeline({
   const pendingSeekRef = useRef<number | null>(null)
   const seekFrameRef = useRef(0)
   const [width, setWidth] = useState(0)
+  const hasMedia = durationMs > 0
 
   useEffect(() => {
     return () => {
@@ -103,6 +143,9 @@ export default function Timeline({
     }
   }, [])
 
+  // Depends on hasMedia because the ruler that carries contentRef is not in
+  // the tree until something is laid down; a mount-only effect would observe
+  // nothing and leave the scale at zero forever.
   useEffect(() => {
     const content = contentRef.current
     if (!content) return
@@ -111,7 +154,7 @@ export default function Timeline({
     })
     observer.observe(content)
     return () => observer.disconnect()
-  }, [])
+  }, [hasMedia])
 
   const scale = pxPerMs(width, durationMs)
 
@@ -127,7 +170,14 @@ export default function Timeline({
     playhead.style.transform = `translateX(${ratio * content.clientWidth}px)`
   }, [])
 
-  usePlaybackClock(videoRef, movePlayhead)
+  // Through a ref so the tick callback stays stable across clip switches.
+  const clipOffsetRef = useRef(clipOffsetMs)
+  clipOffsetRef.current = clipOffsetMs
+  const onTick = useCallback(
+    (elementMs: number) => movePlayhead(clipOffsetRef.current + elementMs),
+    [movePlayhead]
+  )
+  usePlaybackClock(videoRef, onTick)
 
   const ticks = useMemo(() => {
     if (scale <= 0) return []
@@ -164,9 +214,8 @@ export default function Timeline({
     if (seekFrameRef.current !== 0) return
     seekFrameRef.current = requestAnimationFrame(() => {
       seekFrameRef.current = 0
-      const video = videoRef.current
       const target = pendingSeekRef.current
-      if (video && target !== null) video.currentTime = target / 1000
+      if (target !== null) onSeek(target)
     })
   }
 
@@ -194,6 +243,12 @@ export default function Timeline({
     // to a negative time, clamps to zero and jumps playback to the start.
     const content = contentRef.current
     if (content && event.clientX < content.getBoundingClientRect().left) return
+
+    // Pressing anywhere in the strip settles what is selected: a clip if the
+    // press landed on one, nothing if it landed on empty track.
+    const target = event.target
+    const element = target instanceof Element ? target.closest('[data-clip-id]') : null
+    onSelectClip(element?.getAttribute('data-clip-id') ?? null)
 
     const timeMs = pressTimeOf(event)
     seekTo(timeMs)
@@ -224,42 +279,107 @@ export default function Timeline({
     }
   }
 
+  // dragover has to preventDefault on every event or the drop never fires,
+  // and it may only look at dataTransfer.types — the payload is unreadable
+  // until the drop itself.
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>): void => {
+    if (!event.dataTransfer.types.includes(MEDIA_ASSET_DRAG)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDropTarget(true)
+  }
+
+  // The strip takes focus on press (tabIndex), which is what makes Delete
+  // reach here at all rather than the document.
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Delete' && event.key !== 'Backspace') return
+    if (selectedClipId === null) return
+    event.preventDefault()
+    onRemoveClip(selectedClipId)
+  }
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>): void => {
+    const assetId = event.dataTransfer.getData(MEDIA_ASSET_DRAG)
+    setDropTarget(false)
+    if (assetId === '') return
+    event.preventDefault()
+    onDropAsset(assetId)
+  }
+
   return (
     <div
       ref={containerRef}
-      className="relative flex h-full flex-col touch-none overflow-hidden select-none"
+      tabIndex={0}
+      className="relative flex h-full flex-col touch-none overflow-hidden outline-none select-none"
+      onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onDragOver={handleDragOver}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={handleDrop}
     >
-      {/* Ruler. Its left spacer keeps the scale aligned with the tracks below. */}
-      <div
-        className="flex border-b border-border"
-        style={{ height: 'var(--timeline-ruler-height)' }}
-      >
+      {/* Ruler. Its left spacer keeps the scale aligned with the tracks below.
+          An empty timeline has no scale to show, so it has no ruler either —
+          and it must be removed from the tree, not `hidden`: Tailwind's
+          Preflight writes that rule through :where(), so any display utility
+          on the element outranks it. */}
+      {hasMedia && (
         <div
-          className="shrink-0 border-r border-border"
-          style={{ width: 'var(--timeline-head-width)' }}
-        />
-        <div ref={contentRef} data-duration-ms={durationMs} className="relative min-w-0 flex-1">
-          {ticks.map((time) => (
-            <span
-              key={time}
-              className="timecode absolute top-0 pl-inline text-muted-foreground"
-              style={{ left: `${(time / durationMs) * 100}%` }}
-            >
-              {formatTimecode(time)}
-            </span>
-          ))}
+          className="flex border-b border-border"
+          style={{ height: 'var(--timeline-ruler-height)' }}
+        >
+          <div
+            className="shrink-0 border-r border-border"
+            style={{ width: 'var(--timeline-head-width)' }}
+          />
+          <div ref={contentRef} data-duration-ms={durationMs} className="relative min-w-0 flex-1">
+            {ticks.map((time) => (
+              <span
+                key={time}
+                className="timecode absolute top-0 pl-inline text-muted-foreground"
+                style={{ left: `${(time / durationMs) * 100}%` }}
+              >
+                {formatTimecode(time)}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Tracks sit centred in whatever height is left, so growing the panel
           pads above and below rather than leaving them stranded at the top. */}
       <div className="flex min-h-0 flex-1 flex-col justify-center">
-        {/* Secondary track: subtitles. One block per line, adjacent ones merged. */}
-        <TimelineTrack icon={<Type size={13} />} label="Subtitles">
+        {/* Nothing laid down yet. The placeholder is shaped like the track it
+            is about to become — same height, same offset past the heads — so
+            dropping does not make the strip jump. It is also the only place
+            that says how to start, since importing no longer does it. */}
+        {!hasMedia && (
+          <div className="flex" style={{ height: 'var(--timeline-media-height)' }}>
+            <div className="shrink-0" style={{ width: 'var(--timeline-head-width)' }} />
+            <div
+              className={`flex min-w-0 flex-1 items-center gap-component rounded-xs border border-dashed px-inset transition-colors ${
+                dropTarget ? 'border-primary bg-primary/10' : 'border-border'
+              }`}
+            >
+              <Film size={16} className="shrink-0 text-muted-foreground" />
+              <span className="truncate text-caption font-normal text-muted-foreground">
+                Drag a video here to start editing.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Secondary track: subtitles. One block per line, adjacent ones merged.
+            It only exists once there are subtitles — an empty lane with a head
+            on it reads as a feature that is broken rather than one not used
+            yet. */}
+        <TimelineTrack
+          icon={<Type size={13} />}
+          label="Subtitles"
+          hidden={!hasMedia || utterances.length === 0}
+        >
           {blocks.map((block) => (
             <div
               key={block.startMs}
@@ -275,36 +395,65 @@ export default function Timeline({
           ))}
         </TimelineTrack>
 
-        {/* Main track: the asset itself, filmstrip over waveform. */}
-        <TimelineTrack icon={<Film size={13} />} label="Video" main>
-          {assetName !== null && durationMs > 0 && (
+        {/* Main track: a caption bar, the filmstrip, then the audio envelope.
+            The three band heights are tokens and sum to the track height, so
+            the clip has no internal flex — each band is exactly its own
+            height whatever the panel is doing. */}
+        <TimelineTrack icon={<Film size={13} />} label="Video" main hidden={!hasMedia}>
+          {clips.map((clip) => (
             <div
-              className="absolute inset-0 flex flex-col overflow-hidden rounded-xs"
-              style={{ background: 'var(--editor-waveform-muted)' }}
+              key={clip.id}
+              data-clip-id={clip.id}
+              className={`absolute inset-y-0 flex flex-col overflow-hidden rounded-xs ${
+                clip.id === selectedClipId ? 'ring-2 ring-foreground ring-inset' : ''
+              }`}
+              style={{
+                left: `${(clip.startMs / durationMs) * 100}%`,
+                width: `${(clip.durationMs / durationMs) * 100}%`,
+                background: 'var(--editor-waveform-muted)'
+              }}
             >
               <div
-                className="min-h-0 flex-1 bg-cover"
-                style={filmstripUrl ? { backgroundImage: `url("${filmstripUrl}")` } : undefined}
+                className="flex shrink-0 items-center gap-component overflow-hidden px-inline"
+                style={{ height: 'var(--timeline-media-header-height)' }}
+              >
+                <span className="truncate text-caption font-normal text-foreground">
+                  {clip.name}
+                </span>
+                <span className="timecode shrink-0 text-muted-foreground">
+                  {formatTimecode(clip.durationMs)}
+                </span>
+              </div>
+
+              {/* Stretched to the band rather than covered: the strip holds
+                  exactly the whole clip, so any cropping would silently drop
+                  the end of it. */}
+              <div
+                className="shrink-0 bg-cover"
+                style={{
+                  height: 'var(--timeline-media-strip-height)',
+                  backgroundImage: clip.filmstripUrl ? `url("${clip.filmstripUrl}")` : undefined,
+                  backgroundSize: '100% 100%'
+                }}
               />
-              {waveformUrl && (
+
+              {clip.waveformUrl && (
                 // The PNG is white on transparent; masking lets it take the
                 // theme's waveform colour instead of shipping one per theme.
                 <div
-                  className="h-1/3 shrink-0"
+                  className="shrink-0"
                   style={{
+                    height: 'var(--timeline-media-wave-height)',
                     background: 'var(--editor-waveform)',
-                    maskImage: `url("${waveformUrl}")`,
+                    maskImage: `url("${clip.waveformUrl}")`,
                     maskSize: '100% 100%',
-                    WebkitMaskImage: `url("${waveformUrl}")`,
+                    WebkitMaskImage: `url("${clip.waveformUrl}")`,
                     WebkitMaskSize: '100% 100%'
                   }}
                 />
               )}
-              <span className="absolute top-adjust left-inline truncate text-caption font-normal text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                {assetName}
-              </span>
             </div>
-          )}
+          ))}
         </TimelineTrack>
       </div>
 
@@ -315,14 +464,6 @@ export default function Timeline({
           className="pointer-events-none absolute top-0 bottom-0 w-px"
           style={{ left: 'var(--timeline-head-width)', background: 'var(--editor-playhead)' }}
         />
-      )}
-
-      {durationMs <= 0 && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-caption font-normal text-muted-foreground">
-            Import a video to see its timeline.
-          </span>
-        </div>
       )}
     </div>
   )

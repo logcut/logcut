@@ -1,16 +1,41 @@
 import { defaultOption, languageOptionToConfig, orderedOptions } from '@logcut/core'
 import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
-import { Captions, Download, Loader2, RefreshCw } from 'lucide-react'
+import { Download, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import LanguageSelect from '@/components/LanguageSelect'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { formatDuration } from '@/lib/format'
 import type { AsrState } from '@/hooks/useProject'
 import type { MediaAssetSummary, TranscribePhase } from '../../../shared/ipc'
 
 function describePhase(phase: TranscribePhase): string {
   return phase === 'extracting' ? 'Extracting audio…' : 'Transcribing…'
+}
+
+/**
+ * One setting per row, name on the left, control on the right, hairline
+ * between. Rows carry their own separator rather than the list drawing them,
+ * so a row can appear or disappear without leaving a stray line behind.
+ */
+function Row({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <div className="flex items-center justify-between gap-component border-b border-border py-stack">
+      <span className="text-label text-foreground">{label}</span>
+      {children}
+    </div>
+  )
+}
+
+/** The same, for a control too wide to sit beside its name. */
+function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-component border-b border-border py-stack">
+      <span className="text-label text-foreground">{label}</span>
+      {children}
+    </div>
+  )
 }
 
 interface SubtitleTabProps {
@@ -25,6 +50,10 @@ interface SubtitleTabProps {
 /**
  * Produces subtitles; it does not display them. The transcript itself lives on
  * the timeline, and editing happens in the dialog a subtitle block opens.
+ *
+ * Laid out as a scrolling list of settings
+ * rows, and the one action pinned to the bottom edge so it stays put however
+ * many rows appear above it.
  */
 export default function SubtitleTab({
   asset,
@@ -36,6 +65,7 @@ export default function SubtitleTab({
 }: SubtitleTabProps): JSX.Element {
   const [languageOrder, setLanguageOrder] = useState<LanguageOption[]>(orderedOptions('en-US'))
   const [language, setLanguage] = useState<LanguageOption>('auto')
+  const [replace, setReplace] = useState(false)
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -62,85 +92,92 @@ export default function SubtitleTab({
     }
   }
 
-  if (!asset) {
-    return (
-      <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
-        <p className="text-center text-body font-normal text-muted-foreground">
-          Import a video first, then generate its subtitles here.
-        </p>
-      </div>
-    )
-  }
-
+  // No asset is not an empty state: the panel keeps its shape and only the one
+  // action goes dead. Replacing it with a sentence made the tab look like a
+  // different, broken screen, and hid the language choice — which is worth
+  // setting before importing anything.
   const running = asr.kind === 'running'
   const hasTranscript = transcript !== null && transcript.utterances.length > 0
+  // Re-recognizing spends API credit and discards every manual edit, so with
+  // subtitles already in hand it takes a deliberate opt-in. The checkbox sits
+  // beside the button precisely so a disabled button is never a mystery.
+  const blocked = hasTranscript && !replace
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-stack overflow-y-auto p-inset">
-      <div className="flex flex-col gap-component">
-        <span className="text-caption font-normal text-muted-foreground">Source language</span>
-        <LanguageSelect options={languageOrder} value={language} onChange={chooseLanguage} />
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-inset">
+        <Field label="Source language">
+          <LanguageSelect options={languageOrder} value={language} onChange={chooseLanguage} />
+        </Field>
 
-      <Button
-        disabled={running || asset.missing}
-        onClick={() => onTranscribe(languageOptionToConfig(language), hasTranscript)}
-      >
-        {running ? <Loader2 size={16} className="animate-spin" /> : <Captions size={16} />}
-        {running
-          ? describePhase(asr.phase)
-          : hasTranscript
-            ? 'Recognize again'
-            : 'Generate subtitles'}
-      </Button>
+        {hasTranscript && (
+          <>
+            <Row label="Recognized">
+              <span className="text-caption font-normal text-muted-foreground">
+                {transcript.utterances.length} lines ·{' '}
+                <span className="timecode">{formatDuration(transcript.audioDurationMs)}</span>
+              </span>
+            </Row>
+            <Row label="Subtitle file">
+              <Button variant="outline" size="sm" onClick={() => void exportSrt()}>
+                <Download size={14} />
+                Export SRT
+              </Button>
+            </Row>
+          </>
+        )}
 
-      {running && (
-        <p className="m-0 text-caption font-normal text-muted-foreground">
-          This takes a few minutes and cannot be cancelled yet.
-        </p>
-      )}
-
-      {asr.kind === 'failed' && (
-        <div className="flex flex-col gap-component">
-          <p className="m-0 text-caption font-normal text-destructive">{asr.message}</p>
-          {asr.apiKeyProblem && (
-            <Button variant="outline" size="sm" onClick={onOpenSettings}>
-              Open Settings
-            </Button>
+        <div className="flex flex-col gap-component py-stack">
+          {hasTranscript && (
+            <p className="m-0 text-caption font-normal text-muted-foreground">
+              Double-click a subtitle block on the timeline to edit the text.
+            </p>
+          )}
+          {asr.kind === 'failed' && (
+            <>
+              <p className="m-0 text-caption font-normal text-destructive">{asr.message}</p>
+              {asr.apiKeyProblem && (
+                <Button variant="outline" size="sm" className="self-start" onClick={onOpenSettings}>
+                  Open Settings
+                </Button>
+              )}
+            </>
+          )}
+          {message !== '' && (
+            <p className="m-0 text-caption font-normal break-all text-muted-foreground">
+              {message}
+            </p>
           )}
         </div>
-      )}
+      </div>
 
-      {hasTranscript && (
-        <div className="flex flex-col gap-component border-t border-border pt-stack">
+      <div className="flex shrink-0 items-center gap-component border-t border-border p-inset">
+        {running ? (
           <span className="text-caption font-normal text-muted-foreground">
-            {transcript.utterances.length} lines ·{' '}
-            <span className="timecode">{formatDuration(transcript.audioDurationMs)}</span>
+            {describePhase(asr.phase)} — this takes a few minutes.
           </span>
-          <p className="m-0 text-caption font-normal text-muted-foreground">
-            Double-click a subtitle block on the timeline to edit the text.
-          </p>
-          <div className="flex flex-wrap gap-component">
-            <Button variant="outline" size="sm" onClick={() => void exportSrt()}>
-              <Download size={14} />
-              Export SRT
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={running || asset.missing}
-              onClick={() => onTranscribe(languageOptionToConfig(language), true)}
-            >
-              <RefreshCw size={14} />
-              Re-recognize
-            </Button>
-          </div>
-        </div>
-      )}
+        ) : !asset ? (
+          <span className="text-caption font-normal text-muted-foreground">
+            Drag a video onto the timeline first.
+          </span>
+        ) : (
+          hasTranscript && (
+            <label className="flex cursor-pointer items-center gap-component text-caption font-normal text-muted-foreground">
+              <Checkbox checked={replace} onCheckedChange={(state) => setReplace(state === true)} />
+              Replace existing
+            </label>
+          )
+        )}
 
-      {message !== '' && (
-        <p className="m-0 text-caption font-normal text-muted-foreground">{message}</p>
-      )}
+        <Button
+          className="ml-auto"
+          disabled={!asset || running || blocked || asset.missing}
+          onClick={() => onTranscribe(languageOptionToConfig(language), replace)}
+        >
+          {running && <Loader2 size={16} className="animate-spin" />}
+          {hasTranscript ? 'Recognize again' : 'Start recognition'}
+        </Button>
+      </div>
     </div>
   )
 }

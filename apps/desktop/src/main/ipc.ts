@@ -8,6 +8,7 @@ import type {
   ImportMediaResult,
   MediaAssetSummary,
   ProjectDetail,
+  TimelineClipSummary,
   ProjectSummary,
   TranscribePhase,
   TranscribeResult
@@ -30,8 +31,11 @@ function mediaUrlIfPresent(filePath: string): string | null {
 }
 
 function toSummary(project: projects.ProjectFile): ProjectSummary {
+  // Falls back to the first asset: a card should show a poster as soon as
+  // something has been imported, well before anything reaches the timeline.
+  const firstClip = project.timeline[0]
   const active =
-    project.assets.find((asset) => asset.id === project.activeAssetId) ?? project.assets[0]
+    project.assets.find((asset) => asset.id === firstClip?.assetId) ?? project.assets[0]
   return {
     id: project.id,
     name: project.name,
@@ -71,13 +75,26 @@ function toAssetSummary(projectId: string, asset: projects.MediaAsset): MediaAss
   }
 }
 
+/** Lay the clips end to end. A clip whose asset vanished contributes nothing. */
+function toTimeline(project: projects.ProjectFile): TimelineClipSummary[] {
+  const summaries: TimelineClipSummary[] = []
+  let startMs = 0
+  for (const clip of project.timeline) {
+    const asset = project.assets.find((candidate) => candidate.id === clip.assetId)
+    if (!asset) continue
+    summaries.push({ id: clip.id, assetId: clip.assetId, startMs, durationMs: asset.durationMs })
+    startMs += asset.durationMs
+  }
+  return summaries
+}
+
 function toDetail(project: projects.ProjectFile): ProjectDetail {
   return {
     id: project.id,
     name: project.name,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
-    activeAssetId: project.activeAssetId,
+    timeline: toTimeline(project),
     assets: project.assets.map((asset) => toAssetSummary(project.id, asset))
   }
 }
@@ -172,9 +189,18 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle(
-    'media:set-active',
+    'timeline:add-clip',
     (_event, projectId: string, assetId: string): ProjectDetail => {
-      const project = projects.setActiveAsset(projectId, assetId)
+      const project = projects.addTimelineClip(projectId, assetId)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return toDetail(project)
+    }
+  )
+
+  ipcMain.handle(
+    'timeline:remove-clip',
+    (_event, projectId: string, clipId: string): ProjectDetail => {
+      const project = projects.removeTimelineClip(projectId, clipId)
       if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
       return toDetail(project)
     }

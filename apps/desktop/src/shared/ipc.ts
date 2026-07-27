@@ -66,12 +66,27 @@ export interface ProjectSummary {
   thumbnailUrl: string | null
 }
 
+/**
+ * One clip on the timeline, with its position already resolved.
+ *
+ * `startMs` and `durationMs` are computed in main from the asset durations,
+ * so the renderer never has to reduce over the list to know where a clip sits
+ * — and two places can't disagree about it.
+ */
+export interface TimelineClipSummary {
+  id: string
+  assetId: string
+  startMs: number
+  durationMs: number
+}
+
 export interface ProjectDetail {
   id: string
   name: string
   createdAt: number
   updatedAt: number
-  activeAssetId: string | null
+  /** Clips laid end to end, in order; empty until one is dragged there. */
+  timeline: TimelineClipSummary[]
   assets: MediaAssetSummary[]
 }
 
@@ -130,7 +145,10 @@ export interface LogcutApi {
   pickMedia(): Promise<string[]>
   importMedia(projectId: string, paths: string[]): Promise<ImportMediaResult>
   removeMedia(projectId: string, assetId: string): Promise<ProjectDetail>
-  setActiveMedia(projectId: string, assetId: string): Promise<ProjectDetail>
+  /** Append an asset to the timeline. Importing does not do this on its own. */
+  addClip(projectId: string, assetId: string): Promise<ProjectDetail>
+  /** Remove one clip. The asset stays in the library. */
+  removeClip(projectId: string, clipId: string): Promise<ProjectDetail>
 
   /** null when this asset has never been recognized. */
   getTranscript(projectId: string, assetId: string): Promise<Transcript | null>

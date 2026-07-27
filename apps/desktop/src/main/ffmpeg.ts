@@ -170,9 +170,14 @@ const STRIP_HEIGHT = 64
  * single request from the renderer, which then just stretches it to the track.
  *
  * `-skip_frame nokey` is what makes this affordable: decoding every frame of a
- * 1.7 GB file to sample 40 of them took 20s, keyframes only takes 6s. The
- * `select` expression is still needed on top — taking the first 40 keyframes
- * outright would cover only the opening minute of a densely-keyframed file.
+ * 1.7 GB file to sample 40 of them took 20s, keyframes only takes 6s.
+ *
+ * The sampling is `fps` rather than a `select` on keyframe spacing, because
+ * `tile` pads a short tile out with black: a file whose keyframes are sparser
+ * than the interval yielded fewer than 40 frames and the strip ended in a
+ * black tail covering the last fifth of the clip. `fps` duplicates the nearest
+ * keyframe instead, so the row always holds exactly the whole clip and the
+ * renderer can stretch it edge to edge.
  */
 export async function extractFilmstrip(
   filePath: string,
@@ -181,7 +186,7 @@ export async function extractFilmstrip(
 ): Promise<void> {
   if (durationMs <= 0) throw new Error('Cannot build a filmstrip without a duration')
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
-  const intervalSeconds = durationMs / 1000 / FILMSTRIP_FRAMES
+  const rate = FILMSTRIP_FRAMES / (durationMs / 1000)
   await runFfmpeg([
     '-y',
     '-hide_banner',
@@ -191,11 +196,8 @@ export async function extractFilmstrip(
     'nokey',
     '-i',
     filePath,
-    '-fps_mode',
-    'passthrough',
     '-vf',
-    `select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,${intervalSeconds.toFixed(3)})',` +
-      `scale=-1:${STRIP_HEIGHT},tile=${FILMSTRIP_FRAMES}x1`,
+    `fps=${rate.toFixed(6)},scale=-1:${STRIP_HEIGHT},tile=${FILMSTRIP_FRAMES}x1`,
     '-frames:v',
     '1',
     outPath
