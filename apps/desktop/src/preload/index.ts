@@ -38,6 +38,14 @@ const api: LogcutApi = {
     }
   },
 
+  onProjectUpdated: (callback) => {
+    const listener = (_event: unknown, projectId: string): void => callback(projectId)
+    ipcRenderer.on('project:updated', listener)
+    return () => {
+      ipcRenderer.removeListener('project:updated', listener)
+    }
+  },
+
   exportSrt: (projectId, assetId) => ipcRenderer.invoke('export:srt', projectId, assetId)
 }
 

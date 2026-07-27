@@ -147,6 +147,12 @@ export interface LogcutApi {
   ): Promise<TranscribeResult>
   /** Subscribe to transcription progress. Returns an unsubscribe function. */
   onTranscribeProgress(callback: (progress: TranscribeProgress) => void): () => void
+  /**
+   * A project changed behind the renderer's back — posters, filmstrips and
+   * waveforms are generated after the import call has already returned.
+   * Returns an unsubscribe function.
+   */
+  onProjectUpdated(callback: (projectId: string) => void): () => void
 
   /** Export an asset's transcript as SRT via a save dialog. Empty if cancelled. */
   exportSrt(projectId: string, assetId: string): Promise<ExportSrtResult>

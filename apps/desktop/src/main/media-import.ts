@@ -1,4 +1,5 @@
 import { randomId } from '@logcut/core'
+import { BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { isSupportedMediaFile } from '../shared/media'
@@ -47,8 +48,16 @@ function posterOffsetMs(durationMs: number): number {
 function generateArtwork(projectId: string, asset: MediaAsset): void {
   if (asset.durationMs === 0) return
 
+  // Each piece lands minutes after the import call returned, so the renderer
+  // has to be told; without this the editor keeps showing placeholders until
+  // the project is reopened.
   const record = (patch: Partial<MediaAsset>) => (): void => {
     updateAsset(projectId, asset.id, patch)
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send('project:updated', projectId)
+      }
+    }
   }
   const warn =
     (what: string) =>

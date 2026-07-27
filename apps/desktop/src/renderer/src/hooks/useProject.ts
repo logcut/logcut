@@ -91,6 +91,19 @@ export function useProject(projectId: string): UseProjectResult {
     }
   }, [projectId, activeAssetId])
 
+  // Artwork is produced in the background long after openProject resolved.
+  useEffect(() => {
+    return window.logcut.onProjectUpdated((updatedId) => {
+      if (updatedId !== projectId) return
+      window.logcut
+        .openProject(projectId)
+        .then(setProject)
+        .catch(() => {
+          /* the project may have been deleted meanwhile */
+        })
+    })
+  }, [projectId])
+
   useEffect(() => {
     return window.logcut.onTranscribeProgress((progress) => {
       if (progress.projectId !== projectId) return
