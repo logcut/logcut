@@ -73,7 +73,10 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   } = useProject(projectId)
 
   const [tab, setTab] = useState('media')
+  /** The line the user is pointed at: nearest, so a gap still has an answer. */
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
+  /** The line actually playing: strict, so silence shows no caption. */
+  const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [leftWidth, setLeftWidth] = useState(defaultLeftWidth)
@@ -106,14 +109,34 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
 
   const utterances = transcript?.utterances ?? []
   const captionText =
-    utterances.find((utterance) => utterance.id === activeUtteranceId)?.text ?? null
+    utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
 
-  const handleTimeUpdate = (timeMs: number): void => {
-    const index = findUtteranceIndexAt(utterances, timeMs)
-    const nextId = index === -1 ? null : (utterances[index]?.id ?? null)
-    // Bail out on an unchanged id so a 4Hz timeupdate does not re-render the
-    // subtitle-bearing subtree four times a second.
-    setActiveUtteranceId((current) => (current === nextId ? current : nextId))
+  /**
+   * The single place a time becomes "which line", called both by the player's
+   * timeupdate and — while scrubbing — by the timeline, which reports the
+   * pointer directly because timeupdate is far too coarse to follow a drag.
+   *
+   * It answers twice on purpose:
+   *  - the caption burned on the video is a strict containment test, because
+   *    silence between two lines genuinely means no caption;
+   *  - the highlighted line is the *nearest* one, because "which subtitle am I
+   *    looking at" still has an answer in a gap.
+   *
+   * Using the strict test for both is what made the highlight blink off in the
+   * middle of a drag: the playhead followed the pointer, then the seek landed
+   * in a gap and cleared everything.
+   *
+   * Both setters bail out on an unchanged id — timeupdate alone is ~4Hz, and
+   * this subtree carries every subtitle on screen.
+   */
+  const applyTime = (timeMs: number): void => {
+    const covering = findUtteranceIndexAt(utterances, timeMs)
+    const nextCaption = covering === -1 ? null : (utterances[covering]?.id ?? null)
+    setCaptionUtteranceId((current) => (current === nextCaption ? current : nextCaption))
+
+    const nearest = findNearestUtteranceIndex(utterances, timeMs)
+    const nextActive = nearest === -1 ? null : (utterances[nearest]?.id ?? null)
+    setActiveUtteranceId((current) => (current === nextActive ? current : nextActive))
   }
 
   const seekTo = (timeMs: number): void => {
@@ -124,20 +147,17 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
 
   /**
    * Seeking before opening is what puts the double-clicked line in view: the
-   * active utterance follows the playhead, and the list scrolls to it on its
-   * own.
+   * highlight follows the playhead, and the list scrolls to it on its own.
    *
-   * Resolved with findNearestUtteranceIndex, not findUtteranceIndexAt: a click
-   * that lands in the silence between two lines still means "that subtitle",
-   * and at fit-to-width it lands there often. Seeking to the line's own start
-   * rather than the clicked time keeps the two in agreement — otherwise the
-   * playhead sits in the gap and the highlight immediately clears.
+   * The seek lands on the line's own start rather than the clicked time, so a
+   * double-click in the silence between two lines still leaves the playhead
+   * inside the line the dialog opened on.
    */
   const openSubtitlesAt = (timeMs: number): void => {
     const index = findNearestUtteranceIndex(utterances, timeMs)
-    const utterance = index === -1 ? null : (utterances[index] ?? null)
-    seekTo(utterance ? utterance.start : timeMs)
-    setActiveUtteranceId(utterance?.id ?? null)
+    const target = utterances[index]?.start ?? timeMs
+    seekTo(target)
+    applyTime(target)
     setSubtitlesOpen(true)
   }
 
@@ -159,6 +179,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
 
   const seekToUtterance = (utterance: Utterance): void => {
     seekTo(utterance.start)
+    applyTime(utterance.start)
     void videoRef.current?.play()
   }
 
@@ -241,7 +262,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
               <VideoPlayer
                 ref={videoRef}
                 src={activeAsset.mediaUrl}
-                onTimeUpdate={handleTimeUpdate}
+                onTimeUpdate={applyTime}
                 captionText={captionText}
               />
             ) : (
@@ -270,6 +291,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
             assetName={activeAsset?.fileName ?? null}
             filmstripUrl={activeAsset?.filmstripUrl ?? null}
             waveformUrl={activeAsset?.waveformUrl ?? null}
+            onScrub={applyTime}
             onEditSubtitlesAt={openSubtitlesAt}
           />
         </Panel>

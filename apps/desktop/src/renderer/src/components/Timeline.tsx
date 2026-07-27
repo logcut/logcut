@@ -31,6 +31,11 @@ interface TimelineProps {
   filmstripUrl: string | null
   /** White-on-transparent envelope, tinted here; null until generated. */
   waveformUrl: string | null
+  /**
+   * The time the playhead was just moved to by a click or drag, reported the
+   * moment it happens rather than when the element catches up.
+   */
+  onScrub(timeMs: number): void
   /** Double-click on a subtitle block, with the time that was clicked. */
   onEditSubtitlesAt(timeMs: number): void
 }
@@ -78,6 +83,7 @@ export default function Timeline({
   assetName,
   filmstripUrl,
   waveformUrl,
+  onScrub,
   onEditSubtitlesAt
 }: TimelineProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -86,7 +92,16 @@ export default function Timeline({
   const contentRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   const lastPressRef = useRef(0)
+  /** Latest scrub target, and the frame that will hand it to the element. */
+  const pendingSeekRef = useRef<number | null>(null)
+  const seekFrameRef = useRef(0)
   const [width, setWidth] = useState(0)
+
+  useEffect(() => {
+    return () => {
+      if (seekFrameRef.current !== 0) cancelAnimationFrame(seekFrameRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     const content = contentRef.current
@@ -132,13 +147,27 @@ export default function Timeline({
     return Math.max(0, Math.min(1, ratio)) * durationMs
   }
 
+  /**
+   * Everything the user can see moves now; only the element's own seek waits.
+   *
+   * The playhead and the subtitle highlight are driven from the pointer, not
+   * from the element: `timeupdate` fires about 4Hz and only once a seek has
+   * finished, so a 60Hz drag hung on it looks like it is stuttering. The
+   * `currentTime` write is coalesced to one per frame — asking a multi-gigabyte
+   * file to seek on every pointermove is what makes the drag itself stutter.
+   */
   const seekTo = (timeMs: number): void => {
-    const video = videoRef.current
-    if (!video) return
-    // Move the marker immediately: seeking a large file has visible latency,
-    // and a playhead that lags the pointer feels broken.
     movePlayhead(timeMs)
-    video.currentTime = timeMs / 1000
+    onScrub(timeMs)
+
+    pendingSeekRef.current = timeMs
+    if (seekFrameRef.current !== 0) return
+    seekFrameRef.current = requestAnimationFrame(() => {
+      seekFrameRef.current = 0
+      const video = videoRef.current
+      const target = pendingSeekRef.current
+      if (video && target !== null) video.currentTime = target / 1000
+    })
   }
 
   /**
