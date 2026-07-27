@@ -402,24 +402,6 @@ export default function Timeline({
     })
   }
 
-  /**
-   * Pressing a subtitle block means "this line", so it snaps to the line's own
-   * start; pressing anywhere else is a free scrub and stays exact.
-   *
-   * The snap is what keeps the block highlighted afterwards. A block is not
-   * quite the span of its line — it is floored to stay visible and clamped so
-   * it cannot reach its neighbour — so the exact time under the pointer can
-   * fall outside every utterance, and the highlight, which is a strict
-   * containment test, clears the moment the playhead lands there.
-   */
-  const pressTimeOf = (event: ReactPointerEvent<HTMLDivElement>): number => {
-    const timeMs = timeAtClientX(event.clientX)
-    const target = event.target
-    if (!(target instanceof Element) || !target.closest('[data-subtitle-block]')) return timeMs
-    const index = findNearestUtteranceIndex(utterances, timeMs)
-    return index === -1 ? timeMs : (utterances[index]?.start ?? timeMs)
-  }
-
   /** Container-relative pixels, which is what the rubber band is drawn in. */
   const localPointOf = (event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -533,7 +515,10 @@ export default function Timeline({
     const rulerBottom = content?.getBoundingClientRect().bottom ?? 0
     dragRef.current = event.clientY <= rulerBottom ? 'scrub' : clipId === null ? 'marquee' : 'none'
 
-    const timeMs = pressTimeOf(event)
+    // Exactly where the pointer is, on a subtitle as anywhere else. Pressing
+    // a line used to snap the playhead to that line's start; going to a
+    // line's beginning is what its timecode in the list is for.
+    const timeMs = timeAtClientX(event.clientX)
     if (dragRef.current === 'scrub') {
       // The ruler is unambiguous, so it moves at once and stays under the
       // pointer for the rest of the drag.
@@ -618,9 +603,11 @@ export default function Timeline({
     // Still pending means the press never became a drag, so it was a click.
     const pending = pendingClickRef.current
     if (pending) {
-      seekTo(pending.timeMs)
-      // Clicking a subtitle opens the editor on it — one press, not two.
+      // Clicking a subtitle is aimed at the subtitle, not at the instant
+      // underneath it: it selects the line and opens the editor on it, and
+      // leaves the playhead where the user last put it.
       if (pending.subtitle) onEditSubtitlesAt(pending.timeMs)
+      else seekTo(pending.timeMs)
     }
     pendingClickRef.current = null
     dragRef.current = 'none'

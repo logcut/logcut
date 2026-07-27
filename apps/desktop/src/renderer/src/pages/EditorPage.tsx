@@ -276,13 +276,26 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * double-click in the silence between two lines still leaves the playhead
    * inside the line the dialog opened on.
    */
+  /**
+   * Show a line in the editor. **Does not seek**: the press that got here has
+   * already put the playhead where it was aimed, and jumping on to the line's
+   * start would overrule that. Going to a line's beginning is what clicking
+   * its timecode in the list is for.
+   *
+   * `activeUtteranceId` is pointed at the line here rather than left to the
+   * playhead: without a seek nothing else would move it, and it is what the
+   * editor scrolls to. The burned caption keeps following the playhead — that
+   * is `captionUtteranceId`, and the two answer different questions.
+   */
   const openSubtitlesAt = (timeMs: number): void => {
     const index = findNearestUtteranceIndex(utterances, timeMs)
     const line = utterances[index]
     // Opening on the clip the line came from is what makes the editor show the
     // right transcript when several clips are laid down.
-    if (line) setSubtitleClipId(line.clipId)
-    seekTo(line?.start ?? timeMs)
+    if (line) {
+      setSubtitleClipId(line.clipId)
+      setActiveUtteranceId(line.id)
+    }
     setSubtitlesOpen(true)
   }
 
