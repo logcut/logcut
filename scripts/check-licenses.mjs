@@ -7,6 +7,12 @@
  * OFL-1.1 covers the bundled @fontsource fonts: it permits bundling and
  * redistribution with the app, and only restricts selling the fonts standalone.
  *
+ * Python-2.0 and BlueOak-1.0.0 arrived with electron-updater (argparse via
+ * js-yaml, sax via the plist reader). Both were reviewed on 2026-07-27:
+ * permissive, no copyleft, no source-disclosure obligation, and both are OSI
+ * approved. Blue Oak is a modern plain-language rewrite of the MIT idea with
+ * an explicit patent grant.
+ *
  * The bundled ffmpeg sidecar is LGPL and is not an npm dependency; it is
  * governed separately by scripts/build-ffmpeg-*.sh in apps/desktop.
  */
@@ -19,7 +25,9 @@ const ALLOWED = new Set([
   'BSD-3-Clause',
   '0BSD',
   'Apache-2.0',
-  'OFL-1.1'
+  'OFL-1.1',
+  'Python-2.0',
+  'BlueOak-1.0.0'
 ])
 
 const output = execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], {
