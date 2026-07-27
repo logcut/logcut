@@ -3,8 +3,14 @@ import { test } from 'node:test'
 import {
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
+  insertUtteranceAfter,
+  mergeUtterances,
+  nextSpeakerId,
   replaceAllText,
-  setUtteranceText
+  setUtteranceSpeaker,
+  setUtteranceText,
+  setUtteranceTime,
+  speakerIdsOf
 } from './transcript.ts'
 import type { Transcript, Utterance } from './types.ts'
 
@@ -119,4 +125,140 @@ test('findUtteranceIndexAt agrees with a linear scan', () => {
     const expected = utterances.findIndex((u) => t >= u.start && t < u.end)
     assert.equal(findUtteranceIndexAt(utterances, t), expected, `mismatch at ${t}ms`)
   }
+})
+
+test('mergeUtterances folds the next line in and spans both', () => {
+  const source = fixture()
+  const result = mergeUtterances(source, 'a')
+  assert.equal(result.utterances.length, 2)
+  assert.deepEqual(
+    {
+      id: result.utterances[0].id,
+      start: result.utterances[0].start,
+      end: result.utterances[0].end
+    },
+    { id: 'a', start: 0, end: 800 }
+  )
+  assert.equal(result.utterances[0].text, 'AI 卷子来了卷子卷子不是 Agent')
+  assert.equal(result.utterances[1].id, 'c')
+  // The original is untouched.
+  assert.equal(source.utterances.length, 3)
+})
+
+test('mergeUtterances puts a space between Latin words only', () => {
+  const latin: Transcript = {
+    audioDurationMs: 1000,
+    utterances: [
+      { id: 'a', start: 0, end: 400, text: 'hello', words: [] },
+      { id: 'b', start: 400, end: 800, text: 'world', words: [] }
+    ]
+  }
+  assert.equal(mergeUtterances(latin, 'a').utterances[0].text, 'hello world')
+})
+
+test('mergeUtterances swallows the gap between two lines', () => {
+  const result = mergeUtterances({ audioDurationMs: 2000, utterances: gapped() }, 'a')
+  assert.equal(result.utterances[0].start, 0)
+  assert.equal(result.utterances[0].end, 1500)
+})
+
+test('mergeUtterances is a no-op on the last line or an unknown id', () => {
+  const source = fixture()
+  assert.equal(mergeUtterances(source, 'c'), source)
+  assert.equal(mergeUtterances(source, 'nope'), source)
+})
+
+test('insertUtteranceAfter fills the gap exactly', () => {
+  const source: Transcript = { audioDurationMs: 2000, utterances: gapped() }
+  const result = insertUtteranceAfter(source, 'a')
+  assert.equal(result.utterances.length, 4)
+  const inserted = result.utterances[1]
+  assert.equal(inserted.start, 400)
+  assert.equal(inserted.end, 1000)
+  assert.equal(inserted.text, '')
+  assert.notEqual(inserted.id, 'a')
+  assert.equal(result.utterances[2].id, 'b')
+})
+
+test('insertUtteranceAfter is a no-op when the lines already touch', () => {
+  const source = fixture()
+  assert.equal(insertUtteranceAfter(source, 'a'), source)
+  assert.equal(insertUtteranceAfter(source, 'c'), source)
+  assert.equal(insertUtteranceAfter(source, 'nope'), source)
+})
+
+test('setUtteranceTime moves the edge it is given', () => {
+  const result = setUtteranceTime(fixture(), 'b', 'start', 500)
+  assert.equal(result.utterances[1].start, 500)
+  assert.equal(result.utterances[1].end, 800)
+})
+
+test('setUtteranceTime clamps into the room the neighbours leave', () => {
+  const source = fixture() // a 0-400, b 400-800, c 800-1000
+  // Dragged before the previous line ends.
+  assert.equal(setUtteranceTime(source, 'b', 'start', 100).utterances[1].start, 400)
+  // Dragged past the next line's start.
+  assert.equal(setUtteranceTime(source, 'b', 'end', 5000).utterances[1].end, 800)
+  // The first line's start floors at zero, the last line's end is unbounded.
+  assert.equal(setUtteranceTime(source, 'a', 'start', -9000).utterances[0].start, 0)
+  assert.equal(setUtteranceTime(source, 'c', 'end', 99_000).utterances[2].end, 99_000)
+})
+
+test('setUtteranceTime never lets a line collapse', () => {
+  const source = fixture()
+  const result = setUtteranceTime(source, 'b', 'start', 800)
+  assert.ok(result.utterances[1].start < result.utterances[1].end)
+})
+
+test('setUtteranceTime is a no-op for an unchanged value or an unknown id', () => {
+  const source = fixture()
+  assert.equal(setUtteranceTime(source, 'b', 'start', 400), source)
+  assert.equal(setUtteranceTime(source, 'nope', 'start', 0), source)
+})
+
+function spoken(): Transcript {
+  return {
+    audioDurationMs: 1000,
+    utterances: [
+      { id: 'a', start: 0, end: 400, text: 'a', speakerId: '2', words: [] },
+      { id: 'b', start: 400, end: 800, text: 'b', speakerId: '11', words: [] },
+      { id: 'c', start: 800, end: 1000, text: 'c', speakerId: '2', words: [] }
+    ]
+  }
+}
+
+test('speakerIdsOf dedupes and sorts numerically, not as text', () => {
+  // Sorted as text, "11" would land between "1" and "2".
+  assert.deepEqual(speakerIdsOf(spoken()), ['2', '11'])
+})
+
+test('speakerIdsOf ignores lines with no speaker', () => {
+  assert.deepEqual(speakerIdsOf(fixture()), [])
+})
+
+test('nextSpeakerId takes the lowest free number', () => {
+  assert.equal(nextSpeakerId(spoken()), '1')
+  assert.equal(nextSpeakerId(fixture()), '1')
+  const dense: Transcript = {
+    audioDurationMs: 1,
+    utterances: [
+      { id: 'a', start: 0, end: 1, text: '', speakerId: '1', words: [] },
+      { id: 'b', start: 1, end: 2, text: '', speakerId: '2', words: [] }
+    ]
+  }
+  assert.equal(nextSpeakerId(dense), '3')
+})
+
+test('setUtteranceSpeaker reassigns one line only', () => {
+  const source = spoken()
+  const result = setUtteranceSpeaker(source, 'a', '11')
+  assert.equal(result.utterances[0].speakerId, '11')
+  assert.equal(result.utterances[2].speakerId, '2')
+  assert.equal(source.utterances[0].speakerId, '2')
+})
+
+test('setUtteranceSpeaker is a no-op for the same value or an unknown id', () => {
+  const source = spoken()
+  assert.equal(setUtteranceSpeaker(source, 'a', '2'), source)
+  assert.equal(setUtteranceSpeaker(source, 'nope', '3'), source)
 })

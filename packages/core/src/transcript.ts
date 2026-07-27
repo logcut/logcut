@@ -1,3 +1,4 @@
+import { randomId } from './id.ts'
 import type { Transcript, Utterance } from './types.ts'
 
 /**
@@ -96,4 +97,186 @@ export function replaceAllText(
     return { ...utterance, text: parts.join(replace) }
   })
   return { transcript: count === 0 ? transcript : { ...transcript, utterances }, count }
+}
+
+/**
+ * Only two Latin words need a space between them. Chinese runs together, and
+ * so does a word followed by punctuation, so a space is the wrong default.
+ */
+function joinText(before: string, after: string): string {
+  if (before === '') return after
+  if (after === '') return before
+  const spaced = /[A-Za-z0-9]$/.test(before) && /^[A-Za-z0-9]/.test(after)
+  return spaced ? `${before} ${after}` : `${before}${after}`
+}
+
+/**
+ * Fold the utterance after `firstId` into it: one line spanning both, with the
+ * silence between them swallowed.
+ *
+ * The ASR splits on pauses, so it routinely cuts a sentence in half at a breath.
+ * Merging is how that gets undone, and it is a text operation — `words` are
+ * concatenated untouched because they are the original timing anchors.
+ *
+ * Returns the same object when `firstId` is unknown or last, so callers can
+ * compare by identity to know nothing happened.
+ */
+export function mergeUtterances(transcript: Transcript, firstId: string): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === firstId)
+  const first = transcript.utterances[index]
+  const second = transcript.utterances[index + 1]
+  if (!first || !second) return transcript
+
+  const merged: Utterance = {
+    id: first.id,
+    start: first.start,
+    end: second.end,
+    text: joinText(first.text, second.text),
+    speakerId: first.speakerId ?? second.speakerId,
+    words: [...first.words, ...second.words]
+  }
+  return {
+    ...transcript,
+    utterances: [
+      ...transcript.utterances.slice(0, index),
+      merged,
+      ...transcript.utterances.slice(index + 2)
+    ]
+  }
+}
+
+/**
+ * Put an empty utterance in the silence after `afterId`.
+ *
+ * It fills the gap exactly rather than taking a fixed length: the gap is the
+ * only place it can go without overlapping its neighbours, and the editor only
+ * offers this where a gap exists.
+ *
+ * Returns the same object when `afterId` is unknown or last, or when the two
+ * lines already touch — there is nowhere to put it.
+ */
+export function insertUtteranceAfter(transcript: Transcript, afterId: string): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === afterId)
+  const before = transcript.utterances[index]
+  const after = transcript.utterances[index + 1]
+  if (!before || !after || after.start <= before.end) return transcript
+
+  const inserted: Utterance = {
+    id: randomId(),
+    start: before.end,
+    end: after.start,
+    text: '',
+    speakerId: before.speakerId,
+    words: []
+  }
+  return {
+    ...transcript,
+    utterances: [
+      ...transcript.utterances.slice(0, index + 1),
+      inserted,
+      ...transcript.utterances.slice(index + 1)
+    ]
+  }
+}
+
+/** A line may be short, but it may not collapse to nothing. */
+const MIN_DURATION_MS = 10
+
+/**
+ * Move one edge of a line, clamped into the room its neighbours leave.
+ *
+ * Clamping rather than rejecting: the field is free text, and silently
+ * refusing a typed time leaves the user staring at a number that did not take.
+ * Landing on the nearest legal value is visible and undoable.
+ *
+ * The bounds are the neighbours themselves, so `utterances` stays sorted and
+ * non-overlapping — which every lookup in this file assumes.
+ */
+export function setUtteranceTime(
+  transcript: Transcript,
+  id: string,
+  edge: 'start' | 'end',
+  timeMs: number
+): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
+  const utterance = transcript.utterances[index]
+  if (!utterance) return transcript
+
+  const previous = transcript.utterances[index - 1]
+  const next = transcript.utterances[index + 1]
+  const lower = edge === 'start' ? (previous?.end ?? 0) : utterance.start + MIN_DURATION_MS
+  const upper =
+    edge === 'start' ? utterance.end - MIN_DURATION_MS : (next?.start ?? Number.MAX_SAFE_INTEGER)
+
+  const clamped = Math.round(Math.min(Math.max(timeMs, lower), Math.max(lower, upper)))
+  if (clamped === utterance[edge]) return transcript
+
+  const moved: Utterance =
+    edge === 'start' ? { ...utterance, start: clamped } : { ...utterance, end: clamped }
+  return {
+    ...transcript,
+    utterances: [
+      ...transcript.utterances.slice(0, index),
+      moved,
+      ...transcript.utterances.slice(index + 1)
+    ]
+  }
+}
+
+/**
+ * Every speaker the transcript mentions, in the order a list should show them.
+ *
+ * Sorted numerically where the id is a number — the provider hands out "1",
+ * "2", … "11", and sorting those as text puts 11 between 1 and 2. Anything
+ * non-numeric sorts as text after them, so an id we did not create still has a
+ * stable place.
+ */
+export function speakerIdsOf(transcript: Transcript): string[] {
+  const ids = [...new Set(transcript.utterances.map((u) => u.speakerId).filter(isSpeakerId))]
+  return ids.sort((a, b) => {
+    const left = Number(a)
+    const right = Number(b)
+    const leftIsNumber = Number.isFinite(left)
+    const rightIsNumber = Number.isFinite(right)
+    if (leftIsNumber && rightIsNumber) return left - right
+    if (leftIsNumber !== rightIsNumber) return leftIsNumber ? -1 : 1
+    return a.localeCompare(b)
+  })
+}
+
+function isSpeakerId(id: string | undefined): id is string {
+  return id !== undefined && id !== ''
+}
+
+/**
+ * The lowest positive integer no one is using, as a string.
+ *
+ * Reusing a freed number rather than always counting up: after reassigning the
+ * only line of "Speaker 7" away, adding a speaker should offer 7 again instead
+ * of climbing to 12 and leaving a gap that means nothing.
+ */
+export function nextSpeakerId(transcript: Transcript): string {
+  const taken = new Set(speakerIdsOf(transcript))
+  let candidate = 1
+  while (taken.has(String(candidate))) candidate += 1
+  return String(candidate)
+}
+
+/** Reassign one line to a speaker. Same object back when nothing changes. */
+export function setUtteranceSpeaker(
+  transcript: Transcript,
+  id: string,
+  speakerId: string
+): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
+  const utterance = transcript.utterances[index]
+  if (!utterance || utterance.speakerId === speakerId) return transcript
+  return {
+    ...transcript,
+    utterances: [
+      ...transcript.utterances.slice(0, index),
+      { ...utterance, speakerId },
+      ...transcript.utterances.slice(index + 1)
+    ]
+  }
 }

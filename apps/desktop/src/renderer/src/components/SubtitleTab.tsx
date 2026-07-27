@@ -1,6 +1,6 @@
 import { defaultOption, languageOptionToConfig, orderedOptions } from '@logcut/core'
 import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
-import { Download, Loader2 } from 'lucide-react'
+import { Download, Loader2, PencilLine } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import LanguageSelect from '@/components/LanguageSelect'
@@ -32,13 +32,15 @@ interface SubtitleTabProps {
   transcript: Transcript | null
   asr: AsrState
   onTranscribe(config: TranscribeConfig, force: boolean): void
+  /** Switch the tab to its editing face. */
+  onEdit(): void
   onExportSrt(): Promise<string | null>
   onOpenSettings(): void
 }
 
 /**
  * Produces subtitles; it does not display them. The transcript itself lives on
- * the timeline, and editing happens in the dialog a subtitle block opens.
+ * the timeline, and editing happens in this tab's other face, SubtitleEditor.
  *
  * Laid out as a scrolling list of settings
  * rows, and the one action pinned to the bottom edge so it stays put however
@@ -49,6 +51,7 @@ export default function SubtitleTab({
   transcript,
   asr,
   onTranscribe,
+  onEdit,
   onExportSrt,
   onOpenSettings
 }: SubtitleTabProps): JSX.Element {
@@ -100,10 +103,13 @@ export default function SubtitleTab({
         </Field>
 
         <div className="flex flex-col gap-component py-stack">
+          {/* The only other way in is a double-click on the timeline, which
+              nothing on screen advertises. */}
           {hasTranscript && (
-            <p className="m-0 text-caption font-normal text-muted-foreground">
-              Double-click a subtitle block on the timeline to edit the text.
-            </p>
+            <Button variant="outline" size="sm" className="self-start" onClick={onEdit}>
+              <PencilLine size={14} />
+              Edit subtitles
+            </Button>
           )}
           {asr.kind === 'failed' && (
             <>

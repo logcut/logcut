@@ -1,9 +1,15 @@
 import {
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
+  insertUtteranceAfter,
+  mergeUtterances,
+  nextSpeakerId,
   replaceAllText,
   segmentTranscript,
-  setUtteranceText
+  setUtteranceSpeaker,
+  setUtteranceText,
+  setUtteranceTime,
+  speakerIdsOf
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
@@ -14,7 +20,7 @@ import MediaTab from '@/components/MediaTab'
 import Panel from '@/components/Panel'
 import ResizeHandle from '@/components/ResizeHandle'
 import SettingsDialog from '@/components/SettingsDialog'
-import SubtitleDialog from '@/components/SubtitleDialog'
+import SubtitleEditor from '@/components/SubtitleEditor'
 import SubtitleTab from '@/components/SubtitleTab'
 import Timeline from '@/components/Timeline'
 import type { TimelineClipView } from '@/components/Timeline'
@@ -211,12 +217,45 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     // right transcript when several clips are laid down.
     if (line) setSelectedClipId(line.clipId)
     seekTo(line?.start ?? timeMs)
+    // The editor is a face of the Subtitles tab now, so getting there means
+    // selecting that tab — otherwise a double-click on the timeline would
+    // appear to do nothing while Media is showing.
+    setTab('subtitle')
     setSubtitlesOpen(true)
   }
 
   const handleEditSave = (id: string, text: string): void => {
     if (!subtitleTranscript || !subtitleAssetId) return
     applyTranscript(subtitleAssetId, setUtteranceText(subtitleTranscript, id, text))
+  }
+
+  const handleSpeakerSave = (id: string, speakerId: string): void => {
+    if (!subtitleTranscript || !subtitleAssetId) return
+    const next = setUtteranceSpeaker(subtitleTranscript, id, speakerId)
+    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+  }
+
+  const handleTimeSave = (id: string, edge: 'start' | 'end', timeMs: number): void => {
+    if (!subtitleTranscript || !subtitleAssetId) return
+    const next = setUtteranceTime(subtitleTranscript, id, edge, timeMs)
+    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+  }
+
+  /**
+   * Add and merge are offered only across a silence, so both core functions
+   * return the transcript unchanged when there is nothing to do — comparing by
+   * identity keeps a no-op out of the undo history.
+   */
+  const handleAdd = (afterId: string): void => {
+    if (!subtitleTranscript || !subtitleAssetId) return
+    const next = insertUtteranceAfter(subtitleTranscript, afterId)
+    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+  }
+
+  const handleMerge = (firstId: string): void => {
+    if (!subtitleTranscript || !subtitleAssetId) return
+    const next = mergeUtterances(subtitleTranscript, firstId)
+    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
   }
 
   const handleResegment = (): void => {
@@ -231,11 +270,18 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     return result.count
   }
 
-  /** The dialog speaks the transcript's own ids; the timeline speaks its own. */
+  /**
+   * The editor speaks the transcript's own clock; the timeline speaks its own,
+   * so a line's start has to be offset by its clip before anything can seek.
+   *
+   * `applyTime` runs immediately rather than waiting for the player's
+   * timeupdate: that arrives ~4Hz and only once the seek has completed, which
+   * is long enough for the highlight to visibly lag the click.
+   */
   const seekToUtterance = (utterance: Utterance): void => {
     const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
     seekTo(start)
-    void videoRef.current?.play()
+    applyTime(start)
   }
 
   return (
@@ -254,7 +300,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
         <div className="flex min-h-0 flex-1">
           {/* AI chat panel slot — deliberately empty for now. */}
 
-          <div className="relative flex shrink-0 flex-col" style={{ width: leftWidth }}>
+          <div className="flex shrink-0 flex-col" style={{ width: leftWidth }}>
             <Panel className="flex min-h-0 flex-1 flex-col">
               <Tabs
                 value={tab}
@@ -284,36 +330,46 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                     onRemove={(assetId) => void removeMedia(assetId)}
                   />
                 </TabsContent>
+                {/* The tab has two faces: produce subtitles, or edit the ones
+                    on the selected clip. Never both, and the tab strip stays
+                    put across the switch. */}
                 <TabsContent value="subtitle" className="flex min-h-0 flex-col">
-                  <SubtitleTab
-                    asset={subtitleAssetId ? assetOf(subtitleAssetId) : null}
-                    transcript={subtitleTranscript}
-                    asr={asr}
-                    onTranscribe={(config, force) => {
-                      if (subtitleAssetId) void transcribe(subtitleAssetId, config, force)
-                    }}
-                    onExportSrt={() =>
-                      subtitleAssetId ? exportSrt(subtitleAssetId) : Promise.resolve(null)
-                    }
-                    onOpenSettings={() => setSettingsOpen(true)}
-                  />
+                  {subtitlesOpen && subtitleTranscript ? (
+                    <SubtitleEditor
+                      utterances={subtitleTranscript.utterances}
+                      activeId={activeSourceId}
+                      canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
+                      onClose={() => setSubtitlesOpen(false)}
+                      onSeek={seekToUtterance}
+                      onEditSave={handleEditSave}
+                      onTimeSave={handleTimeSave}
+                      onAdd={handleAdd}
+                      onMerge={handleMerge}
+                      speakerIds={speakerIdsOf(subtitleTranscript)}
+                      nextSpeakerId={nextSpeakerId(subtitleTranscript)}
+                      onSpeakerSave={handleSpeakerSave}
+                      onUndo={undo}
+                      onResegment={handleResegment}
+                      onReplaceAll={handleReplaceAll}
+                    />
+                  ) : (
+                    <SubtitleTab
+                      asset={subtitleAssetId ? assetOf(subtitleAssetId) : null}
+                      transcript={subtitleTranscript}
+                      asr={asr}
+                      onTranscribe={(config, force) => {
+                        if (subtitleAssetId) void transcribe(subtitleAssetId, config, force)
+                      }}
+                      onEdit={() => setSubtitlesOpen(true)}
+                      onExportSrt={() =>
+                        subtitleAssetId ? exportSrt(subtitleAssetId) : Promise.resolve(null)
+                      }
+                      onOpenSettings={() => setSettingsOpen(true)}
+                    />
+                  )}
                 </TabsContent>
               </Tabs>
             </Panel>
-
-            {subtitlesOpen && (
-              <SubtitleDialog
-                utterances={subtitleTranscript?.utterances ?? []}
-                activeId={activeSourceId}
-                canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
-                onClose={() => setSubtitlesOpen(false)}
-                onSeek={seekToUtterance}
-                onEditSave={handleEditSave}
-                onUndo={undo}
-                onResegment={handleResegment}
-                onReplaceAll={handleReplaceAll}
-              />
-            )}
           </div>
 
           <ResizeHandle orientation="vertical" onResize={resizeLeftPanel} />
@@ -321,8 +377,10 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
           <Panel className="flex min-h-0 min-w-0 flex-1 flex-col">
             {playback.src !== '' ? (
               <VideoPlayer
-                ref={videoRef}
+                videoRef={videoRef}
                 src={playback.src}
+                clipOffsetMs={playback.clip?.startMs ?? 0}
+                durationMs={playback.durationMs}
                 // The element's clock restarts on every clip; the timeline's
                 // does not, so element time is translated before use.
                 onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}

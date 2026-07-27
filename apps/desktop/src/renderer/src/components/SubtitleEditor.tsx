@@ -2,42 +2,57 @@ import type { Utterance } from '@logcut/core'
 import { Scissors, Search, Undo2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { JSX } from 'react'
-import Panel from '@/components/Panel'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-interface SubtitleDialogProps {
+interface SubtitleEditorProps {
   utterances: Utterance[]
   activeId: string | null
   canUndo: boolean
   onClose(): void
   onSeek(utterance: Utterance): void
   onEditSave(id: string, text: string): void
+  onTimeSave(id: string, edge: 'start' | 'end', timeMs: number): void
+  onAdd(afterId: string): void
+  onMerge(firstId: string): void
+  speakerIds: string[]
+  nextSpeakerId: string
+  onSpeakerSave(id: string, speakerId: string): void
   onUndo(): void
   onResegment(): void
   onReplaceAll(find: string, replace: string): number
 }
 
 /**
- * Subtitle editing, opened by double-clicking a block on the timeline.
+ * Subtitle editing: the second face of the Subtitles tab, reached by
+ * double-clicking a block on the timeline or by the button on the tab's form.
  *
- * Deliberately not a modal: playback continues underneath and the highlight
- * keeps following it, so this sits over the left panel only and leaves the
- * player untouched. A dimmed overlay would make watching-while-editing
- * impossible, which is the whole point of the panel.
+ * It is the tab's *content*, not an overlay over the panel. As an overlay it
+ * covered the tab strip too, and a panel that loses its own navigation reads
+ * as a different, broken screen rather than as this panel in another mode.
+ *
+ * Nothing about it is modal: the player keeps its full width beside it and
+ * playback carries on, which is the whole point — subtitles get fixed while
+ * watching them.
  */
-export default function SubtitleDialog({
+export default function SubtitleEditor({
   utterances,
   activeId,
   canUndo,
   onClose,
   onSeek,
   onEditSave,
+  onTimeSave,
+  onAdd,
+  onMerge,
+  speakerIds,
+  nextSpeakerId,
+  onSpeakerSave,
   onUndo,
   onResegment,
   onReplaceAll
-}: SubtitleDialogProps): JSX.Element {
+}: SubtitleEditorProps): JSX.Element {
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
@@ -51,9 +66,8 @@ export default function SubtitleDialog({
   }
 
   return (
-    // Covers exactly the tab panel it replaces, so the player keeps its full
-    // width and playback stays watchable while editing.
-    <Panel className="absolute inset-0 z-50 flex flex-col shadow-lg">
+    // Fills the tab's content area; the Panel and the tab strip are above it.
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-component border-b border-border p-component">
         <span className="flex-1 text-label font-medium text-foreground">Subtitles</span>
         <Button variant="ghost" size="icon-sm" title="Undo" disabled={!canUndo} onClick={onUndo}>
@@ -104,9 +118,15 @@ export default function SubtitleDialog({
       <SubtitleList
         utterances={utterances}
         activeId={activeId}
-        onSelect={onSeek}
+        onSeek={onSeek}
         onEditSave={onEditSave}
+        onTimeSave={onTimeSave}
+        onAdd={onAdd}
+        onMerge={onMerge}
+        speakerIds={speakerIds}
+        nextSpeakerId={nextSpeakerId}
+        onSpeakerSave={onSpeakerSave}
       />
-    </Panel>
+    </div>
   )
 }

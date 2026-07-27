@@ -1,16 +1,4 @@
-/**
- * Timecode for playback positions and durations: mm:ss below an hour, h:mm:ss
- * above it. Shared by the subtitle list, the timeline ruler and project cards
- * so the same instant never reads two different ways.
- */
-export function formatTimecode(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
-  const seconds = totalSeconds % 60
-  const minutes = Math.floor(totalSeconds / 60) % 60
-  const hours = Math.floor(totalSeconds / 3600)
-  const mmss = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-  return hours > 0 ? `${hours}:${mmss}` : mmss
-}
+import { formatTimecode } from '@logcut/core'
 
 /** Durations are unknown (0) when probing failed; say so rather than "00:00". */
 export function formatDuration(ms: number): string {

@@ -15,10 +15,18 @@ export type { SegmentOptions } from './segment.ts'
 
 export { formatSrtTimestamp, toSrt } from './srt.ts'
 
+export { formatTimecode, formatTimecodeFull, parseTimecode } from './timecode.ts'
+
 export {
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
+  insertUtteranceAfter,
+  mergeUtterances,
+  nextSpeakerId,
   replaceAllText,
-  setUtteranceText
+  setUtteranceSpeaker,
+  setUtteranceText,
+  setUtteranceTime,
+  speakerIdsOf
 } from './transcript.ts'
 export type { ReplaceAllResult } from './transcript.ts'

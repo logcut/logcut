@@ -1,4 +1,4 @@
-import { findNearestUtteranceIndex } from '@logcut/core'
+import { findNearestUtteranceIndex, formatTimecode } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -12,7 +12,6 @@ import type {
 import { Film, Type } from 'lucide-react'
 import { usePlaybackClock } from '@/hooks/usePlaybackClock'
 import { MEDIA_ASSET_DRAG } from '@/lib/drag'
-import { formatTimecode } from '@/lib/format'
 import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timeline'
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
@@ -601,13 +600,7 @@ export default function Timeline({
               <div
                 key={clip.id}
                 data-clip-id={clip.id}
-                // outline rather than an inset ring: a ring is an inset
-                // box-shadow, which paints under the element's own children, so
-                // the filmstrip band covered it along the left and right edges.
-                // Outlines paint last, above every descendant.
-                className={`absolute inset-y-0 flex flex-col overflow-hidden rounded-xs ${
-                  clip.id === selectedClipId ? 'outline-2 -outline-offset-2 outline-foreground' : ''
-                }`}
+                className="absolute inset-y-0 flex flex-col overflow-hidden rounded-xs"
                 style={{
                   left: `${(clip.startMs / durationMs) * 100}%`,
                   width: `${(clip.durationMs / durationMs) * 100}%`,
@@ -673,6 +666,20 @@ export default function Timeline({
                       WebkitMaskSize: '100% 100%'
                     }}
                   />
+                )}
+
+                {/* Selection is its own layer, stacked over the bands, rather
+                    than a border or outline on the clip itself.
+
+                    Both of those are drawn by the clip and covered by its own
+                    children: an inset ring is a box-shadow, which paints
+                    under them outright, and an outline — which the spec does
+                    paint last — still loses to positioned descendants on their
+                    own paint layers, which the filmstrip tiles are. A sibling
+                    with a z-index is the only version that does not depend on
+                    reading paint order correctly. */}
+                {clip.id === selectedClipId && (
+                  <div className="pointer-events-none absolute inset-0 z-10 rounded-xs border-2 border-foreground" />
                 )}
               </div>
             ))}
