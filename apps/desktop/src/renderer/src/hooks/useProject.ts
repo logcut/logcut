@@ -32,7 +32,6 @@ export interface UseProjectResult {
   removeMedia(assetId: string): Promise<void>
   /** Append an asset to the timeline. */
   addClip(assetId: string): Promise<void>
-  /** Take one clip off the timeline; the asset stays in the library. */
   /** Take clips off the timeline; the assets stay in the library. */
   removeClips(clipIds: string[]): Promise<void>
   rename(name: string): Promise<void>

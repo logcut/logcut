@@ -146,6 +146,26 @@ export function mergeUtterances(transcript: Transcript, firstId: string): Transc
 }
 
 /**
+ * Drop utterances by id.
+ *
+ * The lines around them keep their own timings — the removed span becomes
+ * silence rather than the rest sliding earlier. Subtitles are annotations on
+ * a timeline they do not own: closing the gap would put every later line out
+ * of step with the audio it belongs to. Cutting the media itself is a clip
+ * operation and lives nowhere near here.
+ *
+ * Returns the same object when nothing matched, so a caller comparing by
+ * reference can skip an empty undo entry.
+ */
+export function removeUtterances(transcript: Transcript, ids: string[]): Transcript {
+  const doomed = new Set(ids)
+  if (doomed.size === 0) return transcript
+  const utterances = transcript.utterances.filter((utterance) => !doomed.has(utterance.id))
+  if (utterances.length === transcript.utterances.length) return transcript
+  return { ...transcript, utterances }
+}
+
+/**
  * Put an empty utterance in the silence after `afterId`.
  *
  * It fills the gap exactly rather than taking a fixed length: the gap is the

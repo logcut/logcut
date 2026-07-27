@@ -1,5 +1,6 @@
 import {
   findNearestUtteranceIndex,
+  removeUtterances,
   findUtteranceIndexAt,
   insertUtteranceAfter,
   mergeUtterances,
@@ -89,7 +90,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     importMedia,
     removeMedia,
     addClip,
-    removeClip,
+    removeClips,
     rename,
     transcribe,
     applyTranscript,
@@ -105,6 +106,8 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   /** Clips the timeline has selected — what Delete removes. A set, because a
    *  rubber band takes whatever it covers. */
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
+  /** Timeline utterance ids the band took — the composite ones, not source. */
+  const [selectedUtteranceIds, setSelectedUtteranceIds] = useState<string[]>([])
   /**
    * Whose subtitles the editor is showing. Deliberately not selectedClipIds:
    * selection is a timeline gesture that arms Delete, while opening the editor
@@ -361,6 +364,28 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * timeupdate: that arrives ~4Hz and only once the seek has completed, which
    * is long enough for the highlight to visibly lag the click.
    */
+  /**
+   * The band hands back timeline ids; a transcript only knows its own. So the
+   * lines are grouped by the asset they came from and each transcript is
+   * rewritten once — a selection can span several clips, and two edits to the
+   * same transcript in a row would each start from the pre-edit copy.
+   */
+  const handleRemoveUtterances = (timelineIds: string[]): void => {
+    const byAsset = new Map<string, string[]>()
+    for (const id of timelineIds) {
+      const line = utterances.find((utterance) => utterance.id === id)
+      if (!line) continue
+      byAsset.set(line.assetId, [...(byAsset.get(line.assetId) ?? []), line.sourceId])
+    }
+    for (const [assetId, sourceIds] of byAsset) {
+      const transcript = transcripts[assetId]
+      if (!transcript) continue
+      const next = removeUtterances(transcript, sourceIds)
+      if (next !== transcript) applyTranscript(assetId, next)
+    }
+    setSelectedUtteranceIds([])
+  }
+
   const togglePlay = (): void => {
     const video = videoRef.current
     if (!video || playback.src === '') return
@@ -521,12 +546,14 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
               durationMs={playback.durationMs}
               clips={clipViews}
               utterances={utterances}
-              activeUtteranceId={activeUtteranceId}
               selectedClipIds={selectedClipIds}
+              selectedUtteranceIds={selectedUtteranceIds}
               videoRef={videoRef}
               clipOffsetMs={playback.clip?.startMs ?? 0}
               hasPlayer={playback.src !== ''}
               onSelectClips={setSelectedClipIds}
+              onSelectUtterances={setSelectedUtteranceIds}
+              onRemoveUtterances={handleRemoveUtterances}
               onRemoveClips={(clipIds) => void removeClips(clipIds)}
               onSeek={playback.seek}
               onScrub={applyTime}

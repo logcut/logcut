@@ -388,7 +388,11 @@ export default function SubtitleList({
   const utterancesRef = useRef(utterances)
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
-  /** Set by an action whose result is already where the user is looking. */
+  /**
+   * Raised by an action whose result is already where the user is looking, so
+   * the follow lets that one change pass without recentring. Set where the
+   * action happens, never inferred from what `activeId` did.
+   */
   const skipFollowRef = useRef(false)
 
   /**
@@ -462,6 +466,12 @@ export default function SubtitleList({
   }, [])
 
   const endEdit = useCallback((): void => {
+    // Leaving an edit is the other action whose result is already where the
+    // user is looking. `editingId` going back to null restarts the follow, and
+    // it would pull the line just typed into towards the middle — the list
+    // jumping the instant Enter is pressed. Covers Escape and blur too, both
+    // of which come through here.
+    skipFollowRef.current = true
     editingIdRef.current = null
     draftRef.current = ''
     setEditingId(null)

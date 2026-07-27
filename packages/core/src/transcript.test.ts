@@ -6,6 +6,7 @@ import {
   findUtteranceIndexAt,
   insertUtteranceAfter,
   mergeUtterances,
+  removeUtterances,
   nextSpeakerId,
   replaceAllText,
   setUtteranceSpeaker,
@@ -273,4 +274,21 @@ test('clampUtteranceTime agrees with what setUtteranceTime commits', () => {
       assert.equal(previewed, committed, `drifted at ${edge} ${timeMs}`)
     }
   }
+})
+
+test('removeUtterances drops the named lines and leaves the rest timed as they were', () => {
+  const result = removeUtterances(fixture(), ['b'])
+  assert.deepEqual(
+    result.utterances.map((utterance) => [utterance.id, utterance.start, utterance.end]),
+    [
+      ['a', 0, 400],
+      ['c', 800, 1000]
+    ]
+  )
+})
+
+test('removeUtterances returns the same transcript when nothing matched', () => {
+  const source = fixture()
+  assert.equal(removeUtterances(source, []), source)
+  assert.equal(removeUtterances(source, ['nope']), source)
 })

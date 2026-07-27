@@ -20,10 +20,23 @@ import { FILMSTRIP_FRAMES } from '../../../shared/media'
  * widened to this so every subtitle stays visible and aimable; nothing is
  * being edited on the timeline, so the drift it introduces costs nothing.
  */
+/**
+ * Below this a block has no room for a word, and a couple of clipped glyphs
+ * read as damage rather than as a label.
+ */
+const MIN_CAPTION_PX = 28
+
 const MIN_BLOCK_PX = 4
 
 /** Mirrors --timeline-media-strip-height; the frame maths needs the number. */
 const STRIP_BAND_HEIGHT = 39
+
+/**
+ * How far the pointer may wander and still count as a click rather than a
+ * drag. A press is ambiguous until it either moves or is released, and the
+ * hand slips a pixel or two on the way up.
+ */
+const CLICK_SLOP_PX = 3
 
 /** A thumb narrower than this is not worth aiming at, however deep the zoom. */
 const MIN_THUMB_PX = 24
@@ -86,11 +99,14 @@ interface TimelineProps {
   clips: TimelineClipView[]
   /** Already on the timeline's clock — see lib/timeline.ts layUtterances. */
   utterances: Utterance[]
-  activeUtteranceId: string | null
   selectedClipIds: string[]
+  /** Timeline utterance ids, i.e. what layUtterances produced. */
+  selectedUtteranceIds: string[]
   videoRef: RefObject<HTMLVideoElement | null>
   onSelectClips(clipIds: string[]): void
   onRemoveClips(clipIds: string[]): void
+  onSelectUtterances(ids: string[]): void
+  onRemoveUtterances(ids: string[]): void
   /**
    * The time the playhead was just moved to by a click or drag, reported the
    * moment it happens rather than when the element catches up.
@@ -179,12 +195,14 @@ function TimelineTrack({
 export default function Timeline({
   durationMs,
   utterances,
-  activeUtteranceId,
   clips,
   selectedClipIds,
+  selectedUtteranceIds,
   videoRef,
   onSelectClips,
   onRemoveClips,
+  onSelectUtterances,
+  onRemoveUtterances,
   onScrub,
   onSeek,
   clipOffsetMs,
@@ -205,10 +223,22 @@ export default function Timeline({
    * halfway through would be unusable.
    */
   const dragRef = useRef<'scrub' | 'marquee' | 'none'>('none')
+  /**
+   * A press that has not yet turned into a drag. Outside the ruler the
+   * playhead must not move until the press is known to be a click — dragging
+   * to select is not a request to seek.
+   */
+  const pendingClickRef = useRef<{
+    timeMs: number
+    clientX: number
+    clientY: number
+    subtitle: boolean
+  } | null>(null)
   /** Where the band began, in client pixels, so hit tests survive a scroll. */
   const marqueeStartRef = useRef<{ clientX: number; clientY: number } | null>(null)
-  /** The media row's window, which the band has to touch to take anything. */
+  /** The rows' windows; the band has to touch one to take anything from it. */
   const mediaRowRef = useRef<HTMLDivElement>(null)
+  const subtitleRowRef = useRef<HTMLDivElement>(null)
   /** The rubber band, in container-relative pixels. */
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(
     null
@@ -306,8 +336,8 @@ export default function Timeline({
     // MIN_BLOCK_PX is passed rather than left to default: merging has to know
     // the same minimum the render applies, or the two disagree and blocks
     // that were kept apart get drawn on top of each other.
-    () => (scale > 0 ? mergeBlocks(utterances, scale, activeUtteranceId, MIN_BLOCK_PX) : []),
-    [utterances, scale, activeUtteranceId]
+    () => (scale > 0 ? mergeBlocks(utterances, scale, MIN_BLOCK_PX) : []),
+    [utterances, scale]
   )
 
   const timeAtClientX = (clientX: number): number => {
@@ -370,25 +400,65 @@ export default function Timeline({
     return clientX - (rect?.left ?? 0) + offsetPx
   }
 
-  /** Clips the band touches. Horizontal overlap plus a hit on the media row. */
+  /** True when the band's vertical span reaches the given row at all. */
+  const bandReaches = (
+    row: RefObject<HTMLDivElement | null>,
+    fromClientY: number,
+    toClientY: number
+  ): boolean => {
+    const rect = row.current?.getBoundingClientRect()
+    if (!rect) return false
+    return (
+      Math.max(fromClientY, toClientY) >= rect.top &&
+      Math.min(fromClientY, toClientY) <= rect.bottom
+    )
+  }
+
+  /** The band's horizontal reach, in strip pixels. */
+  const bandSpan = (
+    fromClientX: number,
+    toClientX: number
+  ): { from: number; to: number } | null => {
+    if (scale <= 0) return null
+    const a = stripXAt(fromClientX)
+    const b = stripXAt(toClientX)
+    return { from: Math.min(a, b), to: Math.max(a, b) }
+  }
+
+  /**
+   * What the band covers, resolved per row: horizontal overlap plus a vertical
+   * hit on that row. A band drawn entirely in the empty space above the tracks
+   * takes nothing, which is why the vertical test cannot be skipped.
+   */
   const clipsWithin = (
     fromClientX: number,
     toClientX: number,
     fromClientY: number,
     toClientY: number
   ): string[] => {
-    const row = mediaRowRef.current?.getBoundingClientRect()
-    if (!row || scale <= 0) return []
-    if (Math.max(fromClientY, toClientY) < row.top || Math.min(fromClientY, toClientY) > row.bottom)
-      return []
-    const from = Math.min(stripXAt(fromClientX), stripXAt(toClientX))
-    const to = Math.max(stripXAt(fromClientX), stripXAt(toClientX))
+    const span = bandSpan(fromClientX, toClientX)
+    if (!span || !bandReaches(mediaRowRef, fromClientY, toClientY)) return []
     return clips
       .filter((clip) => {
         const left = clip.startMs * scale
-        return left + clip.durationMs * scale >= from && left <= to
+        return left + clip.durationMs * scale >= span.from && left <= span.to
       })
       .map((clip) => clip.id)
+  }
+
+  const utterancesWithin = (
+    fromClientX: number,
+    toClientX: number,
+    fromClientY: number,
+    toClientY: number
+  ): string[] => {
+    const span = bandSpan(fromClientX, toClientX)
+    if (!span || !bandReaches(subtitleRowRef, fromClientY, toClientY)) return []
+    return utterances
+      .filter(
+        (utterance) => utterance.end * scale >= span.from && utterance.start * scale <= span.to
+      )
+      .map((utterance) => utterance.id)
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -404,16 +474,9 @@ export default function Timeline({
     const element = target instanceof Element ? target.closest('[data-clip-id]') : null
     const clipId = element?.getAttribute('data-clip-id') ?? null
     onSelectClips(clipId === null ? [] : [clipId])
-
-    const timeMs = pressTimeOf(event)
-    seekTo(timeMs)
-
-    // Pressing a subtitle opens the editor on it — one press, not two. The
-    // press still seeks; opening the panel swaps the sidebar's contents and
-    // moves nothing, so it costs the gesture nothing.
-    if (target instanceof Element && target.closest('[data-subtitle-block]')) {
-      onEditSubtitlesAt(timeMs)
-    }
+    const block = target instanceof Element ? target.closest('[data-subtitle-ids]') : null
+    const blockIds = block?.getAttribute('data-subtitle-ids')
+    onSelectUtterances(blockIds ? blockIds.split(' ') : [])
 
     // What the drag will mean, decided here and only here. Only the ruler
     // drags the playhead: dragging a scrub out of the tracks would fight the
@@ -422,6 +485,22 @@ export default function Timeline({
     // there is nothing to drag, since clips cannot be moved.
     const rulerBottom = content?.getBoundingClientRect().bottom ?? 0
     dragRef.current = event.clientY <= rulerBottom ? 'scrub' : clipId === null ? 'marquee' : 'none'
+
+    const timeMs = pressTimeOf(event)
+    if (dragRef.current === 'scrub') {
+      // The ruler is unambiguous, so it moves at once and stays under the
+      // pointer for the rest of the drag.
+      seekTo(timeMs)
+    } else {
+      // Everywhere else the press is held back: it becomes a seek on release,
+      // and only if it never turned into a drag.
+      pendingClickRef.current = {
+        timeMs,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        subtitle: target instanceof Element && target.closest('[data-subtitle-block]') !== null
+      }
+    }
 
     if (dragRef.current === 'marquee') {
       const point = localPointOf(event)
@@ -434,6 +513,14 @@ export default function Timeline({
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
+
+    const pending = pendingClickRef.current
+    if (
+      pending &&
+      Math.hypot(event.clientX - pending.clientX, event.clientY - pending.clientY) > CLICK_SLOP_PX
+    ) {
+      pendingClickRef.current = null
+    }
 
     // Dragging never snaps: scrubbing has to follow the pointer exactly.
     if (dragRef.current === 'scrub') {
@@ -453,9 +540,18 @@ export default function Timeline({
     const start = marqueeStartRef.current
     if (!start) return
     onSelectClips(clipsWithin(start.clientX, event.clientX, start.clientY, event.clientY))
+    onSelectUtterances(utterancesWithin(start.clientX, event.clientX, start.clientY, event.clientY))
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    // Still pending means the press never became a drag, so it was a click.
+    const pending = pendingClickRef.current
+    if (pending) {
+      seekTo(pending.timeMs)
+      // Clicking a subtitle opens the editor on it — one press, not two.
+      if (pending.subtitle) onEditSubtitlesAt(pending.timeMs)
+    }
+    pendingClickRef.current = null
     dragRef.current = 'none'
     marqueeStartRef.current = null
     setMarquee(null)
@@ -485,9 +581,11 @@ export default function Timeline({
       return
     }
     if (event.key !== 'Delete' && event.key !== 'Backspace') return
-    if (selectedClipIds.length === 0) return
+    if (selectedClipIds.length === 0 && selectedUtteranceIds.length === 0) return
     event.preventDefault()
-    onRemoveClips(selectedClipIds)
+    // A band can cover both rows, so one press clears whatever it took.
+    if (selectedUtteranceIds.length > 0) onRemoveUtterances(selectedUtteranceIds)
+    if (selectedClipIds.length > 0) onRemoveClips(selectedClipIds)
   }
 
   /**
@@ -675,19 +773,36 @@ export default function Timeline({
             hidden={!hasMedia || utterances.length === 0}
             contentWidth={contentWidth}
             offsetPx={offsetPx}
+            contentRef={subtitleRowRef}
           >
             {blocks.map((block) => (
               <div
                 key={block.startMs}
                 data-subtitle-block
-                className="absolute inset-y-adjust rounded-xs"
+                // The lines this drawing stands for, so a press can select
+                // them without re-deriving which ones it covers.
+                data-subtitle-ids={block.ids.join(' ')}
+                className={`absolute inset-y-adjust flex items-center overflow-hidden rounded-xs ${
+                  block.ids.some((id) => selectedUtteranceIds.includes(id))
+                    ? 'ring-1 ring-foreground ring-inset'
+                    : ''
+                }`}
                 style={{
                   left: `${(block.startMs / durationMs) * 100}%`,
                   width: `${((block.endMs - block.startMs) / durationMs) * 100}%`,
                   minWidth: MIN_BLOCK_PX,
-                  background: block.active ? 'var(--editor-selection)' : 'var(--editor-waveform)'
+                  background: 'var(--editor-waveform)'
                 }}
-              />
+              >
+                {/* The line itself, once the block is wide enough to hold any
+                    of it. Merged blocks carry no text (see lib/timeline.ts), so
+                    this is only ever one line's own words. */}
+                {block.text !== '' && (block.endMs - block.startMs) * scale >= MIN_CAPTION_PX && (
+                  <span className="pointer-events-none block truncate px-inline text-caption leading-[var(--timeline-subtitle-height)] text-white">
+                    {block.text}
+                  </span>
+                )}
+              </div>
             ))}
           </TimelineTrack>
 
@@ -787,7 +902,7 @@ export default function Timeline({
                     with a z-index is the only version that does not depend on
                     reading paint order correctly. */}
                 {selectedClipIds.includes(clip.id) && (
-                  <div className="pointer-events-none absolute inset-0 z-10 rounded-xs border-2 border-foreground" />
+                  <div className="pointer-events-none absolute inset-0 z-10 rounded-xs border border-foreground" />
                 )}
               </div>
             ))}

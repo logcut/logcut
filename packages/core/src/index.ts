@@ -24,6 +24,7 @@ export {
   insertUtteranceAfter,
   mergeUtterances,
   nextSpeakerId,
+  removeUtterances,
   replaceAllText,
   setUtteranceSpeaker,
   setUtteranceText,

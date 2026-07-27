@@ -45,10 +45,17 @@ export function tickTimes(fromMs: number, toMs: number, interval: number): numbe
 export interface SubtitleBlock {
   startMs: number
   endMs: number
-  /** How many utterances were folded in; 1 means the block is a single line. */
-  count: number
-  /** True when the currently playing utterance is inside this block. */
-  active: boolean
+  /**
+   * The utterances folded in, in order. A block is a drawing, not a line —
+   * selecting or deleting one has to name the lines it stands for.
+   */
+  ids: string[]
+  /**
+   * What to write on the block, or empty when there is nothing single to
+   * write. A merged block stands for several lines and has no one caption;
+   * anything picked from among them would be a lie about the rest.
+   */
+  text: string
 }
 
 /**
@@ -69,27 +76,25 @@ export interface SubtitleBlock {
 export function mergeBlocks(
   utterances: Utterance[],
   scale: number,
-  activeId: string | null,
   minBlockPx = 4,
   minGapPx = 1
 ): SubtitleBlock[] {
   const blocks: SubtitleBlock[] = []
   for (const utterance of utterances) {
     const last = blocks[blocks.length - 1]
-    const isActive = utterance.id === activeId
     const drawnEndMs = last
       ? last.startMs + Math.max(last.endMs - last.startMs, minBlockPx / scale)
       : 0
     if (last && (utterance.start - drawnEndMs) * scale < minGapPx) {
       last.endMs = Math.max(last.endMs, utterance.end)
-      last.count += 1
-      last.active ||= isActive
+      last.ids.push(utterance.id)
+      last.text = ''
     } else {
       blocks.push({
         startMs: utterance.start,
         endMs: utterance.end,
-        count: 1,
-        active: isActive
+        ids: [utterance.id],
+        text: utterance.text
       })
     }
   }
