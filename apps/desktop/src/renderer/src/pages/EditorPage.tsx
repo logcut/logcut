@@ -42,8 +42,14 @@ const MIN_TABS_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
 const MIN_SIDEBAR_WIDTH = 280
 const DEFAULT_SIDEBAR_WIDTH = 340
-/** --space-component, mirrored here because the split maths needs the number. */
-const PANE_GAP = 8
+/**
+ * The two gaps, mirrored from CSS because the split maths needs the numbers.
+ * `--space-component` around the outside of the panels, `--space-compact`
+ * between them: the cards read as one group that way, rather than as pieces
+ * spaced the same distance from each other as from the window.
+ */
+const OUTER_GAP = 8
+const PANE_GAP = 6
 
 /**
  * The tab panel and the player open at equal width — they share the upper row,
@@ -56,7 +62,7 @@ const PANE_GAP = 8
  */
 function defaultTabsWidth(): number {
   // Two outer paddings plus the two handles between the three columns.
-  const consumed = PANE_GAP * 4 + DEFAULT_SIDEBAR_WIDTH
+  const consumed = OUTER_GAP * 2 + PANE_GAP * 2 + DEFAULT_SIDEBAR_WIDTH
   return clamp(
     Math.round((window.innerWidth - consumed) / 2),
     MIN_TABS_WIDTH,
@@ -307,9 +313,21 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     (afterId: string): void => {
       if (!subtitleTranscript || !subtitleAssetId) return
       const next = insertUtteranceAfter(subtitleTranscript, afterId)
-      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+      if (next === subtitleTranscript) return
+      applyTranscript(subtitleAssetId, next)
+
+      // Move to where the line was just put. Without this the new line appears
+      // in the list while the picture and the playhead stay wherever they were,
+      // and the first thing anyone does with an empty subtitle is look at the
+      // frame it belongs to.
+      //
+      // The new line starts exactly where the previous one ended (see
+      // core/transcript.md), read off the transcript that produced it rather
+      // than found again in the one just built — same value, one lookup.
+      const before = subtitleTranscript.utterances.find((line) => line.id === afterId)
+      if (before) seekTo((subtitleClip?.startMs ?? 0) + before.end)
     },
-    [applyTranscript, subtitleAssetId, subtitleTranscript]
+    [applyTranscript, seekTo, subtitleAssetId, subtitleClip, subtitleTranscript]
   )
 
   const handleMerge = useCallback(
@@ -435,7 +453,6 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                     <MediaTab
                       assets={project?.assets ?? []}
                       selectedAssetId={selectedAssetId}
-                      timelineAssetIds={clips.map((clip) => clip.assetId)}
                       onImport={(paths) => void importMedia(paths)}
                       onSelect={setSelectedAssetId}
                       onRemove={(assetId) => void removeMedia(assetId)}

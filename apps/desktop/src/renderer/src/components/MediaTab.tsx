@@ -11,8 +11,6 @@ interface MediaTabProps {
   assets: MediaAssetSummary[]
   /** Highlighted here only; the timeline decides what is being edited. */
   selectedAssetId: string | null
-  /** Assets with at least one clip on the timeline, badged as such. */
-  timelineAssetIds: string[]
   onImport(paths: string[]): void
   onSelect(assetId: string): void
   onRemove(assetId: string): void
@@ -30,7 +28,6 @@ interface MediaTabProps {
 export default function MediaTab({
   assets,
   selectedAssetId,
-  timelineAssetIds,
   onImport,
   onSelect,
   onRemove
@@ -128,14 +125,6 @@ export default function MediaTab({
                 ) : (
                   <span className="flex h-full w-full items-center justify-center">
                     <Film size={18} className="text-muted-foreground" />
-                  </span>
-                )}
-
-                {/* Which entry is actually being edited is a property of the
-                    timeline, not of the selection above. */}
-                {timelineAssetIds.includes(asset.id) && (
-                  <span className="absolute top-adjust left-adjust rounded-xs bg-primary px-inline text-caption font-medium text-primary-foreground">
-                    Added
                   </span>
                 )}
 

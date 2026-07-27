@@ -388,7 +388,6 @@ export default function SubtitleList({
   const utterancesRef = useRef(utterances)
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
-  const followFrameRef = useRef(0)
 
   /**
    * Glide the active line to the middle, a fraction of the way each frame.
@@ -407,6 +406,13 @@ export default function SubtitleList({
    * the scroller (nothing between them is positioned), so offsets would be
    * relative to something further up the tree entirely.
    *
+   * **The frame handle is a local, and the cleanup is this effect's own.** It
+   * lived in a ref once, guarded by `if (ref.current === 0)`, with the cancel
+   * in a separate mount-only effect that never put the ref back to 0 — so
+   * StrictMode's mount/unmount/remount left a stale handle sitting there and
+   * the guard refused to schedule anything ever again. The follow was dead in
+   * development from the first render, and nothing about it looked broken.
+   *
    * Not while a row is being edited — the list must not move under the caret.
    * That also covers clicking a line's text, which begins an edit: the list
    * stays where it is instead of yanking the line you just aimed at.
@@ -414,8 +420,8 @@ export default function SubtitleList({
   useEffect(() => {
     if (editingId !== null) return
 
+    let frame = 0
     const step = (): void => {
-      followFrameRef.current = 0
       const list = listRef.current
       const row = activeRef.current
       if (!list || !row) return
@@ -431,18 +437,12 @@ export default function SubtitleList({
       // and without this the loop would spin forever on the first and last
       // few lines.
       if (list.scrollTop === before) return
-      followFrameRef.current = requestAnimationFrame(step)
+      frame = requestAnimationFrame(step)
     }
 
-    if (followFrameRef.current === 0) followFrameRef.current = requestAnimationFrame(step)
+    frame = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(frame)
   }, [activeId, editingId])
-
-  useEffect(
-    () => () => {
-      if (followFrameRef.current !== 0) cancelAnimationFrame(followFrameRef.current)
-    },
-    []
-  )
 
   const beginEdit = useCallback((utterance: Utterance): void => {
     editingIdRef.current = utterance.id

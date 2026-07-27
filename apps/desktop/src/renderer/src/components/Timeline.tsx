@@ -264,6 +264,15 @@ export default function Timeline({
   )
   usePlaybackClock(videoRef, onTick)
 
+  // Zooming and scrolling move where a given instant sits without the element
+  // reporting anything, and the playhead is written imperatively — it is only
+  // repainted by playback events. Without this it keeps the position it was
+  // given under the previous geometry and drifts away from the ruler.
+  useEffect(() => {
+    const video = videoRef.current
+    movePlayhead(clipOffsetRef.current + (video ? video.currentTime * 1000 : 0))
+  }, [contentWidth, offsetPx, movePlayhead, videoRef])
+
   // Only the window's own span: zoomed in, the strip holds thousands of
   // labels and all but a screenful are off-screen; zoomed out below
   // fit-to-width, the window runs past the media and the ruler carries on.
