@@ -1,3 +1,4 @@
+import { findNearestUtteranceIndex } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
@@ -131,14 +132,31 @@ export default function Timeline({
     return Math.max(0, Math.min(1, ratio)) * durationMs
   }
 
-  const seekTo = (clientX: number): void => {
+  const seekTo = (timeMs: number): void => {
     const video = videoRef.current
     if (!video) return
-    const timeMs = timeAtClientX(clientX)
     // Move the marker immediately: seeking a large file has visible latency,
     // and a playhead that lags the pointer feels broken.
     movePlayhead(timeMs)
     video.currentTime = timeMs / 1000
+  }
+
+  /**
+   * Pressing a subtitle block means "this line", so it snaps to the line's own
+   * start; pressing anywhere else is a free scrub and stays exact.
+   *
+   * The snap is what keeps the block highlighted afterwards. A block is not
+   * the same span as its utterance — MIN_BLOCK_PX widens short lines, merged
+   * blocks span the silence between lines — so the exact time under the
+   * pointer regularly falls outside every utterance, and the highlight, which
+   * is a strict containment test, clears the moment the playhead lands there.
+   */
+  const pressTimeOf = (event: ReactPointerEvent<HTMLDivElement>): number => {
+    const timeMs = timeAtClientX(event.clientX)
+    const target = event.target
+    if (!(target instanceof Element) || !target.closest('[data-subtitle-block]')) return timeMs
+    const index = findNearestUtteranceIndex(utterances, timeMs)
+    return index === -1 ? timeMs : (utterances[index]?.start ?? timeMs)
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -148,7 +166,8 @@ export default function Timeline({
     const content = contentRef.current
     if (content && event.clientX < content.getBoundingClientRect().left) return
 
-    seekTo(event.clientX)
+    const timeMs = pressTimeOf(event)
+    seekTo(timeMs)
 
     // Double-click is detected by hand rather than with onDoubleClick, for two
     // reasons: capturing the pointer to scrub retargets every later click at
@@ -157,16 +176,17 @@ export default function Timeline({
     const isSecondClick = event.timeStamp - lastPressRef.current < DOUBLE_CLICK_MS
     lastPressRef.current = isSecondClick ? 0 : event.timeStamp
     if (isSecondClick && utterances.length > 0) {
-      onEditSubtitlesAt(timeAtClientX(event.clientX))
+      onEditSubtitlesAt(timeMs)
       return
     }
 
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
+  // Dragging never snaps: scrubbing has to follow the pointer exactly.
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-    seekTo(event.clientX)
+    seekTo(timeAtClientX(event.clientX))
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -214,6 +234,7 @@ export default function Timeline({
           {blocks.map((block) => (
             <div
               key={block.startMs}
+              data-subtitle-block
               className="absolute inset-y-adjust rounded-xs"
               style={{
                 left: `${(block.startMs / durationMs) * 100}%`,
