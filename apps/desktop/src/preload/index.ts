@@ -24,6 +24,7 @@ const api: LogcutApi = {
   removeMedia: (projectId, assetId) => ipcRenderer.invoke('media:remove', projectId, assetId),
   addClip: (projectId, assetId) => ipcRenderer.invoke('timeline:add-clip', projectId, assetId),
   removeClip: (projectId, clipId) => ipcRenderer.invoke('timeline:remove-clip', projectId, clipId),
+  setTimeline: (projectId, clips) => ipcRenderer.invoke('timeline:set', projectId, clips),
 
   getTranscript: (projectId, assetId) => ipcRenderer.invoke('transcript:get', projectId, assetId),
   saveTranscript: (projectId, assetId, transcript) =>

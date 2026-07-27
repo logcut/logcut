@@ -200,6 +200,15 @@ export function registerIpc(): void {
   )
 
   ipcMain.handle(
+    'timeline:set',
+    (_event, projectId: string, clips: projects.TimelineClip[]): ProjectDetail => {
+      const project = projects.setTimeline(projectId, clips)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return toDetail(project)
+    }
+  )
+
+  ipcMain.handle(
     'timeline:remove-clip',
     (_event, projectId: string, clipId: string): ProjectDetail => {
       const project = projects.removeTimelineClip(projectId, clipId)

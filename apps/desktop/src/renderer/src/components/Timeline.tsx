@@ -1,4 +1,4 @@
-import { findNearestUtteranceIndex, formatTimecode } from '@logcut/core'
+import { clampUtteranceTime, findNearestUtteranceIndex, formatTimecode } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -12,7 +12,7 @@ import type {
 import { Film, Type } from 'lucide-react'
 import { usePlaybackClock } from '@/hooks/usePlaybackClock'
 import { MEDIA_ASSET_DRAG } from '@/lib/drag'
-import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timeline'
+import { pickTickInterval, pxPerMs, subtitleBlocks, tickTimes } from '@/lib/timeline'
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
 /**
@@ -26,7 +26,15 @@ import { FILMSTRIP_FRAMES } from '../../../shared/media'
  */
 const MIN_CAPTION_PX = 28
 
-const MIN_BLOCK_PX = 4
+/**
+ * A block narrower than this gets no trim handles. Two handles need room to
+ * sit at the edges and still leave a body to press for selection; below that
+ * the whole block would be handle, and there would be no way to select it.
+ */
+const MIN_TRIM_PX = 20
+
+/** How much of each edge takes the drag. */
+const TRIM_HANDLE_PX = 6
 
 /** Mirrors --timeline-media-strip-height; the frame maths needs the number. */
 const STRIP_BAND_HEIGHT = 39
@@ -125,6 +133,8 @@ interface TimelineProps {
    * it does not exist until the timeline has a playable clip.
    */
   hasPlayer: boolean
+  /** An edge of a subtitle was dragged to a new time on the timeline's clock. */
+  onTrimUtterance(id: string, edge: 'start' | 'end', timelineMs: number): void
   /** Space, while the strip has focus. */
   onTogglePlay(): void
   /** An asset was dragged here from the media library. */
@@ -207,6 +217,7 @@ export default function Timeline({
   onSeek,
   clipOffsetMs,
   hasPlayer,
+  onTrimUtterance,
   onTogglePlay,
   onDropAsset,
   onEditSubtitlesAt
@@ -222,7 +233,15 @@ export default function Timeline({
    * press landed, and never reconsidered: a gesture that changed meaning
    * halfway through would be unusable.
    */
-  const dragRef = useRef<'scrub' | 'marquee' | 'none'>('none')
+  const dragRef = useRef<'scrub' | 'marquee' | 'trim' | 'none'>('none')
+  /**
+   * The edge being dragged and where it is now. Held here rather than pushed
+   * through onTrim on every move: the line is rewritten once, on release, so
+   * the drag is a single undo step instead of one per pixel.
+   */
+  const [trim, setTrim] = useState<{ id: string; edge: 'start' | 'end'; timeMs: number } | null>(
+    null
+  )
   /**
    * A press that has not yet turned into a drag. Outside the ruler the
    * playhead must not move until the press is known to be a click — dragging
@@ -332,12 +351,25 @@ export default function Timeline({
     return tickTimes(offsetPx / scale, (offsetPx + width) / scale, pickTickInterval(scale))
   }, [scale, offsetPx, width])
 
+  // Culled to the window like the ticks and the filmstrip frames: without
+  // merging, the node count is the line count, and only a screenful of them
+  // can be seen at once anyway.
+  // The drag is previewed by rewriting the line it moves, so every consumer of
+  // the list — the blocks, the clamping, the neighbours — sees one consistent
+  // picture without a second "but while dragging" path.
+  const shown = useMemo(
+    () =>
+      trim
+        ? utterances.map((utterance) =>
+            utterance.id === trim.id ? { ...utterance, [trim.edge]: trim.timeMs } : utterance
+          )
+        : utterances,
+    [utterances, trim]
+  )
+
   const blocks = useMemo(
-    // MIN_BLOCK_PX is passed rather than left to default: merging has to know
-    // the same minimum the render applies, or the two disagree and blocks
-    // that were kept apart get drawn on top of each other.
-    () => (scale > 0 ? mergeBlocks(utterances, scale, MIN_BLOCK_PX) : []),
-    [utterances, scale]
+    () => subtitleBlocks(shown, scale, offsetPx, offsetPx + width),
+    [shown, scale, offsetPx, width]
   )
 
   const timeAtClientX = (clientX: number): number => {
@@ -375,10 +407,10 @@ export default function Timeline({
    * start; pressing anywhere else is a free scrub and stays exact.
    *
    * The snap is what keeps the block highlighted afterwards. A block is not
-   * the same span as its utterance — MIN_BLOCK_PX widens short lines, merged
-   * blocks span the silence between lines — so the exact time under the
-   * pointer regularly falls outside every utterance, and the highlight, which
-   * is a strict containment test, clears the moment the playhead lands there.
+   * quite the span of its line — it is floored to stay visible and clamped so
+   * it cannot reach its neighbour — so the exact time under the pointer can
+   * fall outside every utterance, and the highlight, which is a strict
+   * containment test, clears the moment the playhead lands there.
    */
   const pressTimeOf = (event: ReactPointerEvent<HTMLDivElement>): number => {
     const timeMs = timeAtClientX(event.clientX)
@@ -478,6 +510,21 @@ export default function Timeline({
     const blockIds = block?.getAttribute('data-subtitle-ids')
     onSelectUtterances(blockIds ? blockIds.split(' ') : [])
 
+    // An edge handle takes the gesture outright: it neither seeks nor selects,
+    // so it is settled before anything else looks at the press.
+    const handle = target instanceof Element ? target.closest('[data-trim-edge]') : null
+    if (handle) {
+      const id = handle.getAttribute('data-trim-id')
+      const edge = handle.getAttribute('data-trim-edge')
+      const line = utterances.find((utterance) => utterance.id === id)
+      if (line && (edge === 'start' || edge === 'end')) {
+        dragRef.current = 'trim'
+        setTrim({ id: line.id, edge, timeMs: line[edge] })
+        event.currentTarget.setPointerCapture(event.pointerId)
+        return
+      }
+    }
+
     // What the drag will mean, decided here and only here. Only the ruler
     // drags the playhead: dragging a scrub out of the tracks would fight the
     // rubber band for the same gesture, and the ruler is where a desktop
@@ -522,6 +569,26 @@ export default function Timeline({
       pendingClickRef.current = null
     }
 
+    if (dragRef.current === 'trim') {
+      // Clamped against the neighbours by the same core function the inspector
+      // uses, so a dragged edge and a typed time cannot disagree about where
+      // the limit is (see core/transcript.md).
+      setTrim((current) =>
+        current
+          ? {
+              ...current,
+              timeMs: clampUtteranceTime(
+                utterances,
+                current.id,
+                current.edge,
+                timeAtClientX(event.clientX)
+              )
+            }
+          : current
+      )
+      return
+    }
+
     // Dragging never snaps: scrubbing has to follow the pointer exactly.
     if (dragRef.current === 'scrub') {
       seekTo(timeAtClientX(event.clientX))
@@ -544,6 +611,10 @@ export default function Timeline({
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (trim) {
+      onTrimUtterance(trim.id, trim.edge, trim.timeMs)
+      setTrim(null)
+    }
     // Still pending means the press never became a drag, so it was a click.
     const pending = pendingClickRef.current
     if (pending) {
@@ -777,27 +848,37 @@ export default function Timeline({
           >
             {blocks.map((block) => (
               <div
-                key={block.startMs}
+                key={block.id}
                 data-subtitle-block
-                // The lines this drawing stands for, so a press can select
-                // them without re-deriving which ones it covers.
-                data-subtitle-ids={block.ids.join(' ')}
+                data-subtitle-ids={block.id}
                 className={`absolute inset-y-adjust flex items-center overflow-hidden rounded-xs ${
-                  block.ids.some((id) => selectedUtteranceIds.includes(id))
-                    ? 'ring-1 ring-foreground ring-inset'
-                    : ''
+                  selectedUtteranceIds.includes(block.id) ? 'ring-1 ring-foreground ring-inset' : ''
                 }`}
                 style={{
-                  left: `${(block.startMs / durationMs) * 100}%`,
-                  width: `${((block.endMs - block.startMs) / durationMs) * 100}%`,
-                  minWidth: MIN_BLOCK_PX,
+                  left: block.leftPx,
+                  width: block.widthPx,
                   background: 'var(--editor-waveform)'
                 }}
               >
+                {/* Trim handles, only where there is room for them and a body
+                    between them. The cursor comes with them, which is the only
+                    hint that an edge is draggable at all. */}
+                {block.widthPx >= MIN_TRIM_PX &&
+                  (['start', 'end'] as const).map((edge) => (
+                    <div
+                      key={edge}
+                      data-trim-edge={edge}
+                      data-trim-id={block.id}
+                      className={`absolute inset-y-0 cursor-ew-resize ${
+                        edge === 'start' ? 'left-0' : 'right-0'
+                      }`}
+                      style={{ width: TRIM_HANDLE_PX }}
+                    />
+                  ))}
+
                 {/* The line itself, once the block is wide enough to hold any
-                    of it. Merged blocks carry no text (see lib/timeline.ts), so
-                    this is only ever one line's own words. */}
-                {block.text !== '' && (block.endMs - block.startMs) * scale >= MIN_CAPTION_PX && (
+                    of it. */}
+                {block.text !== '' && block.widthPx >= MIN_CAPTION_PX && (
                   <span className="pointer-events-none block truncate px-inline text-caption leading-[var(--timeline-subtitle-height)] text-white">
                     {block.text}
                   </span>

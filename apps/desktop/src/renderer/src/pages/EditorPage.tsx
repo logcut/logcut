@@ -14,7 +14,7 @@ import {
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
 import MediaTab from '@/components/MediaTab'
@@ -94,8 +94,11 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     rename,
     transcribe,
     applyTranscript,
+    applyTranscripts,
     undo,
-    undoableAssetId,
+    canUndo,
+    canRedo,
+    redo,
     exportSrt
   } = useProject(projectId)
 
@@ -377,13 +380,67 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
       if (!line) continue
       byAsset.set(line.assetId, [...(byAsset.get(line.assetId) ?? []), line.sourceId])
     }
-    for (const [assetId, sourceIds] of byAsset) {
-      const transcript = transcripts[assetId]
-      if (!transcript) continue
-      const next = removeUtterances(transcript, sourceIds)
-      if (next !== transcript) applyTranscript(assetId, next)
-    }
+    // One history entry for the whole deletion, not one per asset: the band
+    // took them in a single gesture and undo should give them back the same way.
+    const changes = [...byAsset]
+      .map(([assetId, sourceIds]) => ({
+        assetId,
+        transcript: removeUtterances(
+          transcripts[assetId] ?? { audioDurationMs: 0, utterances: [] },
+          sourceIds
+        )
+      }))
+      .filter((change) => change.transcript !== transcripts[change.assetId])
+    applyTranscripts(changes)
     setSelectedUtteranceIds([])
+  }
+
+  /**
+   * Undo is a window-level shortcut, not a panel's: it has to work wherever
+   * the user just acted, and after deleting on the timeline the focus is on
+   * the timeline.
+   *
+   * Typing is left alone. An input, textarea or contenteditable has its own
+   * undo stack for the characters being typed, and hijacking Cmd+Z there
+   * would take back the previous *edit* instead of the last few keystrokes.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement)
+      ) {
+        return
+      }
+      event.preventDefault()
+      if (event.shiftKey) redo()
+      else undo()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undo, redo])
+
+  /**
+   * An edge dragged on the timeline. The timeline speaks its own clock and its
+   * own ids, so both are translated back before the transcript sees them —
+   * the same crossing `activeSourceId` makes in the other direction.
+   */
+  const handleTrimUtterance = (id: string, edge: 'start' | 'end', timelineMs: number): void => {
+    const line = utterances.find((utterance) => utterance.id === id)
+    const transcript = line ? transcripts[line.assetId] : null
+    if (!line || !transcript) return
+    const clip = clips.find((candidate) => candidate.id === line.clipId)
+    const next = setUtteranceTime(
+      transcript,
+      line.sourceId,
+      edge,
+      timelineMs - (clip?.startMs ?? 0)
+    )
+    if (next !== transcript) applyTranscript(line.assetId, next)
   }
 
   const togglePlay = (): void => {
@@ -429,7 +486,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
             <SubtitleEditor
               utterances={subtitleTranscript.utterances}
               activeId={activeSourceId}
-              canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
+              canUndo={canUndo}
               onClose={() => setSubtitlesOpen(false)}
               onSeek={seekToUtterance}
               onEditSave={handleEditSave}
@@ -558,6 +615,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
               onSeek={playback.seek}
               onScrub={applyTime}
               onDropAsset={(assetId) => void addClip(assetId)}
+              onTrimUtterance={handleTrimUtterance}
               onTogglePlay={togglePlay}
               onEditSubtitlesAt={openSubtitlesAt}
             />

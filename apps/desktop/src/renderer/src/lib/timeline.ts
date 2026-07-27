@@ -43,60 +43,56 @@ export function tickTimes(fromMs: number, toMs: number, interval: number): numbe
 }
 
 export interface SubtitleBlock {
-  startMs: number
-  endMs: number
-  /**
-   * The utterances folded in, in order. A block is a drawing, not a line —
-   * selecting or deleting one has to name the lines it stands for.
-   */
-  ids: string[]
-  /**
-   * What to write on the block, or empty when there is nothing single to
-   * write. A merged block stands for several lines and has no one caption;
-   * anything picked from among them would be a lie about the rest.
-   */
+  /** The line this block is; blocks and lines are one to one. */
+  id: string
+  /** Geometry along the strip, in pixels, ready to position with. */
+  leftPx: number
+  widthPx: number
   text: string
 }
 
 /**
- * Merge utterances that would render closer together than `minGapPx`.
+ * One block per line, laid out along the strip.
  *
- * An hour of speech is well over a thousand utterances, and at fit-to-width
- * most of them are under a pixel wide — rendering one node each would be
- * thousands of DOM nodes to draw a solid bar. Merging caps the node count at
- * roughly the container's pixel width.
+ * **Lines are never folded together.** A merged bar is a drawing of something
+ * that is not there: zoomed out it showed one block where several lines sat,
+ * and zooming in split it back apart with room to spare, so the track could
+ * not be read as a count of anything. Blocks now only ever get narrower.
  *
- * The comparison is against where the previous block **is drawn**, not where
- * it ends in time. Those differ: a line narrower than `minBlockPx` is widened
- * so it stays visible at all, and that widening reaches past the next line's
- * start. Comparing against the time made short neighbours fail the merge test
- * and then overlap on screen — blocks that ran into each other zoomed out and
- * came apart, with room to spare, zoomed in.
+ * Not overlapping is arranged by clamping instead: a block may not reach past
+ * where the next one starts, less a hairline. So the width falls out of the
+ * room actually available, and `minPx` is a floor for visibility that the
+ * clamp is allowed to beat — sub-pixel is the honest answer at that density,
+ * and no widening means no way to run into a neighbour.
+ *
+ * Only what falls inside `[visibleFromPx, visibleToPx]` is built. Zoomed in,
+ * an hour of speech is thousands of lines and a screenful is dozens; the list
+ * is sorted, so the scan stops at the first line past the window.
  */
-export function mergeBlocks(
+export function subtitleBlocks(
   utterances: Utterance[],
   scale: number,
-  minBlockPx = 4,
-  minGapPx = 1
+  visibleFromPx: number,
+  visibleToPx: number,
+  minPx = 1,
+  gapPx = 1
 ): SubtitleBlock[] {
+  if (scale <= 0) return []
   const blocks: SubtitleBlock[] = []
-  for (const utterance of utterances) {
-    const last = blocks[blocks.length - 1]
-    const drawnEndMs = last
-      ? last.startMs + Math.max(last.endMs - last.startMs, minBlockPx / scale)
-      : 0
-    if (last && (utterance.start - drawnEndMs) * scale < minGapPx) {
-      last.endMs = Math.max(last.endMs, utterance.end)
-      last.ids.push(utterance.id)
-      last.text = ''
-    } else {
-      blocks.push({
-        startMs: utterance.start,
-        endMs: utterance.end,
-        ids: [utterance.id],
-        text: utterance.text
-      })
-    }
+  for (let index = 0; index < utterances.length; index += 1) {
+    const utterance = utterances[index] as Utterance
+    const leftPx = utterance.start * scale
+    if (leftPx > visibleToPx) break
+    const naturalPx = (utterance.end - utterance.start) * scale
+    if (leftPx + naturalPx < visibleFromPx) continue
+    const next = utterances[index + 1]
+    const roomPx = next ? next.start * scale - leftPx - gapPx : Number.POSITIVE_INFINITY
+    blocks.push({
+      id: utterance.id,
+      leftPx,
+      widthPx: Math.max(minPx, Math.min(naturalPx, roomPx)),
+      text: utterance.text
+    })
   }
   return blocks
 }

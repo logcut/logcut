@@ -221,6 +221,22 @@ export function addTimelineClip(id: string, assetId: string): ProjectFile | null
   })
 }
 
+/**
+ * Replace the whole timeline.
+ *
+ * Undo needs this: putting a removed clip back means restoring the order it
+ * sat in, and `addTimelineClip` only ever appends. Clips naming an asset that
+ * is no longer in the library are dropped rather than rejected — the library
+ * is the authority on what exists.
+ */
+export function setTimeline(id: string, clips: TimelineClip[]): ProjectFile | null {
+  return update(id, (project) => {
+    project.timeline = clips.filter((clip) =>
+      project.assets.some((asset) => asset.id === clip.assetId)
+    )
+  })
+}
+
 export function removeTimelineClip(id: string, clipId: string): ProjectFile | null {
   return update(id, (project) => {
     project.timeline = project.timeline.filter((clip) => clip.id !== clipId)

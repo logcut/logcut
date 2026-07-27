@@ -8,10 +8,26 @@ export type AsrState =
   | { kind: 'running'; phase: TranscribePhase }
   | { kind: 'failed'; message: string; apiKeyProblem: boolean }
 
-/** An edit that can be taken back, and the asset it belongs to. */
-interface UndoSnapshot {
-  assetId: string
-  transcript: Transcript | null
+/**
+ * Everything the editor can change, as of one moment.
+ *
+ * Snapshots rather than inverse operations: transcripts are immutable, so an
+ * entry costs a handful of references however long the transcript is, and
+ * there is no per-command undo logic to get wrong. Two hundred entries of a
+ * thousand-line transcript is still two hundred pointers.
+ *
+ * Recognition is **not** in here — see `record`.
+ */
+interface EditableState {
+  transcripts: Record<string, Transcript | null>
+  clips: { id: string; assetId: string }[]
+}
+
+/** Deep enough that nobody reaches the end by working; bounded so it cannot grow forever. */
+const HISTORY_LIMIT = 200
+
+function sameClips(a: EditableState['clips'], b: EditableState['clips']): boolean {
+  return a.length === b.length && a.every((clip, index) => clip.id === b[index]?.id)
 }
 
 export interface UseProjectResult {
@@ -26,8 +42,8 @@ export interface UseProjectResult {
   /** Failure to load or mutate the project itself, not the transcription. */
   error: string | null
   asr: AsrState
-  /** The asset the undoable edit belongs to; null when there is nothing to undo. */
-  undoableAssetId: string | null
+  canUndo: boolean
+  canRedo: boolean
   importMedia(paths: string[]): Promise<void>
   removeMedia(assetId: string): Promise<void>
   /** Append an asset to the timeline. */
@@ -36,9 +52,12 @@ export interface UseProjectResult {
   removeClips(clipIds: string[]): Promise<void>
   rename(name: string): Promise<void>
   transcribe(assetId: string, config: TranscribeConfig, force?: boolean): Promise<void>
-  /** Records an undo snapshot and persists; the single funnel for every edit. */
+  /** Records history and persists; the single funnel for every subtitle edit. */
   applyTranscript(assetId: string, next: Transcript): void
+  /** Same, for an edit spanning several assets — one history entry, not one each. */
+  applyTranscripts(changes: { assetId: string; transcript: Transcript }[]): void
   undo(): void
+  redo(): void
   exportSrt(assetId: string): Promise<string | null>
 }
 
@@ -54,7 +73,8 @@ export function useProject(projectId: string): UseProjectResult {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [asr, setAsr] = useState<AsrState>({ kind: 'idle' })
-  const [undoSnapshot, setUndoSnapshot] = useState<UndoSnapshot | null>(null)
+  const [past, setPast] = useState<EditableState[]>([])
+  const [future, setFuture] = useState<EditableState[]>([])
 
   // Distinct because the same asset may be laid down more than once, and a
   // joined key because an array identity would re-fetch on every render.
@@ -82,12 +102,16 @@ export function useProject(projectId: string): UseProjectResult {
 
   // One fetch per asset on the timeline, replacing the map wholesale so a clip
   // that was removed does not leave its transcript behind.
+  //
+  // It deliberately does not clear the history: removing a clip is what makes
+  // this run, and wiping here would take the undo for that very removal with
+  // it. Undo saves to disk before it swaps the timeline, so the refetch this
+  // triggers reads back exactly what was restored.
   useEffect(() => {
     let cancelled = false
     const ids = assetKey === '' ? [] : assetKey.split(',')
     if (ids.length === 0) {
       setTranscripts({})
-      setUndoSnapshot(null)
       return
     }
     Promise.all(
@@ -101,7 +125,6 @@ export function useProject(projectId: string): UseProjectResult {
       .then((entries) => {
         if (cancelled) return
         setTranscripts(Object.fromEntries(entries))
-        setUndoSnapshot(null)
       })
       .catch(() => {
         /* every fetch already falls back to null */
@@ -142,6 +165,20 @@ export function useProject(projectId: string): UseProjectResult {
     }
   }, [])
 
+  // Read through a ref so recording does not put the whole editable state in
+  // every mutating callback's dependency list.
+  const stateRef = useRef<EditableState>({ transcripts: {}, clips: [] })
+  stateRef.current = {
+    transcripts,
+    clips: project?.timeline.map((clip) => ({ id: clip.id, assetId: clip.assetId })) ?? []
+  }
+
+  /** Push what is on screen now, and drop the redo branch it invalidates. */
+  const record = useCallback((): void => {
+    setPast((entries) => [...entries, stateRef.current].slice(-HISTORY_LIMIT))
+    setFuture([])
+  }, [])
+
   const importMedia = useCallback(
     async (paths: string[]): Promise<void> => {
       if (paths.length === 0) return
@@ -166,23 +203,28 @@ export function useProject(projectId: string): UseProjectResult {
   )
 
   const addClip = useCallback(
-    (assetId: string) => guard(() => window.logcut.addClip(projectId, assetId)),
-    [guard, projectId]
+    (assetId: string) => {
+      record()
+      return guard(() => window.logcut.addClip(projectId, assetId))
+    },
+    [guard, projectId, record]
   )
 
   // Sequential rather than parallel: each call returns the whole project, and
   // concurrent removals would each be computed from the same stale copy, so
   // the last answer back would put the others' clips right back.
   const removeClips = useCallback(
-    (clipIds: string[]) =>
-      guard(async () => {
+    (clipIds: string[]) => {
+      record()
+      return guard(async () => {
         let detail = await window.logcut.openProject(projectId)
         for (const clipId of clipIds) {
           detail = await window.logcut.removeClip(projectId, clipId)
         }
         return detail
-      }),
-    [guard, projectId]
+      })
+    },
+    [guard, projectId, record]
   )
 
   const rename = useCallback(
@@ -196,7 +238,12 @@ export function useProject(projectId: string): UseProjectResult {
       try {
         const result = await window.logcut.transcribeAsset(projectId, assetId, { force, config })
         setTranscripts((current) => ({ ...current, [assetId]: result.transcript }))
-        setUndoSnapshot(null)
+        // Recognition wipes the history rather than joining it. Undoing it
+        // would mean restoring "no transcript at all", which is a file that
+        // has to be deleted rather than written, and every older entry
+        // describes lines this run has just replaced.
+        setPast([])
+        setFuture([])
         setAsr({ kind: 'idle' })
         // transcriptStatus lives on the asset, so the project record is stale now.
         setProject(await window.logcut.openProject(projectId))
@@ -212,24 +259,65 @@ export function useProject(projectId: string): UseProjectResult {
     [projectId]
   )
 
-  const applyTranscript = useCallback(
-    (assetId: string, next: Transcript): void => {
-      setTranscripts((current) => {
-        setUndoSnapshot({ assetId, transcript: current[assetId] ?? null })
-        return { ...current, [assetId]: next }
-      })
-      void window.logcut.saveTranscript(projectId, assetId, next)
+  /**
+   * Write a state back to disk and to the screen.
+   *
+   * Only what actually differs is persisted: a transcript whose reference is
+   * unchanged was not part of this step, and rewriting it would cost a file
+   * write per undo per asset for nothing.
+   */
+  const restore = useCallback(
+    async (target: EditableState): Promise<void> => {
+      const current = stateRef.current
+      for (const [assetId, transcript] of Object.entries(target.transcripts)) {
+        if (transcript && transcript !== current.transcripts[assetId]) {
+          await window.logcut.saveTranscript(projectId, assetId, transcript)
+        }
+      }
+      setTranscripts(target.transcripts)
+      if (!sameClips(target.clips, current.clips)) {
+        setProject(await window.logcut.setTimeline(projectId, target.clips))
+      }
     },
     [projectId]
   )
 
+  const applyTranscripts = useCallback(
+    (changes: { assetId: string; transcript: Transcript }[]): void => {
+      if (changes.length === 0) return
+      record()
+      setTranscripts((current) => {
+        const next = { ...current }
+        for (const change of changes) next[change.assetId] = change.transcript
+        return next
+      })
+      for (const change of changes) {
+        void window.logcut.saveTranscript(projectId, change.assetId, change.transcript)
+      }
+    },
+    [projectId, record]
+  )
+
+  const applyTranscript = useCallback(
+    (assetId: string, next: Transcript): void => applyTranscripts([{ assetId, transcript: next }]),
+    [applyTranscripts]
+  )
+
   const undo = useCallback((): void => {
-    if (!undoSnapshot) return
-    const { assetId, transcript } = undoSnapshot
-    setUndoSnapshot(null)
-    setTranscripts((current) => ({ ...current, [assetId]: transcript }))
-    if (transcript) void window.logcut.saveTranscript(projectId, assetId, transcript)
-  }, [projectId, undoSnapshot])
+    const previous = past[past.length - 1]
+    if (!previous) return
+    setPast((entries) => entries.slice(0, -1))
+    setFuture((entries) => [stateRef.current, ...entries])
+    void restore(previous)
+  }, [past, restore])
+
+  const redo = useCallback((): void => {
+    const next = future[0]
+    if (!next) return
+    setFuture((entries) => entries.slice(1))
+    setPast((entries) => [...entries, stateRef.current].slice(-HISTORY_LIMIT))
+    void restore(next)
+  }, [future, restore])
 
   const exportSrt = useCallback(
     async (assetId: string): Promise<string | null> => {
@@ -239,15 +327,14 @@ export function useProject(projectId: string): UseProjectResult {
     [projectId]
   )
 
-  const undoableAssetId = useMemo(() => undoSnapshot?.assetId ?? null, [undoSnapshot])
-
   return {
     project,
     transcripts,
     loading,
     error,
     asr,
-    undoableAssetId,
+    canUndo: past.length > 0,
+    canRedo: future.length > 0,
     importMedia,
     removeMedia,
     addClip,
@@ -255,7 +342,9 @@ export function useProject(projectId: string): UseProjectResult {
     rename,
     transcribe,
     applyTranscript,
+    applyTranscripts,
     undo,
+    redo,
     exportSrt
   }
 }

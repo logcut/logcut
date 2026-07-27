@@ -163,6 +163,11 @@ export interface LogcutApi {
   addClip(projectId: string, assetId: string): Promise<ProjectDetail>
   /** Remove one clip. The asset stays in the library. */
   removeClip(projectId: string, clipId: string): Promise<ProjectDetail>
+  /**
+   * Replace the whole timeline. Undo restores an order, which appending
+   * cannot express.
+   */
+  setTimeline(projectId: string, clips: { id: string; assetId: string }[]): Promise<ProjectDetail>
 
   /** null when this asset has never been recognized. */
   getTranscript(projectId: string, assetId: string): Promise<Transcript | null>
