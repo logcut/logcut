@@ -58,18 +58,29 @@ export interface SubtitleBlock {
  * most of them are under a pixel wide — rendering one node each would be
  * thousands of DOM nodes to draw a solid bar. Merging caps the node count at
  * roughly the container's pixel width.
+ *
+ * The comparison is against where the previous block **is drawn**, not where
+ * it ends in time. Those differ: a line narrower than `minBlockPx` is widened
+ * so it stays visible at all, and that widening reaches past the next line's
+ * start. Comparing against the time made short neighbours fail the merge test
+ * and then overlap on screen — blocks that ran into each other zoomed out and
+ * came apart, with room to spare, zoomed in.
  */
 export function mergeBlocks(
   utterances: Utterance[],
   scale: number,
   activeId: string | null,
-  minGapPx = 2
+  minBlockPx = 4,
+  minGapPx = 1
 ): SubtitleBlock[] {
   const blocks: SubtitleBlock[] = []
   for (const utterance of utterances) {
     const last = blocks[blocks.length - 1]
     const isActive = utterance.id === activeId
-    if (last && (utterance.start - last.endMs) * scale < minGapPx) {
+    const drawnEndMs = last
+      ? last.startMs + Math.max(last.endMs - last.startMs, minBlockPx / scale)
+      : 0
+    if (last && (utterance.start - drawnEndMs) * scale < minGapPx) {
       last.endMs = Math.max(last.endMs, utterance.end)
       last.count += 1
       last.active ||= isActive

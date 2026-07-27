@@ -13,7 +13,7 @@ import {
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
 import MediaTab from '@/components/MediaTab'
@@ -38,19 +38,29 @@ const MIN_PANES_HEIGHT = 200
 /** Mirrors --titlebar-height; the split needs it as a number. */
 const TOP_BAR_HEIGHT = 36
 
-const MIN_LEFT_WIDTH = 260
+const MIN_TABS_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
+const MIN_SIDEBAR_WIDTH = 280
+const DEFAULT_SIDEBAR_WIDTH = 340
 /** --space-component, mirrored here because the split maths needs the number. */
 const PANE_GAP = 8
 
-/** The two upper panes open at equal width. */
-function defaultLeftWidth(): number {
-  // Two outer paddings plus the handle between the panes.
-  const consumed = PANE_GAP * 3
+/**
+ * The tab panel and the player open at equal width — they share the upper row,
+ * and neither is the one the eye should go to first.
+ *
+ * The sidebar is taken out before the split rather than included in it: it is a
+ * fixed number of pixels, because a list of subtitles wants about the same
+ * width whatever size the screen is, so the row being halved is what is left of
+ * the window once the sidebar and every gap have had theirs.
+ */
+function defaultTabsWidth(): number {
+  // Two outer paddings plus the two handles between the three columns.
+  const consumed = PANE_GAP * 4 + DEFAULT_SIDEBAR_WIDTH
   return clamp(
     Math.round((window.innerWidth - consumed) / 2),
-    MIN_LEFT_WIDTH,
-    window.innerWidth - MIN_PLAYER_WIDTH
+    MIN_TABS_WIDTH,
+    window.innerWidth - consumed - MIN_PLAYER_WIDTH
   )
 }
 
@@ -101,7 +111,8 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [leftWidth, setLeftWidth] = useState(defaultLeftWidth)
+  const [tabsWidth, setTabsWidth] = useState(defaultTabsWidth)
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [timelineHeight, setTimelineHeight] = useState(() =>
     Math.max(
       MIN_TIMELINE_HEIGHT,
@@ -153,9 +164,18 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   // Limits are recomputed per drag rather than cached, so a resized window
   // never leaves a stale bound behind. The ratio only seeds the initial
   // height; past that the size is whatever the user dragged it to.
-  const resizeLeftPanel = (delta: number): void => {
-    setLeftWidth((current) =>
-      clamp(current + delta, MIN_LEFT_WIDTH, window.innerWidth - MIN_PLAYER_WIDTH)
+  const resizeTabs = (delta: number): void => {
+    setTabsWidth((current) =>
+      clamp(current + delta, MIN_TABS_WIDTH, window.innerWidth - sidebarWidth - MIN_PLAYER_WIDTH)
+    )
+  }
+
+  // The sidebar is the first column now, so its handle is on its right edge:
+  // dragging away from the panel widens it, which is the opposite sign from a
+  // handle that sits to a panel's left.
+  const resizeSidebar = (delta: number): void => {
+    setSidebarWidth((current) =>
+      clamp(current + delta, MIN_SIDEBAR_WIDTH, window.innerWidth - tabsWidth - MIN_PLAYER_WIDTH)
     )
   }
 
@@ -175,8 +195,17 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     utterances.find((utterance) => utterance.id === activeUtteranceId)?.sourceId ?? null
 
   /** Both the list and the inspector offer the same speakers. */
-  const speakerIds = subtitleTranscript ? speakerIdsOf(subtitleTranscript) : []
-  const newSpeakerId = subtitleTranscript ? nextSpeakerId(subtitleTranscript) : '1'
+  // Memoized, like every other prop that reaches a subtitle row: those rows are
+  // memoized components and a fresh array here would defeat all of it, silently
+  // (see components/SubtitleList.tsx).
+  const speakerIds = useMemo(
+    () => (subtitleTranscript ? speakerIdsOf(subtitleTranscript) : []),
+    [subtitleTranscript]
+  )
+  const newSpeakerId = useMemo(
+    () => (subtitleTranscript ? nextSpeakerId(subtitleTranscript) : '1'),
+    [subtitleTranscript]
+  )
 
   const captionText =
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
@@ -199,20 +228,31 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * Both setters bail out on an unchanged id — timeupdate alone is ~4Hz, and
    * this subtree carries every subtitle on screen.
    */
-  const applyTime = (timeMs: number): void => {
-    const covering = findUtteranceIndexAt(utterances, timeMs)
-    const nextCaption = covering === -1 ? null : (utterances[covering]?.id ?? null)
-    setCaptionUtteranceId((current) => (current === nextCaption ? current : nextCaption))
+  const applyTime = useCallback(
+    (timeMs: number): void => {
+      const covering = findUtteranceIndexAt(utterances, timeMs)
+      const nextCaption = covering === -1 ? null : (utterances[covering]?.id ?? null)
+      setCaptionUtteranceId((current) => (current === nextCaption ? current : nextCaption))
 
-    const nearest = findNearestUtteranceIndex(utterances, timeMs)
-    const nextActive = nearest === -1 ? null : (utterances[nearest]?.id ?? null)
-    setActiveUtteranceId((current) => (current === nextActive ? current : nextActive))
-  }
+      const nearest = findNearestUtteranceIndex(utterances, timeMs)
+      const nextActive = nearest === -1 ? null : (utterances[nearest]?.id ?? null)
+      setActiveUtteranceId((current) => (current === nextActive ? current : nextActive))
+    },
+    [utterances]
+  )
 
-  const seekTo = (timeMs: number): void => {
-    playback.seek(timeMs)
-    applyTime(timeMs)
-  }
+  // Pulled out so the dependency is the function and not `playback`: the hook
+  // returns a fresh object every render, and taking the whole thing would make
+  // this — and through it every handler a subtitle row holds — change on each
+  // render, undoing the row memoization entirely.
+  const seekPlayback = playback.seek
+  const seekTo = useCallback(
+    (timeMs: number): void => {
+      seekPlayback(timeMs)
+      applyTime(timeMs)
+    },
+    [applyTime, seekPlayback]
+  )
 
   /**
    * Seeking before opening is what puts the double-clicked line in view: the
@@ -229,46 +269,57 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     // right transcript when several clips are laid down.
     if (line) setSubtitleClipId(line.clipId)
     seekTo(line?.start ?? timeMs)
-    // The editor is a face of the Subtitles tab now, so getting there means
-    // selecting that tab — otherwise a double-click on the timeline would
-    // appear to do nothing while Media is showing.
-    setTab('subtitle')
     setSubtitlesOpen(true)
   }
 
-  const handleEditSave = (id: string, text: string): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    applyTranscript(subtitleAssetId, setUtteranceText(subtitleTranscript, id, text))
-  }
+  const handleEditSave = useCallback(
+    (id: string, text: string): void => {
+      if (!subtitleTranscript || !subtitleAssetId) return
+      applyTranscript(subtitleAssetId, setUtteranceText(subtitleTranscript, id, text))
+    },
+    [applyTranscript, subtitleAssetId, subtitleTranscript]
+  )
 
-  const handleSpeakerSave = (id: string, speakerId: string): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    const next = setUtteranceSpeaker(subtitleTranscript, id, speakerId)
-    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
-  }
+  const handleSpeakerSave = useCallback(
+    (id: string, speakerId: string): void => {
+      if (!subtitleTranscript || !subtitleAssetId) return
+      const next = setUtteranceSpeaker(subtitleTranscript, id, speakerId)
+      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+    },
+    [applyTranscript, subtitleAssetId, subtitleTranscript]
+  )
 
-  const handleTimeSave = (id: string, edge: 'start' | 'end', timeMs: number): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    const next = setUtteranceTime(subtitleTranscript, id, edge, timeMs)
-    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
-  }
+  const handleTimeSave = useCallback(
+    (id: string, edge: 'start' | 'end', timeMs: number): void => {
+      if (!subtitleTranscript || !subtitleAssetId) return
+      const next = setUtteranceTime(subtitleTranscript, id, edge, timeMs)
+      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+    },
+    [applyTranscript, subtitleAssetId, subtitleTranscript]
+  )
 
   /**
    * Add and merge are offered only across a silence, so both core functions
    * return the transcript unchanged when there is nothing to do — comparing by
    * identity keeps a no-op out of the undo history.
    */
-  const handleAdd = (afterId: string): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    const next = insertUtteranceAfter(subtitleTranscript, afterId)
-    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
-  }
+  const handleAdd = useCallback(
+    (afterId: string): void => {
+      if (!subtitleTranscript || !subtitleAssetId) return
+      const next = insertUtteranceAfter(subtitleTranscript, afterId)
+      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+    },
+    [applyTranscript, subtitleAssetId, subtitleTranscript]
+  )
 
-  const handleMerge = (firstId: string): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    const next = mergeUtterances(subtitleTranscript, firstId)
-    if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
-  }
+  const handleMerge = useCallback(
+    (firstId: string): void => {
+      if (!subtitleTranscript || !subtitleAssetId) return
+      const next = mergeUtterances(subtitleTranscript, firstId)
+      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+    },
+    [applyTranscript, subtitleAssetId, subtitleTranscript]
+  )
 
   const handleResegment = (): void => {
     if (!subtitleTranscript || !subtitleAssetId) return
@@ -297,11 +348,14 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     else video.pause()
   }
 
-  const seekToUtterance = (utterance: Utterance): void => {
-    const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
-    seekTo(start)
-    applyTime(start)
-  }
+  const seekToUtterance = useCallback(
+    (utterance: Utterance): void => {
+      const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
+      seekTo(start)
+      applyTime(start)
+    },
+    [applyTime, seekTo, subtitleClip]
+  )
 
   return (
     // Panels are surfaces floating on the page background; the space between
@@ -317,63 +371,80 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col px-component pb-component">
-        <div className="flex min-h-0 flex-1">
-          {/* AI chat panel slot — deliberately empty for now. */}
+      {/* Three full-height columns: the picture and its timeline, then the two
+          panels. Neither panel is a pane in the top row — each holds a list,
+          and a list wants the window's whole height, which is the height the
+          timeline gives up by not spanning the window.
 
-          <div className="flex shrink-0 flex-col" style={{ width: leftWidth }}>
-            <Panel className="flex min-h-0 flex-1 flex-col">
-              <Tabs
-                value={tab}
-                onValueChange={setTab}
-                className="flex min-h-0 flex-1 flex-col gap-0"
-              >
-                {/* An icon rail rather than two half-width pills: this is the
+          Nothing sits left of the player any more. That edge is the AI chat's
+          when it arrives, which is why the tab panel moved off it. */}
+      <div className="flex min-h-0 flex-1 px-component pb-component">
+        <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: sidebarWidth }}>
+          {subtitlesOpen && subtitleTranscript ? (
+            <SubtitleEditor
+              utterances={subtitleTranscript.utterances}
+              activeId={activeSourceId}
+              canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
+              onClose={() => setSubtitlesOpen(false)}
+              onSeek={seekToUtterance}
+              onEditSave={handleEditSave}
+              onTimeSave={handleTimeSave}
+              onAdd={handleAdd}
+              onMerge={handleMerge}
+              speakerIds={speakerIds}
+              nextSpeakerId={newSpeakerId}
+              onSpeakerSave={handleSpeakerSave}
+              onUndo={undo}
+              onResegment={handleResegment}
+              onReplaceAll={handleReplaceAll}
+            />
+          ) : (
+            <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+              <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                Double-click a subtitle on the timeline to read and correct it here.
+              </p>
+            </div>
+          )}
+        </Panel>
+
+        <ResizeHandle orientation="vertical" onResize={resizeSidebar} />
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1">
+            <div className="flex shrink-0 flex-col" style={{ width: tabsWidth }}>
+              <Panel className="flex min-h-0 flex-1 flex-col">
+                <Tabs
+                  value={tab}
+                  onValueChange={setTab}
+                  className="flex min-h-0 flex-1 flex-col gap-0"
+                >
+                  {/* An icon rail rather than two half-width pills: this is the
                     panel every future tool arrives in, so it has to stay
                     readable at a dozen entries. */}
-                <TabsList>
-                  <TabsTrigger value="media">
-                    <Film size={18} />
-                    Media
-                  </TabsTrigger>
-                  <TabsTrigger value="subtitle">
-                    <Captions size={18} />
-                    Subtitles
-                  </TabsTrigger>
-                </TabsList>
-                <TabsContent value="media" className="flex min-h-0 flex-col">
-                  <MediaTab
-                    assets={project?.assets ?? []}
-                    selectedAssetId={selectedAssetId}
-                    timelineAssetIds={clips.map((clip) => clip.assetId)}
-                    onImport={(paths) => void importMedia(paths)}
-                    onSelect={setSelectedAssetId}
-                    onRemove={(assetId) => void removeMedia(assetId)}
-                  />
-                </TabsContent>
-                {/* The tab has two faces: produce subtitles, or edit the ones
-                    on the selected clip. Never both, and the tab strip stays
-                    put across the switch. */}
-                <TabsContent value="subtitle" className="flex min-h-0 flex-col">
-                  {subtitlesOpen && subtitleTranscript ? (
-                    <SubtitleEditor
-                      utterances={subtitleTranscript.utterances}
-                      activeId={activeSourceId}
-                      canUndo={undoableAssetId !== null && undoableAssetId === subtitleAssetId}
-                      onClose={() => setSubtitlesOpen(false)}
-                      onSeek={seekToUtterance}
-                      onEditSave={handleEditSave}
-                      onTimeSave={handleTimeSave}
-                      onAdd={handleAdd}
-                      onMerge={handleMerge}
-                      speakerIds={speakerIds}
-                      nextSpeakerId={newSpeakerId}
-                      onSpeakerSave={handleSpeakerSave}
-                      onUndo={undo}
-                      onResegment={handleResegment}
-                      onReplaceAll={handleReplaceAll}
+                  <TabsList>
+                    <TabsTrigger value="media">
+                      <Film size={18} />
+                      Media
+                    </TabsTrigger>
+                    <TabsTrigger value="subtitle">
+                      <Captions size={18} />
+                      Subtitles
+                    </TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="media" className="flex min-h-0 flex-col">
+                    <MediaTab
+                      assets={project?.assets ?? []}
+                      selectedAssetId={selectedAssetId}
+                      timelineAssetIds={clips.map((clip) => clip.assetId)}
+                      onImport={(paths) => void importMedia(paths)}
+                      onSelect={setSelectedAssetId}
+                      onRemove={(assetId) => void removeMedia(assetId)}
                     />
-                  ) : (
+                  </TabsContent>
+                  {/* Producing subtitles only. Reading and correcting them is a
+                    column of its own on the right — the two need very
+                    different amounts of room. */}
+                  <TabsContent value="subtitle" className="flex min-h-0 flex-col">
                     <SubtitleTab
                       asset={subtitleAssetId ? assetOf(subtitleAssetId) : null}
                       transcript={subtitleTranscript}
@@ -387,64 +458,64 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                       }
                       onOpenSettings={() => setSettingsOpen(true)}
                     />
-                  )}
-                </TabsContent>
-              </Tabs>
+                  </TabsContent>
+                </Tabs>
+              </Panel>
+            </div>
+
+            <ResizeHandle orientation="vertical" onResize={resizeTabs} />
+
+            <Panel className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {playback.src !== '' ? (
+                <VideoPlayer
+                  videoRef={videoRef}
+                  src={playback.src}
+                  clipOffsetMs={playback.clip?.startMs ?? 0}
+                  durationMs={playback.durationMs}
+                  // The element's clock restarts on every clip; the timeline's
+                  // does not, so element time is translated before use.
+                  onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}
+                  onEnded={playback.advance}
+                  captionText={captionText}
+                />
+              ) : (
+                <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">
+                  <Film size={32} />
+                  <p className="m-0 text-body font-normal">
+                    {loading
+                      ? 'Opening project…'
+                      : clips.length > 0
+                        ? 'The media file is missing from disk.'
+                        : assets.length > 0
+                          ? 'Drag a video onto the timeline to start editing.'
+                          : 'Import a video to get started.'}
+                  </p>
+                </div>
+              )}
             </Panel>
           </div>
 
-          <ResizeHandle orientation="vertical" onResize={resizeLeftPanel} />
+          <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
 
-          <Panel className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {playback.src !== '' ? (
-              <VideoPlayer
-                videoRef={videoRef}
-                src={playback.src}
-                clipOffsetMs={playback.clip?.startMs ?? 0}
-                durationMs={playback.durationMs}
-                // The element's clock restarts on every clip; the timeline's
-                // does not, so element time is translated before use.
-                onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}
-                onEnded={playback.advance}
-                captionText={captionText}
-              />
-            ) : (
-              <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">
-                <Film size={32} />
-                <p className="m-0 text-body font-normal">
-                  {loading
-                    ? 'Opening project…'
-                    : clips.length > 0
-                      ? 'The media file is missing from disk.'
-                      : assets.length > 0
-                        ? 'Drag a video onto the timeline to start editing.'
-                        : 'Import a video to get started.'}
-                </p>
-              </div>
-            )}
+          <Panel className="shrink-0" style={{ height: timelineHeight }}>
+            <Timeline
+              durationMs={playback.durationMs}
+              clips={clipViews}
+              utterances={utterances}
+              activeUtteranceId={activeUtteranceId}
+              selectedClipId={selectedClipId}
+              videoRef={videoRef}
+              clipOffsetMs={playback.clip?.startMs ?? 0}
+              onSelectClip={setSelectedClipId}
+              onRemoveClip={(clipId) => void removeClip(clipId)}
+              onSeek={playback.seek}
+              onScrub={applyTime}
+              onDropAsset={(assetId) => void addClip(assetId)}
+              onTogglePlay={togglePlay}
+              onEditSubtitlesAt={openSubtitlesAt}
+            />
           </Panel>
         </div>
-
-        <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
-
-        <Panel className="shrink-0" style={{ height: timelineHeight }}>
-          <Timeline
-            durationMs={playback.durationMs}
-            clips={clipViews}
-            utterances={utterances}
-            activeUtteranceId={activeUtteranceId}
-            selectedClipId={selectedClipId}
-            videoRef={videoRef}
-            clipOffsetMs={playback.clip?.startMs ?? 0}
-            onSelectClip={setSelectedClipId}
-            onRemoveClip={(clipId) => void removeClip(clipId)}
-            onSeek={playback.seek}
-            onScrub={applyTime}
-            onDropAsset={(assetId) => void addClip(assetId)}
-            onTogglePlay={togglePlay}
-            onEditSubtitlesAt={openSubtitlesAt}
-          />
-        </Panel>
       </div>
 
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

@@ -47,8 +47,8 @@ const MIN_ZOOM = 0.25
  * Where each frame of the filmstrip band comes from, laid left to right.
  *
  * Frames keep their own aspect ratio and repeat once the clip is wider than
- * the sheet has frames for. Scaling the sheet to
- * the clip's width instead is what squashed every face: the sheet is
+ * the sheet has frames for. Scaling the sheet to the clip's width instead is
+ * what squashed every face: the sheet is
  * FILMSTRIP_FRAMES frames wide no matter how many pixels the clip occupies,
  * so the two only agree by accident.
  */
@@ -273,7 +273,10 @@ export default function Timeline({
   }, [scale, offsetPx, width])
 
   const blocks = useMemo(
-    () => (scale > 0 ? mergeBlocks(utterances, scale, activeUtteranceId) : []),
+    // MIN_BLOCK_PX is passed rather than left to default: merging has to know
+    // the same minimum the render applies, or the two disagree and blocks
+    // that were kept apart get drawn on top of each other.
+    () => (scale > 0 ? mergeBlocks(utterances, scale, activeUtteranceId, MIN_BLOCK_PX) : []),
     [utterances, scale, activeUtteranceId]
   )
 
