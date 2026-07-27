@@ -96,8 +96,13 @@ fetch "$LIBASS_URL" "libass-$LIBASS_VERSION.tar.xz" "libass-$LIBASS_VERSION"
   cd "$SRC/libass-$LIBASS_VERSION"
   # fontconfig off to match the other platforms: nothing renders subtitles
   # through the sidecar yet, and it would be another runtime .so.
+  #
+  # Linux additionally needs --disable-require-system-font-provider. macOS has
+  # CoreText and Windows DirectWrite built in, so dropping fontconfig still
+  # leaves them a provider; on Linux fontconfig is the only one, and libass
+  # refuses to configure without any ("No system font provider!").
   ./configure --prefix="$DEPS" --disable-shared --enable-static \
-    --disable-fontconfig > /dev/null
+    --disable-fontconfig --disable-require-system-font-provider > /dev/null
   make -j"$JOBS" > /dev/null
   make install > /dev/null
 )
