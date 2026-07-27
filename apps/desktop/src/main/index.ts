@@ -3,6 +3,7 @@ import path from 'node:path'
 import { registerIpc } from './ipc'
 import { handleMediaRequest, MEDIA_SCHEME } from './media'
 import { flushTranscripts } from './projects'
+import { registerUpdater } from './updater'
 
 // standard is required: without it the media stack fails with
 // PIPELINE_ERROR_READ on seekable (Range) responses.
@@ -53,7 +54,10 @@ function createWindow(): void {
 void app.whenReady().then(() => {
   protocol.handle(MEDIA_SCHEME, handleMediaRequest)
   registerIpc()
+  // After createWindow so the first state broadcast has somewhere to land;
+  // the check itself is delayed well past startup regardless.
   createWindow()
+  registerUpdater()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

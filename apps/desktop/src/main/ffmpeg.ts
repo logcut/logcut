@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { FILMSTRIP_FRAMES } from '../shared/media'
 
 export type FfmpegSource = 'bundled' | 'vendor' | 'system'
 
@@ -160,14 +161,14 @@ export async function probeMedia(filePath: string): Promise<MediaProbe> {
   }
 }
 
-/** Frames in a filmstrip, and the height each is scaled to. */
-const FILMSTRIP_FRAMES = 40
+/** The height each filmstrip frame is scaled to; the count is shared. */
 const STRIP_HEIGHT = 64
 
 /**
  * A row of evenly spaced frames, tiled into one wide JPEG for the timeline's
  * media track. One image rather than N keeps it to a single ffmpeg call and a
- * single request from the renderer, which then just stretches it to the track.
+ * single request from the renderer, which then addresses individual frames
+ * inside the sheet by background-position.
  *
  * `-skip_frame nokey` is what makes this affordable: decoding every frame of a
  * 1.7 GB file to sample 40 of them took 20s, keyframes only takes 6s.
@@ -176,8 +177,8 @@ const STRIP_HEIGHT = 64
  * `tile` pads a short tile out with black: a file whose keyframes are sparser
  * than the interval yielded fewer than 40 frames and the strip ended in a
  * black tail covering the last fifth of the clip. `fps` duplicates the nearest
- * keyframe instead, so the row always holds exactly the whole clip and the
- * renderer can stretch it edge to edge.
+ * keyframe instead, so the row always holds exactly FILMSTRIP_FRAMES frames —
+ * which the renderer relies on to work out where any one of them sits.
  */
 export async function extractFilmstrip(
   filePath: string,

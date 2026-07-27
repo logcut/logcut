@@ -115,6 +115,9 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
           name: asset?.fileName ?? 'Missing media',
           filmstripUrl: asset?.filmstripUrl ?? null,
           waveformUrl: asset?.waveformUrl ?? null,
+          // 16:9 when the probe came back without dimensions — a wrong guess
+          // only misjudges how many frames fit, never distorts one.
+          aspect: asset?.width && asset.height ? asset.width / asset.height : 16 / 9,
           missing: asset?.missing ?? true
         }
       }),

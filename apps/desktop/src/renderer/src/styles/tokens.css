@@ -314,6 +314,10 @@
   --timeline-media-strip-height: 39px;
   --timeline-media-wave-height: 16px;
   --timeline-media-height: 73px;
+  --timeline-scrollbar-height: 10px;
+  --timeline-playhead-handle-width: 9px;
+  --timeline-playhead-handle-bar: 6px;
+  --timeline-playhead-handle-point: 4px;
 
   /* Traffic lights, drawn by the renderer on macOS (AppKit's own cannot be
      resized or recoloured). The inactive fill is deliberately the panel

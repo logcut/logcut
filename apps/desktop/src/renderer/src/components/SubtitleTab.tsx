@@ -6,7 +6,6 @@ import type { JSX, ReactNode } from 'react'
 import LanguageSelect from '@/components/LanguageSelect'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { formatDuration } from '@/lib/format'
 import type { AsrState } from '@/hooks/useProject'
 import type { MediaAssetSummary, TranscribePhase } from '../../../shared/ipc'
 
@@ -15,20 +14,10 @@ function describePhase(phase: TranscribePhase): string {
 }
 
 /**
- * One setting per row, name on the left, control on the right, hairline
- * between. Rows carry their own separator rather than the list drawing them,
- * so a row can appear or disappear without leaving a stray line behind.
+ * One setting per row: name above, control below at full width. The row draws
+ * its own separator rather than the list drawing them, so a row that renders
+ * conditionally never leaves a stray line behind.
  */
-function Row({ label, children }: { label: string; children: ReactNode }): JSX.Element {
-  return (
-    <div className="flex items-center justify-between gap-component border-b border-border py-stack">
-      <span className="text-label text-foreground">{label}</span>
-      {children}
-    </div>
-  )
-}
-
-/** The same, for a control too wide to sit beside its name. */
 function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {
   return (
     <div className="flex flex-col gap-component border-b border-border py-stack">
@@ -110,23 +99,6 @@ export default function SubtitleTab({
           <LanguageSelect options={languageOrder} value={language} onChange={chooseLanguage} />
         </Field>
 
-        {hasTranscript && (
-          <>
-            <Row label="Recognized">
-              <span className="text-caption font-normal text-muted-foreground">
-                {transcript.utterances.length} lines ·{' '}
-                <span className="timecode">{formatDuration(transcript.audioDurationMs)}</span>
-              </span>
-            </Row>
-            <Row label="Subtitle file">
-              <Button variant="outline" size="sm" onClick={() => void exportSrt()}>
-                <Download size={14} />
-                Export SRT
-              </Button>
-            </Row>
-          </>
-        )}
-
         <div className="flex flex-col gap-component py-stack">
           {hasTranscript && (
             <p className="m-0 text-caption font-normal text-muted-foreground">
@@ -169,14 +141,23 @@ export default function SubtitleTab({
           )
         )}
 
-        <Button
-          className="ml-auto"
-          disabled={!asset || running || blocked || asset.missing}
-          onClick={() => onTranscribe(languageOptionToConfig(language), replace)}
-        >
-          {running && <Loader2 size={16} className="animate-spin" />}
-          {hasTranscript ? 'Recognize again' : 'Start recognition'}
-        </Button>
+        {/* Export lost its own row with the rest of the status readout, so it
+            sits here as the secondary action rather than disappearing. */}
+        <div className="ml-auto flex items-center gap-component">
+          {hasTranscript && !running && (
+            <Button variant="outline" size="sm" onClick={() => void exportSrt()}>
+              <Download size={14} />
+              Export SRT
+            </Button>
+          )}
+          <Button
+            disabled={!asset || running || blocked || asset.missing}
+            onClick={() => onTranscribe(languageOptionToConfig(language), replace)}
+          >
+            {running && <Loader2 size={16} className="animate-spin" />}
+            {hasTranscript ? 'Recognize again' : 'Start recognition'}
+          </Button>
+        </div>
       </div>
     </div>
   )

@@ -12,8 +12,21 @@ mac:
   category: public.app-category.video
   minimumSystemVersion: '13.0'
   icon: assets/app-icon.png
+  # Notarization requires the hardened runtime; the runtime requires the
+  # exceptions in the plist or Chromium cannot start. See that file.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Reads APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID from the
+  # environment and submits through notarytool.
+  notarize: true
   target:
+    # dmg is what a person downloads; zip is what auto-update consumes.
+    # Squirrel.Mac cannot install from a dmg, so dropping zip silently breaks
+    # updates while the release still looks complete.
     - target: dmg
+      arch: [arm64]
+    - target: zip
       arch: [arm64]
   extraResources:
     - from: vendor/ffmpeg/darwin-${arch}/
@@ -31,3 +44,13 @@ win:
 nsis:
   oneClick: true
   deleteAppDataOnUninstall: false
+
+# Auto-update reads its metadata from the GitHub release: electron-builder
+# writes latest.yml / latest-mac.yml alongside the installers, and without
+# them the client has no way to learn a new version exists. Uploading the
+# installers by hand — which is what the release flow used to do — produces a
+# release that looks complete and updates nothing.
+publish:
+  provider: github
+  owner: logcut
+  repo: logcut

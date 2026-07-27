@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened Runtime exceptions. Notarization requires the runtime to be on, and
+  with it on Chromium cannot start without the first two: V8 compiles to
+  executable memory at runtime, which the runtime forbids by default.
+
+  Deliberately NOT here: com.apple.security.app-sandbox. Developer ID apps are
+  not sandboxed, and turning it on would cut off the ffmpeg sidecar and every
+  file the user picks outside the app's container.
+-->
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Electron's crash reporter and helpers read DYLD_* on launch. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <!-- The ffmpeg sidecar ships beside the app rather than inside the
+         framework, so library validation would refuse to run it. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

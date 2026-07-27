@@ -1,9 +1,10 @@
-import { AlertTriangle, Film, ListVideo, Trash2 } from 'lucide-react'
-import type { JSX } from 'react'
+import { AlertTriangle, Film, Plus, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import type { DragEvent, JSX } from 'react'
 import DropZone from '@/components/DropZone'
 import { Button } from '@/components/ui/button'
 import { formatDuration } from '@/lib/format'
-import { MEDIA_ASSET_DRAG } from '@/lib/drag'
+import { fileDropOf, MEDIA_ASSET_DRAG } from '@/lib/drag'
 import type { MediaAssetSummary } from '../../../shared/ipc'
 
 interface MediaTabProps {
@@ -21,6 +22,10 @@ interface MediaTabProps {
  * The library, not the edit. Selecting an entry only highlights it — an asset
  * reaches the timeline by being dragged there, which is what MEDIA_ASSET_DRAG
  * carries.
+ *
+ * Two layouts: an empty project is one large import plate,
+ * and once anything is in it the plate shrinks to a toolbar button above a grid
+ * of thumbnails. Files can be dropped on the panel in either state.
  */
 export default function MediaTab({
   assets,
@@ -30,70 +35,118 @@ export default function MediaTab({
   onSelect,
   onRemove
 }: MediaTabProps): JSX.Element {
+  const [dragging, setDragging] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleDrop = (event: DragEvent): void => {
+    event.preventDefault()
+    setDragging(false)
+    const { paths, error: reason } = fileDropOf(event.dataTransfer)
+    setError(reason ?? '')
+    if (paths.length > 0) onImport(paths)
+  }
+
+  const browse = async (): Promise<void> => {
+    setError('')
+    const paths = await window.logcut.pickMedia()
+    if (paths.length > 0) onImport(paths)
+  }
+
+  // Empty: the import plate is the panel. DropZone carries its own drop
+  // handling, so the wrapper below must not also claim the event.
+  if (assets.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col p-inset">
+        <DropZone onSelect={onImport} />
+      </div>
+    )
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-stack p-inset">
-      {assets.length > 0 && (
-        <div className="flex min-h-0 flex-col gap-component overflow-y-auto">
-          {assets.map((asset) => {
-            const selected = asset.id === selectedAssetId
-            return (
+    <div
+      className={`flex min-h-0 flex-1 flex-col gap-stack p-inset ${dragging ? 'bg-primary/5' : ''}`}
+      onDragOver={(event) => {
+        // Only for files from outside; an asset being dragged to the timeline
+        // passes over this panel and must not be caught here.
+        if (!event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        setDragging(true)
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+    >
+      <div className="flex shrink-0 items-center gap-component">
+        <Button size="sm" onClick={() => void browse()}>
+          <Plus size={14} />
+          Import
+        </Button>
+        {error !== '' && <span className="text-caption font-normal text-destructive">{error}</span>}
+      </div>
+
+      {/* auto-fill rather than a fixed column count: the panel is resizable, and
+          two cards stretched across a wide panel look like a mistake. */}
+      <div className="grid min-h-0 grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-component overflow-y-auto">
+        {assets.map((asset) => {
+          const selected = asset.id === selectedAssetId
+          return (
+            <div
+              key={asset.id}
+              role="button"
+              tabIndex={0}
+              draggable
+              className="group flex cursor-grab flex-col gap-inline active:cursor-grabbing"
+              onDragStart={(event) => {
+                event.dataTransfer.setData(MEDIA_ASSET_DRAG, asset.id)
+                event.dataTransfer.effectAllowed = 'copy'
+                onSelect(asset.id)
+              }}
+              onClick={() => onSelect(asset.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') onSelect(asset.id)
+              }}
+              title={asset.path}
+            >
+              {/* An inset outline, and it has to be all three parts:
+                  - not `border`, which takes up space and shrinks the selected
+                    card relative to its neighbours;
+                  - not `ring`, which is a box-shadow and so is painted with the
+                    element's own background, underneath every descendant — the
+                    thumbnail's antialiased rounded clip eats the inner half of
+                    the line, worst where the frame is bright;
+                  - and offset inwards, because the grid scrolls: `overflow-y`
+                    makes `overflow-x` compute to auto too, so the container
+                    clips at its padding box and the top row's outward 1px falls
+                    outside it. Drawn inside, it is still painted after every
+                    descendant, so nothing covers it and nothing clips it. */}
               <div
-                key={asset.id}
-                role="button"
-                tabIndex={0}
-                draggable
-                className={`group flex cursor-grab items-center gap-component rounded-lg border p-component transition-colors active:cursor-grabbing ${
-                  selected ? 'border-primary bg-primary/10' : 'border-border hover:border-input'
+                className={`relative aspect-video overflow-hidden rounded bg-muted outline-1 -outline-offset-1 transition-colors ${
+                  selected ? 'outline-primary' : 'outline-transparent group-hover:outline-input'
                 }`}
-                onDragStart={(event) => {
-                  event.dataTransfer.setData(MEDIA_ASSET_DRAG, asset.id)
-                  event.dataTransfer.effectAllowed = 'copy'
-                  onSelect(asset.id)
-                }}
-                onClick={() => onSelect(asset.id)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') onSelect(asset.id)
-                }}
-                title={asset.path}
               >
-                <div className="flex h-10 w-16 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
-                  {asset.thumbnailUrl ? (
-                    <img src={asset.thumbnailUrl} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <Film size={16} className="text-muted-foreground" />
-                  )}
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <span className="flex items-center gap-inline">
-                    <span className="truncate text-label font-medium text-foreground">
-                      {asset.fileName}
-                    </span>
-                    {/* Which entry is actually being edited is a property of
-                        the timeline, not of the selection above. */}
-                    {timelineAssetIds.includes(asset.id) && (
-                      <ListVideo size={12} className="shrink-0 text-primary" />
-                    )}
+                {asset.thumbnailUrl ? (
+                  <img src={asset.thumbnailUrl} alt="" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center">
+                    <Film size={18} className="text-muted-foreground" />
                   </span>
-                  <span className="flex items-center gap-inline text-caption font-normal text-muted-foreground">
-                    <span className="timecode">{formatDuration(asset.durationMs)}</span>
-                    {asset.missing && (
-                      <span className="flex items-center gap-inline text-destructive">
-                        <AlertTriangle size={12} />
-                        Missing
-                      </span>
-                    )}
-                    {!asset.missing && asset.stale && (
-                      <span className="flex items-center gap-inline text-warning">
-                        <AlertTriangle size={12} />
-                        Changed
-                      </span>
-                    )}
+                )}
+
+                {/* Which entry is actually being edited is a property of the
+                    timeline, not of the selection above. */}
+                {timelineAssetIds.includes(asset.id) && (
+                  <span className="absolute top-adjust left-adjust rounded-xs bg-primary px-inline text-caption font-medium text-primary-foreground">
+                    Added
                   </span>
-                </div>
+                )}
+
+                <span className="timecode absolute right-adjust bottom-adjust rounded-xs bg-black/70 px-inline text-caption text-white">
+                  {formatDuration(asset.durationMs)}
+                </span>
+
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                  className="absolute top-adjust right-adjust bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80 hover:text-white"
                   title="Remove from project"
                   onClick={(event) => {
                     event.stopPropagation()
@@ -103,17 +156,23 @@ export default function MediaTab({
                   <Trash2 size={14} />
                 </Button>
               </div>
-            )
-          })}
-        </div>
-      )}
 
-      <div
-        className={
-          assets.length > 0 ? 'flex h-24 shrink-0 flex-col' : 'flex min-h-0 flex-1 flex-col'
-        }
-      >
-        <DropZone onSelect={onImport} />
+              <span className="flex items-center gap-inline">
+                {asset.missing && <AlertTriangle size={12} className="shrink-0 text-destructive" />}
+                {!asset.missing && asset.stale && (
+                  <AlertTriangle size={12} className="shrink-0 text-warning" />
+                )}
+                <span
+                  className={`truncate text-caption font-normal ${
+                    selected ? 'text-primary' : 'text-muted-foreground'
+                  }`}
+                >
+                  {asset.fileName}
+                </span>
+              </span>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

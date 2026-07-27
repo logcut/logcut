@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { LogcutApi, TranscribeProgress } from '../shared/ipc'
+import type { LogcutApi, TranscribeProgress, UpdateState } from '../shared/ipc'
 
 const api: LogcutApi = {
   closeWindow: () => ipcRenderer.invoke('window:close'),
@@ -46,7 +46,19 @@ const api: LogcutApi = {
     }
   },
 
-  exportSrt: (projectId, assetId) => ipcRenderer.invoke('export:srt', projectId, assetId)
+  exportSrt: (projectId, assetId) => ipcRenderer.invoke('export:srt', projectId, assetId),
+
+  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  getUpdateState: () => ipcRenderer.invoke('update:get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (callback) => {
+    const listener = (_event: unknown, state: UpdateState): void => callback(state)
+    ipcRenderer.on('update:state', listener)
+    return () => {
+      ipcRenderer.removeListener('update:state', listener)
+    }
+  }
 }
 
 contextBridge.exposeInMainWorld('logcut', api)

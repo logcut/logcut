@@ -11,7 +11,8 @@ import type {
   TimelineClipSummary,
   ProjectSummary,
   TranscribePhase,
-  TranscribeResult
+  TranscribeResult,
+  UpdateState
 } from '../shared/ipc'
 import { VIDEO_EXTENSIONS } from '../shared/media'
 import { transcribeAudio } from './asr'
@@ -20,6 +21,7 @@ import { registerMediaPath } from './media'
 import { importMedia } from './media-import'
 import * as projects from './projects'
 import * as settings from './settings'
+import * as updater from './updater'
 
 /** Registration requires the file to exist; a poster may not be written yet. */
 function mediaUrlIfPresent(filePath: string): string | null {
@@ -295,4 +297,9 @@ export function registerIpc(): void {
       return { savedPath: result.filePath }
     }
   )
+
+  ipcMain.handle('app:get-version', (): string => app.getVersion())
+  ipcMain.handle('update:get-state', (): UpdateState => updater.updateState())
+  ipcMain.handle('update:check', (): Promise<void> => updater.checkForUpdates())
+  ipcMain.handle('update:install', (): void => updater.installUpdate())
 }

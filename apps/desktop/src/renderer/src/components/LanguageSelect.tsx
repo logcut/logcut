@@ -28,7 +28,9 @@ export default function LanguageSelect({
 }: LanguageSelectProps): JSX.Element {
   return (
     <Select value={value} onValueChange={(next) => onChange(next as LanguageOption)}>
-      <SelectTrigger className="w-56">
+      {/* Full width, not a fixed one: shadcn's trigger defaults to w-fit, and
+          the caller decides how wide a settings row is. */}
+      <SelectTrigger className="w-full">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

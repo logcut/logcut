@@ -24,10 +24,21 @@ export function pickTickInterval(scale: number, minLabelPx = 72): number {
   return TICK_STEPS_MS[TICK_STEPS_MS.length - 1] as number
 }
 
-export function tickTimes(totalMs: number, interval: number): number[] {
-  if (interval <= 0 || totalMs <= 0) return []
+/**
+ * Tick marks in `[fromMs, toMs]`, aligned to whole multiples of `interval`.
+ *
+ * A range rather than "from zero to the end" because the ruler only ever draws
+ * the visible window: zoomed all the way in that is a few dozen labels out of
+ * tens of thousands, and the range keeps the loop proportional to what is
+ * drawn. It also lets the ruler run past the media, which is what fills the
+ * empty track to the right once the view is zoomed out below fit-to-width.
+ */
+export function tickTimes(fromMs: number, toMs: number, interval: number): number[] {
+  if (interval <= 0 || toMs < fromMs) return []
   const times: number[] = []
-  for (let time = 0; time <= totalMs; time += interval) times.push(time)
+  const first = Math.max(0, Math.floor(fromMs / interval))
+  const last = Math.floor(toMs / interval)
+  for (let index = first; index <= last; index += 1) times.push(index * interval)
   return times
 }
 

@@ -24,6 +24,20 @@ export interface TranscribeProgress {
   phase: TranscribePhase
 }
 
+/**
+ * Where the updater is. 'unsupported' is the development build, which has no
+ * update metadata at all — distinct from 'current' so the UI can say so
+ * instead of offering a button that always fails.
+ */
+export type UpdateState =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'downloading'; percent: number }
+  | { kind: 'ready'; version: string }
+  | { kind: 'current' }
+  | { kind: 'failed'; message: string }
+  | { kind: 'unsupported' }
+
 export type MediaKind = 'video' | 'audio'
 
 /** 'running' reflects an in-flight request and is never persisted. */
@@ -174,4 +188,19 @@ export interface LogcutApi {
 
   /** Export an asset's transcript as SRT via a save dialog. Empty if cancelled. */
   exportSrt(projectId: string, assetId: string): Promise<ExportSrtResult>
+
+  /** Version of the running build, for the settings dialog. */
+  getAppVersion(): Promise<string>
+  /** Where the updater is right now; the dialog may open mid-download. */
+  getUpdateState(): Promise<UpdateState>
+  /**
+   * Ask for a check. Progress and failures arrive on onUpdateState, not as a
+   * rejection — a check that fails is a state, not an exception at the call
+   * site.
+   */
+  checkForUpdates(): Promise<void>
+  /** Quit and relaunch into the downloaded version. Only valid when 'ready'. */
+  installUpdate(): Promise<void>
+  /** Subscribe to updater state. Returns an unsubscribe function. */
+  onUpdateState(callback: (state: UpdateState) => void): () => void
 }

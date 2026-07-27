@@ -14,6 +14,7 @@ import { usePlaybackClock } from '@/hooks/usePlaybackClock'
 import { MEDIA_ASSET_DRAG } from '@/lib/drag'
 import { formatTimecode } from '@/lib/format'
 import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timeline'
+import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
 /**
  * The macOS default sits near 500ms and its slider reaches far slower still,
@@ -29,6 +30,50 @@ const DOUBLE_CLICK_MS = 600
  */
 const MIN_BLOCK_PX = 4
 
+/** Mirrors --timeline-media-strip-height; the frame maths needs the number. */
+const STRIP_BAND_HEIGHT = 39
+
+/** A thumb narrower than this is not worth aiming at, however deep the zoom. */
+const MIN_THUMB_PX = 24
+
+/**
+ * Zooming out past fit-to-width, to where the media occupies a quarter of the
+ * track. Stopping at fit-to-width means a clip can never be seen as short:
+ * whatever its length it fills the strip, so there is no sense of how much
+ * room is left beside it.
+ */
+const MIN_ZOOM = 0.25
+
+/**
+ * Where each frame of the filmstrip band comes from, laid left to right.
+ *
+ * Frames keep their own aspect ratio and repeat once the clip is wider than
+ * the sheet has frames for. Scaling the sheet to
+ * the clip's width instead is what squashed every face: the sheet is
+ * FILMSTRIP_FRAMES frames wide no matter how many pixels the clip occupies,
+ * so the two only agree by accident.
+ */
+function filmstripTiles(
+  clipWidthPx: number,
+  aspect: number,
+  visibleFromPx: number,
+  visibleToPx: number
+): { frameWidth: number; first: number; sources: number[] } {
+  const frameWidth = Math.max(1, Math.round(STRIP_BAND_HEIGHT * aspect))
+  const count = Math.max(1, Math.ceil(clipWidthPx / frameWidth))
+  // Only the tiles inside the window are built. Zoomed all the way in a clip
+  // is hundreds of thousands of pixels wide, and every tile is a DOM node.
+  const first = Math.max(0, Math.floor(visibleFromPx / frameWidth))
+  const last = Math.min(count - 1, Math.ceil(visibleToPx / frameWidth))
+  const sources: number[] = []
+  for (let index = first; index <= last; index += 1) {
+    sources.push(
+      Math.min(FILMSTRIP_FRAMES - 1, Math.floor(((index + 0.5) / count) * FILMSTRIP_FRAMES))
+    )
+  }
+  return { frameWidth, first, sources }
+}
+
 /** A clip as the timeline draws it: its position plus its asset's artwork. */
 export interface TimelineClipView {
   id: string
@@ -39,6 +84,8 @@ export interface TimelineClipView {
   filmstripUrl: string | null
   /** White-on-transparent envelope, tinted here; null until generated. */
   waveformUrl: string | null
+  /** Frame width over height, for laying the filmstrip out undistorted. */
+  aspect: number
   missing: boolean
 }
 
@@ -81,12 +128,18 @@ function TimelineTrack({
   label,
   main,
   hidden,
+  contentWidth,
+  offsetPx,
   children
 }: {
   icon: JSX.Element
   label: string
   main?: boolean
   hidden?: boolean
+  /** Width of the whole timeline at the current zoom, in pixels. */
+  contentWidth: number
+  /** How far the view is scrolled into it. */
+  offsetPx: number
   children: ReactNode
 }): JSX.Element | null {
   if (hidden === true) return null
@@ -98,13 +151,20 @@ function TimelineTrack({
       }}
     >
       <div
-        className="flex shrink-0 items-center gap-inline border-r border-border px-component text-muted-foreground"
+        className="flex shrink-0 items-center gap-inline px-component text-muted-foreground"
         style={{ width: 'var(--timeline-head-width)' }}
         title={label}
       >
         {icon}
       </div>
-      <div className="relative min-w-0 flex-1 py-adjust">{children}</div>
+      {/* Two layers: a fixed window, and the full-width strip sliding inside
+          it. Clips position themselves in percentages of the strip, so they
+          need no knowledge of the zoom or the scroll at all. */}
+      <div className="relative min-w-0 flex-1 overflow-hidden">
+        <div className="absolute inset-y-0" style={{ left: -offsetPx, width: contentWidth }}>
+          {children}
+        </div>
+      </div>
     </div>
   )
 }
@@ -135,7 +195,32 @@ export default function Timeline({
   const pendingSeekRef = useRef<number | null>(null)
   const seekFrameRef = useRef(0)
   const [width, setWidth] = useState(0)
+  /** 1 is fit-to-width; above that the strip is longer than the window. */
+  const [zoom, setZoom] = useState(1)
+  /** How far the window is scrolled into the strip, in strip pixels. */
+  const [offsetPx, setOffsetPx] = useState(0)
   const hasMedia = durationMs > 0
+
+  const contentWidth = width * zoom
+  const maxOffset = Math.max(0, contentWidth - width)
+
+  /**
+   * Enough that a pixel is a millisecond, which is finer than anything the
+   * timeline can express. Capped as well, because a short clip would otherwise
+   * allow a zoom so deep that the strip is megapixels wide.
+   */
+  const maxZoom = width > 0 && durationMs > 0 ? Math.max(1, Math.min(500, durationMs / width)) : 1
+
+  // Read by the wheel listener and the playhead writer, both of which run
+  // outside the render that produced these numbers.
+  const viewRef = useRef({ width, contentWidth, offsetPx, zoom, durationMs, maxZoom })
+  viewRef.current = { width, contentWidth, offsetPx, zoom, durationMs, maxZoom }
+
+  // Shrinking the window, or zooming back out, can leave the view scrolled
+  // past the end of a strip that is now shorter than the offset.
+  useEffect(() => {
+    setOffsetPx((current) => Math.min(current, Math.max(0, contentWidth - width)))
+  }, [contentWidth, width])
 
   useEffect(() => {
     return () => {
@@ -156,18 +241,16 @@ export default function Timeline({
     return () => observer.disconnect()
   }, [hasMedia])
 
-  const scale = pxPerMs(width, durationMs)
+  const scale = pxPerMs(contentWidth, durationMs)
 
   // Written straight to the DOM: this runs every animation frame during
   // playback and must not re-render the tree.
   const movePlayhead = useCallback((timeMs: number) => {
     const playhead = playheadRef.current
-    const content = contentRef.current
-    if (!playhead || !content) return
-    const total = Number(content.dataset.durationMs)
-    if (!(total > 0)) return
-    const ratio = Math.max(0, Math.min(1, timeMs / total))
-    playhead.style.transform = `translateX(${ratio * content.clientWidth}px)`
+    const view = viewRef.current
+    if (!playhead || !(view.durationMs > 0)) return
+    const ratio = Math.max(0, Math.min(1, timeMs / view.durationMs))
+    playhead.style.transform = `translateX(${ratio * view.contentWidth - view.offsetPx}px)`
   }, [])
 
   // Through a ref so the tick callback stays stable across clip switches.
@@ -179,10 +262,13 @@ export default function Timeline({
   )
   usePlaybackClock(videoRef, onTick)
 
+  // Only the window's own span: zoomed in, the strip holds thousands of
+  // labels and all but a screenful are off-screen; zoomed out below
+  // fit-to-width, the window runs past the media and the ruler carries on.
   const ticks = useMemo(() => {
     if (scale <= 0) return []
-    return tickTimes(durationMs, pickTickInterval(scale))
-  }, [durationMs, scale])
+    return tickTimes(offsetPx / scale, (offsetPx + width) / scale, pickTickInterval(scale))
+  }, [scale, offsetPx, width])
 
   const blocks = useMemo(
     () => (scale > 0 ? mergeBlocks(utterances, scale, activeUtteranceId) : []),
@@ -191,9 +277,9 @@ export default function Timeline({
 
   const timeAtClientX = (clientX: number): number => {
     const content = contentRef.current
-    if (!content || durationMs <= 0) return 0
+    if (!content || durationMs <= 0 || contentWidth <= 0) return 0
     const rect = content.getBoundingClientRect()
-    const ratio = (clientX - rect.left) / rect.width
+    const ratio = (clientX - rect.left + offsetPx) / contentWidth
     return Math.max(0, Math.min(1, ratio)) * durationMs
   }
 
@@ -298,6 +384,95 @@ export default function Timeline({
     onRemoveClip(selectedClipId)
   }
 
+  /**
+   * Wheel with the middle button held (or Cmd/Ctrl) zooms; otherwise the wheel
+   * pans, which only does anything once zoomed in past the window.
+   *
+   * Bound natively rather than through onWheel because React registers wheel
+   * listeners as passive, and a passive listener cannot preventDefault — which
+   * both branches need, or the gesture reaches the page behind.
+   */
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const onWheel = (event: WheelEvent): void => {
+      const view = viewRef.current
+      if (!(view.durationMs > 0) || view.width <= 0) return
+
+      // buttons is a bitmask; 4 is the middle button.
+      const zooming = (event.buttons & 4) !== 0 || event.ctrlKey || event.metaKey
+      event.preventDefault()
+
+      if (!zooming) {
+        // A trackpad reports sideways scrolling on deltaX; a wheel has only
+        // deltaY, so Shift is the usual stand-in for it.
+        const delta = event.deltaX !== 0 ? event.deltaX : event.shiftKey ? event.deltaY : 0
+        if (delta === 0) return
+        const limit = Math.max(0, view.contentWidth - view.width)
+        setOffsetPx((current) => Math.max(0, Math.min(limit, current + delta)))
+        return
+      }
+
+      const content = contentRef.current
+      if (!content) return
+      // Zoom around the pointer: the instant under it must not move, or
+      // zooming in on something walks it off the screen.
+      const anchorPx = event.clientX - content.getBoundingClientRect().left
+      const anchorRatio = (anchorPx + view.offsetPx) / view.contentWidth
+      const next = Math.max(
+        MIN_ZOOM,
+        Math.min(view.maxZoom, view.zoom * Math.exp(-event.deltaY * 0.002))
+      )
+      const nextWidth = view.width * next
+      setZoom(next)
+      setOffsetPx(
+        Math.max(
+          0,
+          Math.min(Math.max(0, nextWidth - view.width), anchorRatio * nextWidth - anchorPx)
+        )
+      )
+    }
+
+    container.addEventListener('wheel', onWheel, { passive: false })
+    return () => container.removeEventListener('wheel', onWheel)
+  }, [])
+
+  /** Last pointer x while dragging the scrollbar thumb. */
+  const thumbXRef = useRef<number | null>(null)
+
+  const handleThumbDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    thumbXRef.current = event.clientX
+  }
+
+  const handleThumbMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const last = thumbXRef.current
+    if (last === null || width <= 0) return
+    event.stopPropagation()
+    thumbXRef.current = event.clientX
+    // The thumb travels the window's width while the view travels the strip's,
+    // so a pixel of thumb is `zoom` pixels of strip.
+    const delta = ((event.clientX - last) * contentWidth) / width
+    setOffsetPx((current) => Math.max(0, Math.min(maxOffset, current + delta)))
+  }
+
+  const handleThumbUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    thumbXRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  /** Pressing the empty part of the bar centres the thumb there. */
+  const jumpScrollbarTo = (clientX: number): void => {
+    const content = contentRef.current
+    if (!content || width <= 0) return
+    const ratio = (clientX - content.getBoundingClientRect().left) / width
+    setOffsetPx(Math.max(0, Math.min(maxOffset, ratio * contentWidth - width / 2)))
+  }
+
   const handleDrop = (event: ReactDragEvent<HTMLDivElement>): void => {
     const assetId = event.dataTransfer.getData(MEDIA_ASSET_DRAG)
     setDropTarget(false)
@@ -320,150 +495,262 @@ export default function Timeline({
       onDragLeave={() => setDropTarget(false)}
       onDrop={handleDrop}
     >
-      {/* Ruler. Its left spacer keeps the scale aligned with the tracks below.
+      {/* Ruler, tracks and playhead share one box so the playhead spans them
+          and stops short of the scrollbar. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {/* One continuous rule between the heads and the tracks. Per-row
+            borders leave it broken wherever a row is missing — and the rows
+            are centred, so most of that column has no row in it at all. */}
+        {hasMedia && (
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
+            style={{ left: 'calc(var(--timeline-head-width) - 1px)' }}
+          />
+        )}
+        {/* Ruler. Its left spacer keeps the scale aligned with the tracks below.
           An empty timeline has no scale to show, so it has no ruler either —
           and it must be removed from the tree, not `hidden`: Tailwind's
           Preflight writes that rule through :where(), so any display utility
           on the element outranks it. */}
-      {hasMedia && (
-        <div
-          className="flex border-b border-border"
-          style={{ height: 'var(--timeline-ruler-height)' }}
-        >
+        {hasMedia && (
           <div
-            className="shrink-0 border-r border-border"
-            style={{ width: 'var(--timeline-head-width)' }}
-          />
-          <div ref={contentRef} data-duration-ms={durationMs} className="relative min-w-0 flex-1">
-            {ticks.map((time) => (
-              <span
-                key={time}
-                className="timecode absolute top-0 pl-inline text-muted-foreground"
-                style={{ left: `${(time / durationMs) * 100}%` }}
-              >
-                {formatTimecode(time)}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Tracks sit centred in whatever height is left, so growing the panel
-          pads above and below rather than leaving them stranded at the top. */}
-      <div className="flex min-h-0 flex-1 flex-col justify-center">
-        {/* Nothing laid down yet. The placeholder is shaped like the track it
-            is about to become — same height, same offset past the heads — so
-            dropping does not make the strip jump. It is also the only place
-            that says how to start, since importing no longer does it. */}
-        {!hasMedia && (
-          <div className="flex" style={{ height: 'var(--timeline-media-height)' }}>
+            className="flex border-b border-border"
+            style={{ height: 'var(--timeline-ruler-height)' }}
+          >
             <div className="shrink-0" style={{ width: 'var(--timeline-head-width)' }} />
-            <div
-              className={`flex min-w-0 flex-1 items-center gap-component rounded-xs border border-dashed px-inset transition-colors ${
-                dropTarget ? 'border-primary bg-primary/10' : 'border-border'
-              }`}
-            >
-              <Film size={16} className="shrink-0 text-muted-foreground" />
-              <span className="truncate text-caption font-normal text-muted-foreground">
-                Drag a video here to start editing.
-              </span>
+            {/* contentRef is the window, not the strip: it is what the pointer
+              is measured against and what ResizeObserver watches. */}
+            <div ref={contentRef} className="relative min-w-0 flex-1 overflow-hidden">
+              <div className="absolute inset-y-0" style={{ left: -offsetPx, width: contentWidth }}>
+                {ticks.map((time) => (
+                  <span
+                    key={time}
+                    className="timecode absolute top-0 pl-inline text-muted-foreground"
+                    style={{ left: `${(time / durationMs) * 100}%` }}
+                  >
+                    {formatTimecode(time)}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Secondary track: subtitles. One block per line, adjacent ones merged.
+        {/* Tracks sit centred in whatever height is left, so growing the panel
+          pads above and below rather than leaving them stranded at the top. */}
+        <div className="flex min-h-0 flex-1 flex-col justify-center">
+          {/* Nothing laid down yet. The placeholder is shaped like the track it
+            is about to become — same height, same offset past the heads — so
+            dropping does not make the strip jump. It is also the only place
+            that says how to start, since importing no longer does it. */}
+          {!hasMedia && (
+            <div className="flex" style={{ height: 'var(--timeline-media-height)' }}>
+              <div className="shrink-0" style={{ width: 'var(--timeline-head-width)' }} />
+              <div
+                className={`flex min-w-0 flex-1 items-center gap-component rounded-xs border border-dashed px-inset transition-colors ${
+                  dropTarget ? 'border-primary bg-primary/10' : 'border-border'
+                }`}
+              >
+                <Film size={16} className="shrink-0 text-muted-foreground" />
+                <span className="truncate text-caption font-normal text-muted-foreground">
+                  Drag a video here to start editing.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Secondary track: subtitles. One block per line, adjacent ones merged.
             It only exists once there are subtitles — an empty lane with a head
             on it reads as a feature that is broken rather than one not used
             yet. */}
-        <TimelineTrack
-          icon={<Type size={13} />}
-          label="Subtitles"
-          hidden={!hasMedia || utterances.length === 0}
-        >
-          {blocks.map((block) => (
-            <div
-              key={block.startMs}
-              data-subtitle-block
-              className="absolute inset-y-adjust rounded-xs"
-              style={{
-                left: `${(block.startMs / durationMs) * 100}%`,
-                width: `${((block.endMs - block.startMs) / durationMs) * 100}%`,
-                minWidth: MIN_BLOCK_PX,
-                background: block.active ? 'var(--editor-selection)' : 'var(--editor-waveform)'
-              }}
-            />
-          ))}
-        </TimelineTrack>
+          <TimelineTrack
+            icon={<Type size={13} />}
+            label="Subtitles"
+            hidden={!hasMedia || utterances.length === 0}
+            contentWidth={contentWidth}
+            offsetPx={offsetPx}
+          >
+            {blocks.map((block) => (
+              <div
+                key={block.startMs}
+                data-subtitle-block
+                className="absolute inset-y-adjust rounded-xs"
+                style={{
+                  left: `${(block.startMs / durationMs) * 100}%`,
+                  width: `${((block.endMs - block.startMs) / durationMs) * 100}%`,
+                  minWidth: MIN_BLOCK_PX,
+                  background: block.active ? 'var(--editor-selection)' : 'var(--editor-waveform)'
+                }}
+              />
+            ))}
+          </TimelineTrack>
 
-        {/* Main track: a caption bar, the filmstrip, then the audio envelope.
+          {/* Main track: a caption bar, the filmstrip, then the audio envelope.
             The three band heights are tokens and sum to the track height, so
             the clip has no internal flex — each band is exactly its own
             height whatever the panel is doing. */}
-        <TimelineTrack icon={<Film size={13} />} label="Video" main hidden={!hasMedia}>
-          {clips.map((clip) => (
-            <div
-              key={clip.id}
-              data-clip-id={clip.id}
-              className={`absolute inset-y-0 flex flex-col overflow-hidden rounded-xs ${
-                clip.id === selectedClipId ? 'ring-2 ring-foreground ring-inset' : ''
-              }`}
-              style={{
-                left: `${(clip.startMs / durationMs) * 100}%`,
-                width: `${(clip.durationMs / durationMs) * 100}%`,
-                background: 'var(--editor-waveform-muted)'
-              }}
-            >
+          <TimelineTrack
+            icon={<Film size={13} />}
+            label="Video"
+            main
+            hidden={!hasMedia}
+            contentWidth={contentWidth}
+            offsetPx={offsetPx}
+          >
+            {clips.map((clip) => (
               <div
-                className="flex shrink-0 items-center gap-component overflow-hidden px-inline"
-                style={{ height: 'var(--timeline-media-header-height)' }}
-              >
-                <span className="truncate text-caption font-normal text-foreground">
-                  {clip.name}
-                </span>
-                <span className="timecode shrink-0 text-muted-foreground">
-                  {formatTimecode(clip.durationMs)}
-                </span>
-              </div>
-
-              {/* Stretched to the band rather than covered: the strip holds
-                  exactly the whole clip, so any cropping would silently drop
-                  the end of it. */}
-              <div
-                className="shrink-0 bg-cover"
+                key={clip.id}
+                data-clip-id={clip.id}
+                // outline rather than an inset ring: a ring is an inset
+                // box-shadow, which paints under the element's own children, so
+                // the filmstrip band covered it along the left and right edges.
+                // Outlines paint last, above every descendant.
+                className={`absolute inset-y-0 flex flex-col overflow-hidden rounded-xs ${
+                  clip.id === selectedClipId ? 'outline-2 -outline-offset-2 outline-foreground' : ''
+                }`}
                 style={{
-                  height: 'var(--timeline-media-strip-height)',
-                  backgroundImage: clip.filmstripUrl ? `url("${clip.filmstripUrl}")` : undefined,
-                  backgroundSize: '100% 100%'
+                  left: `${(clip.startMs / durationMs) * 100}%`,
+                  width: `${(clip.durationMs / durationMs) * 100}%`,
+                  background: 'var(--editor-waveform-muted)'
+                }}
+              >
+                <div
+                  className="flex shrink-0 items-center gap-component overflow-hidden px-inline"
+                  style={{ height: 'var(--timeline-media-header-height)' }}
+                >
+                  <span className="truncate text-caption font-normal text-foreground">
+                    {clip.name}
+                  </span>
+                  <span className="timecode shrink-0 text-muted-foreground">
+                    {formatTimecode(clip.durationMs)}
+                  </span>
+                </div>
+
+                <div
+                  className="relative shrink-0 overflow-hidden"
+                  style={{ height: 'var(--timeline-media-strip-height)' }}
+                >
+                  {clip.filmstripUrl !== null &&
+                    (() => {
+                      const clipLeftPx = contentWidth * (clip.startMs / durationMs)
+                      const clipWidthPx = contentWidth * (clip.durationMs / durationMs)
+                      const { frameWidth, first, sources } = filmstripTiles(
+                        clipWidthPx,
+                        clip.aspect,
+                        offsetPx - clipLeftPx,
+                        offsetPx + width - clipLeftPx
+                      )
+                      return sources.map((source, index) => (
+                        <div
+                          key={first + index}
+                          className="absolute top-0 bottom-0"
+                          style={{
+                            left: (first + index) * frameWidth,
+                            width: frameWidth,
+                            backgroundImage: `url("${clip.filmstripUrl}")`,
+                            // The sheet is scaled so one frame is exactly
+                            // frameWidth wide, then shifted to the wanted one.
+                            backgroundSize: `${FILMSTRIP_FRAMES * frameWidth}px 100%`,
+                            backgroundPosition: `-${source * frameWidth}px 0`,
+                            backgroundRepeat: 'no-repeat'
+                          }}
+                        />
+                      ))
+                    })()}
+                </div>
+
+                {clip.waveformUrl && (
+                  // The PNG is white on transparent; masking lets it take the
+                  // theme's waveform colour instead of shipping one per theme.
+                  <div
+                    className="shrink-0"
+                    style={{
+                      height: 'var(--timeline-media-wave-height)',
+                      background: 'var(--editor-waveform)',
+                      maskImage: `url("${clip.waveformUrl}")`,
+                      maskSize: '100% 100%',
+                      WebkitMaskImage: `url("${clip.waveformUrl}")`,
+                      WebkitMaskSize: '100% 100%'
+                    }}
+                  />
+                )}
+              </div>
+            ))}
+          </TimelineTrack>
+        </div>
+
+        {/* Playhead spans every track, offset past the heads. Its window clips
+          it: once the view is scrolled, the marker's own translate goes
+          negative and it would otherwise be drawn across the track heads. */}
+        {durationMs > 0 && (
+          <div
+            className="pointer-events-none absolute top-0 right-0 bottom-0 overflow-hidden"
+            style={{ left: 'var(--timeline-head-width)' }}
+          >
+            <div
+              ref={playheadRef}
+              className="absolute top-0 bottom-0 w-px"
+              style={{ background: 'var(--editor-playhead)' }}
+            >
+              {/* A grip at the top, sitting in the ruler. A bare hairline is
+                  hard to pick out among the ticks and gives no hint that the
+                  marker is the thing you drag.
+                  A bar tapering to a point, so the grip names the exact
+                  instant the way a plain block cannot. The shoulder is the bar
+                  token rather than a percentage, so changing either height
+                  leaves the other alone. Centred on the line by half its
+                  width, so the tokens can change freely. */}
+              <div
+                className="absolute top-0 -translate-x-1/2"
+                style={{
+                  width: 'var(--timeline-playhead-handle-width)',
+                  height:
+                    'calc(var(--timeline-playhead-handle-bar) + var(--timeline-playhead-handle-point))',
+                  background: 'var(--editor-playhead)',
+                  clipPath:
+                    'polygon(0 0, 100% 0, 100% var(--timeline-playhead-handle-bar), 50% 100%, 0 var(--timeline-playhead-handle-bar))'
                 }}
               />
-
-              {clip.waveformUrl && (
-                // The PNG is white on transparent; masking lets it take the
-                // theme's waveform colour instead of shipping one per theme.
-                <div
-                  className="shrink-0"
-                  style={{
-                    height: 'var(--timeline-media-wave-height)',
-                    background: 'var(--editor-waveform)',
-                    maskImage: `url("${clip.waveformUrl}")`,
-                    maskSize: '100% 100%',
-                    WebkitMaskImage: `url("${clip.waveformUrl}")`,
-                    WebkitMaskSize: '100% 100%'
-                  }}
-                />
-              )}
             </div>
-          ))}
-        </TimelineTrack>
+          </div>
+        )}
       </div>
 
-      {/* Playhead spans every track, offset past the heads. */}
-      {durationMs > 0 && (
+      {/* Horizontal scrollbar. Drawn rather than delegated to overflow-x
+          because the strip is moved by transform, not by a scroll container —
+          and a mouse has no deltaX, so wheel panning alone leaves the zoomed
+          timeline unreachable. */}
+      {hasMedia && (
         <div
-          ref={playheadRef}
-          className="pointer-events-none absolute top-0 bottom-0 w-px"
-          style={{ left: 'var(--timeline-head-width)', background: 'var(--editor-playhead)' }}
-        />
+          className="relative shrink-0"
+          style={{
+            height: 'var(--timeline-scrollbar-height)',
+            marginLeft: 'var(--timeline-head-width)'
+          }}
+          onPointerDown={(event) => {
+            // Without this the press also reaches the strip and seeks.
+            event.stopPropagation()
+            if (event.target === event.currentTarget) jumpScrollbarTo(event.clientX)
+          }}
+        >
+          <div
+            role="scrollbar"
+            aria-orientation="horizontal"
+            aria-valuenow={Math.round(maxOffset > 0 ? (offsetPx / maxOffset) * 100 : 0)}
+            className="absolute inset-y-adjust cursor-grab rounded-full bg-border transition-colors hover:bg-input active:cursor-grabbing"
+            style={{
+              left: contentWidth > 0 ? `${(offsetPx / contentWidth) * 100}%` : 0,
+              // Capped: below fit-to-width the strip is shorter than the
+              // window, and the thumb would otherwise overrun the bar.
+              width: contentWidth > 0 ? `${Math.min(1, width / contentWidth) * 100}%` : '100%',
+              minWidth: MIN_THUMB_PX
+            }}
+            onPointerDown={handleThumbDown}
+            onPointerMove={handleThumbMove}
+            onPointerUp={handleThumbUp}
+            onPointerCancel={handleThumbUp}
+          />
+        </div>
       )}
     </div>
   )

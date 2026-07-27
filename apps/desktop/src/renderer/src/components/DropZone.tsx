@@ -1,11 +1,20 @@
+import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { DragEvent, JSX } from 'react'
-import { isSupportedMediaFile } from '../../../shared/media'
+import { fileDropOf } from '@/lib/drag'
 
 interface DropZoneProps {
   onSelect(paths: string[]): void
 }
 
+/**
+ * The import surface an empty media panel is made of: a filled
+ * plate rather than a dashed outline, carrying one obvious affordance.
+ *
+ * Dashed borders read as "something is missing here". This is the normal state
+ * of a new project, so it reads as a button instead — the whole plate is
+ * clickable, and dropping files on it works just the same.
+ */
 export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')
@@ -13,20 +22,9 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
   const handleDrop = (event: DragEvent): void => {
     event.preventDefault()
     setDragging(false)
-    setError('')
-    const files = [...event.dataTransfer.files]
-    if (files.length === 0) return
-    const supported = files.filter((file) => isSupportedMediaFile(file.name))
-    if (supported.length === 0) {
-      setError('Please drop a video file.')
-      return
-    }
-    const paths = supported.map((file) => window.logcut.getPathForFile(file)).filter(Boolean)
-    if (paths.length === 0) {
-      setError('Could not resolve the file path.')
-      return
-    }
-    onSelect(paths)
+    const { paths, error: reason } = fileDropOf(event.dataTransfer)
+    setError(reason ?? '')
+    if (paths.length > 0) onSelect(paths)
   }
 
   const handleClick = async (): Promise<void> => {
@@ -39,10 +37,8 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
     <div
       role="button"
       tabIndex={0}
-      className={`flex flex-1 cursor-pointer flex-col items-center justify-center gap-inline rounded-lg border-2 border-dashed transition-colors ${
-        dragging
-          ? 'border-primary bg-primary/10'
-          : 'border-border hover:border-input hover:bg-muted/50'
+      className={`flex flex-1 cursor-pointer flex-col items-center justify-center gap-component rounded-lg transition-colors ${
+        dragging ? 'bg-primary/10 ring-1 ring-primary' : 'bg-muted/50 hover:bg-muted'
       }`}
       onDragOver={(event) => {
         event.preventDefault()
@@ -55,8 +51,15 @@ export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
         if (event.key === 'Enter' || event.key === ' ') void handleClick()
       }}
     >
-      <p className="m-0 text-body font-medium">Drop a video here, or click to browse</p>
-      <p className="m-0 text-caption font-normal text-muted-foreground">MP4, MOV, MKV, WebM…</p>
+      <span className="flex items-center gap-component">
+        <span className="flex size-control-lg items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Plus size={16} />
+        </span>
+        <span className="text-body font-medium text-foreground">Import</span>
+      </span>
+      <p className="m-0 text-caption font-normal text-muted-foreground">
+        Drop a video here — MP4, MOV, MKV, WebM
+      </p>
       {error !== '' && <p className="m-0 text-caption font-normal text-destructive">{error}</p>}
     </div>
   )
