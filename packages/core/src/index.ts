@@ -15,5 +15,10 @@ export type { SegmentOptions } from './segment.ts'
 
 export { formatSrtTimestamp, toSrt } from './srt.ts'
 
-export { findUtteranceIndexAt, replaceAllText, setUtteranceText } from './transcript.ts'
+export {
+  findNearestUtteranceIndex,
+  findUtteranceIndexAt,
+  replaceAllText,
+  setUtteranceText
+} from './transcript.ts'
 export type { ReplaceAllResult } from './transcript.ts'

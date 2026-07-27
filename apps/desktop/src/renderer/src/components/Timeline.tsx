@@ -6,8 +6,19 @@ import { usePlaybackClock } from '@/hooks/usePlaybackClock'
 import { formatTimecode } from '@/lib/format'
 import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timeline'
 
-/** Matches the platform default closely enough for a scrub-or-edit decision. */
-const DOUBLE_CLICK_MS = 400
+/**
+ * The macOS default sits near 500ms and its slider reaches far slower still,
+ * so 400 was under the platform default: an unhurried double-click registered
+ * as two separate seeks and the editor never opened.
+ */
+const DOUBLE_CLICK_MS = 600
+
+/**
+ * Fit-to-width makes a short line a fraction of a pixel wide. Blocks are
+ * widened to this so every subtitle stays visible and aimable; nothing is
+ * being edited on the timeline, so the drift it introduces costs nothing.
+ */
+const MIN_BLOCK_PX = 4
 
 interface TimelineProps {
   durationMs: number
@@ -132,6 +143,11 @@ export default function Timeline({
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (durationMs <= 0) return
+    // Track heads are left of the scale. Without this, pressing one converts
+    // to a negative time, clamps to zero and jumps playback to the start.
+    const content = contentRef.current
+    if (content && event.clientX < content.getBoundingClientRect().left) return
+
     seekTo(event.clientX)
 
     // Double-click is detected by hand rather than with onDoubleClick, for two
@@ -201,7 +217,8 @@ export default function Timeline({
               className="absolute inset-y-adjust rounded-xs"
               style={{
                 left: `${(block.startMs / durationMs) * 100}%`,
-                width: `${Math.max(((block.endMs - block.startMs) / durationMs) * 100, 0.1)}%`,
+                width: `${((block.endMs - block.startMs) / durationMs) * 100}%`,
+                minWidth: MIN_BLOCK_PX,
                 background: block.active ? 'var(--editor-selection)' : 'var(--editor-waveform)'
               }}
             />

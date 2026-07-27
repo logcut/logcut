@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { findUtteranceIndexAt, replaceAllText, setUtteranceText } from './transcript.ts'
+import {
+  findNearestUtteranceIndex,
+  findUtteranceIndexAt,
+  replaceAllText,
+  setUtteranceText
+} from './transcript.ts'
 import type { Transcript, Utterance } from './types.ts'
 
 function fixture(): Transcript {
@@ -79,6 +84,33 @@ test('findUtteranceIndexAt returns -1 in gaps and out of range', () => {
 
 test('findUtteranceIndexAt handles an empty transcript', () => {
   assert.equal(findUtteranceIndexAt([], 0), -1)
+})
+
+test('findNearestUtteranceIndex still prefers a covering utterance', () => {
+  const utterances = gapped()
+  assert.equal(findNearestUtteranceIndex(utterances, 0), 0)
+  assert.equal(findNearestUtteranceIndex(utterances, 1200), 1)
+  assert.equal(findNearestUtteranceIndex(utterances, 1500), 2)
+})
+
+test('findNearestUtteranceIndex resolves a gap to the closer side', () => {
+  const utterances = gapped()
+  // The gap runs 400..1000. 500 is nearer a, 900 nearer b.
+  assert.equal(findNearestUtteranceIndex(utterances, 500), 0)
+  assert.equal(findNearestUtteranceIndex(utterances, 900), 1)
+  // Dead centre goes to the earlier line.
+  assert.equal(findNearestUtteranceIndex(utterances, 700), 0)
+})
+
+test('findNearestUtteranceIndex clamps to the ends', () => {
+  const utterances = gapped()
+  assert.equal(findNearestUtteranceIndex(utterances, -5000), 0)
+  assert.equal(findNearestUtteranceIndex(utterances, 2000), 2)
+  assert.equal(findNearestUtteranceIndex(utterances, 99999), 2)
+})
+
+test('findNearestUtteranceIndex only returns -1 for an empty transcript', () => {
+  assert.equal(findNearestUtteranceIndex([], 0), -1)
 })
 
 test('findUtteranceIndexAt agrees with a linear scan', () => {

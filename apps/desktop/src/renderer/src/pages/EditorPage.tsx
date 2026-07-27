@@ -1,4 +1,5 @@
 import {
+  findNearestUtteranceIndex,
   findUtteranceIndexAt,
   replaceAllText,
   segmentTranscript,
@@ -125,11 +126,18 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * Seeking before opening is what puts the double-clicked line in view: the
    * active utterance follows the playhead, and the list scrolls to it on its
    * own.
+   *
+   * Resolved with findNearestUtteranceIndex, not findUtteranceIndexAt: a click
+   * that lands in the silence between two lines still means "that subtitle",
+   * and at fit-to-width it lands there often. Seeking to the line's own start
+   * rather than the clicked time keeps the two in agreement — otherwise the
+   * playhead sits in the gap and the highlight immediately clears.
    */
   const openSubtitlesAt = (timeMs: number): void => {
-    seekTo(timeMs)
-    const index = findUtteranceIndexAt(utterances, timeMs)
-    if (index !== -1) setActiveUtteranceId(utterances[index]?.id ?? null)
+    const index = findNearestUtteranceIndex(utterances, timeMs)
+    const utterance = index === -1 ? null : (utterances[index] ?? null)
+    seekTo(utterance ? utterance.start : timeMs)
+    setActiveUtteranceId(utterance?.id ?? null)
     setSubtitlesOpen(true)
   }
 
