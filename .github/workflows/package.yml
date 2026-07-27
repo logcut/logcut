@@ -6,6 +6,10 @@ on:
       ffmpeg_tag:
         description: 'ffmpeg release tag to bundle (e.g. ffmpeg-b1)'
         required: true
+      notarize:
+        description: 'Notarize the macOS build. Off yields a signed but unnotarized app: auto-update still works, first launch needs right-click Open.'
+        type: boolean
+        default: true
 
 # electron-builder --publish creates the release and uploads to it, and the
 # default GITHUB_TOKEN is read-only: without this the build succeeds and the
@@ -66,7 +70,17 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter logcut package:mac
+        # Apple's notary service has no upper bound on queue time — one run sat
+        # here for 89 minutes. The switch exists so a release is still possible
+        # when that happens; signing, which auto-update actually requires, is
+        # never skipped.
+        run: |
+          if [ "${{ inputs.notarize }}" = "false" ]; then
+            echo "::warning::Notarization skipped. Gatekeeper will require right-click Open on first launch."
+            pnpm --filter logcut package:mac -c.mac.notarize=false
+          else
+            pnpm --filter logcut package:mac
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: logcut-mac-arm64
