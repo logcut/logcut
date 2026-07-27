@@ -144,7 +144,13 @@ FF="$BUILD/out/bin/ffmpeg"
 echo "--- dynamic libraries (must be base system only)"
 # Anything outside this list means configure found a distro library and linked
 # it, which would make the sidecar refuse to start on a machine without it.
-if ldd "$FF" | grep -vE '(linux-vdso|/ld-linux|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libgcc_s\.so|libstdc\+\+\.so|libz\.so|statically linked)'; then
+#
+# libz/libbz2/liblzma are on the list because ffmpeg's configure picks them up
+# by header detection and they are LSB base libraries — present anywhere
+# Chromium can run, which is a strictly harder requirement than ours. The
+# macOS build links the same three; they simply hide behind that platform's
+# /usr/lib allowance.
+if ldd "$FF" | grep -vE '(linux-vdso|/ld-linux|libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|libgcc_s\.so|libstdc\+\+\.so|libz\.so|libbz2\.so|liblzma\.so|statically linked)'; then
   echo "FAIL: unexpected dynamic dependency found" >&2
   exit 1
 fi
