@@ -42,9 +42,8 @@ interface SubtitleTabProps {
  * Produces subtitles; it does not display them. The transcript itself lives on
  * the timeline, and editing happens in this tab's other face, SubtitleEditor.
  *
- * Laid out as a scrolling list of settings
- * rows, and the one action pinned to the bottom edge so it stays put however
- * many rows appear above it.
+ * Laid out as a scrolling list of settings rows, with the one action pinned to
+ * the bottom edge so it stays put however many rows appear above it.
  */
 export default function SubtitleTab({
   asset,

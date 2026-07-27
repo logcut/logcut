@@ -8,8 +8,8 @@ interface DropZoneProps {
 }
 
 /**
- * The import surface an empty media panel is made of: a filled
- * plate rather than a dashed outline, carrying one obvious affordance.
+ * The import surface an empty media panel is made of: a filled plate rather
+ * than a dashed outline, carrying one obvious affordance.
  *
  * Dashed borders read as "something is missing here". This is the normal state
  * of a new project, so it reads as a button instead — the whole plate is

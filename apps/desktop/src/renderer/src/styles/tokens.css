@@ -186,8 +186,8 @@
 
   /* ---- Text roles (size / leading / weight used as a set) ----
      The three panel roles sit one step below web convention, matching the
-     density of desktop NLEs: 12px is their workhorse, 10-11px
-     their helper text, 13-14px reserved for emphasis. At web sizes (14/13/12)
+     density of desktop NLEs: 12px is their workhorse, 10-11px their helper
+     text, 13-14px reserved for emphasis. At web sizes (14/13/12)
      the whole UI read one size too large, and 13px text in a 22px control left
      no room to breathe. */
   --text-caption-size: var(--font-size-11); /* helper text, timestamps */
