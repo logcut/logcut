@@ -29,8 +29,8 @@ const TOP_BAR_HEIGHT = 36
 
 const MIN_LEFT_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
-/** --space-compact, mirrored here because the split maths needs the number. */
-const PANE_GAP = 6
+/** --space-component, mirrored here because the split maths needs the number. */
+const PANE_GAP = 8
 
 /** The two upper panes open at equal width. */
 function defaultLeftWidth(): number {
@@ -49,9 +49,10 @@ function clamp(value: number, min: number, max: number): number {
 
 interface EditorPageProps {
   projectId: string
+  onBack(): void
 }
 
-export default function EditorPage({ projectId }: EditorPageProps): JSX.Element {
+export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.Element {
   const {
     project,
     activeAsset,
@@ -159,11 +160,12 @@ export default function EditorPage({ projectId }: EditorPageProps): JSX.Element 
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
+        onBack={onBack}
         onRename={(name) => void rename(name)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col px-compact pb-compact">
+      <div className="flex min-h-0 flex-1 flex-col px-component pb-component">
         <div className="flex min-h-0 flex-1">
           {/* AI chat panel slot — deliberately empty for now. */}
 

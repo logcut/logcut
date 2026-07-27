@@ -1,4 +1,4 @@
-import { Settings } from 'lucide-react'
+import { ChevronLeft, Settings } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import TitleBar from '@/components/TitleBar'
@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 
 interface EditorTopBarProps {
   name: string
+  onBack(): void
   onRename(name: string): void
   onOpenSettings(): void
 }
@@ -21,6 +22,7 @@ interface EditorTopBarProps {
  */
 export default function EditorTopBar({
   name,
+  onBack,
   onRename,
   onOpenSettings
 }: EditorTopBarProps): JSX.Element {
@@ -40,6 +42,18 @@ export default function EditorTopBar({
 
   return (
     <TitleBar className="relative">
+      {/* Sits right of the window controls: the only way back to the project
+          list, since the title bar carries no other navigation. */}
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title="Back to projects"
+        className="shrink-0 [-webkit-app-region:no-drag]"
+        onClick={onBack}
+      >
+        <ChevronLeft size={16} />
+      </Button>
+
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         {editing ? (
           <Input

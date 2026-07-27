@@ -13,7 +13,7 @@ export default function App(): JSX.Element {
   const [route, setRoute] = useState<Route>({ name: 'home' })
 
   if (route.name === 'editor') {
-    return <EditorPage projectId={route.projectId} />
+    return <EditorPage projectId={route.projectId} onBack={() => setRoute({ name: 'home' })} />
   }
 
   return <HomePage onOpenProject={(projectId) => setRoute({ name: 'editor', projectId })} />

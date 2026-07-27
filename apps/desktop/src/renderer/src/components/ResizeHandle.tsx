@@ -27,7 +27,7 @@ export default function ResizeHandle({ orientation, onResize }: ResizeHandleProp
       role="separator"
       aria-orientation={vertical ? 'vertical' : 'horizontal'}
       className={`shrink-0 touch-none ${
-        vertical ? 'w-compact cursor-col-resize' : 'h-compact cursor-row-resize'
+        vertical ? 'w-component cursor-col-resize' : 'h-component cursor-row-resize'
       }`}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId)
