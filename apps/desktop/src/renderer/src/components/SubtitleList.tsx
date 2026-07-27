@@ -40,6 +40,13 @@ const DRAG_THRESHOLD_PX = 3
 const FOLLOW_EASE = 0.18
 
 /**
+ * How long the follow stays quiet after an action that anchored the view
+ * itself. Long enough to cover a seek making its way back through the element's
+ * events, short enough that nobody notices playback resuming its chase.
+ */
+const FOLLOW_QUIET_MS = 400
+
+/**
  * Everything a row can do, in one object with a stable identity.
  *
  * One bundle rather than a dozen separate callback props: the row is memoized,
@@ -389,11 +396,23 @@ export default function SubtitleList({
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
   /**
-   * Raised by an action whose result is already where the user is looking, so
-   * the follow lets that one change pass without recentring. Set where the
-   * action happens, never inferred from what `activeId` did.
+   * When the follow is allowed to resume. An action whose result is already
+   * where the user is looking pushes this out, and the follow ignores every
+   * request until it passes.
+   *
+   * A window rather than a one-shot flag, because one action produces more than
+   * one `activeId` change: adding a line writes the transcript *and* seeks, and
+   * the seek only reaches `applyTime` once the element reports back — by then
+   * the new line exists, resolves differently from the first pass, and changes
+   * the active line a second time. A flag cleared by the first change let that
+   * second one recentre, which is precisely the jump this exists to stop.
+   *
+   * Set where the action happens, never inferred from what `activeId` did.
    */
-  const skipFollowRef = useRef(false)
+  const followQuietUntilRef = useRef(0)
+  const holdFollow = useCallback((): void => {
+    followQuietUntilRef.current = performance.now() + FOLLOW_QUIET_MS
+  }, [])
 
   /**
    * Glide the active line to the middle, a fraction of the way each frame.
@@ -425,14 +444,9 @@ export default function SubtitleList({
    */
   useEffect(() => {
     if (editingId !== null) return
-    // Adding a line moves the playhead onto it, which makes it active, which
-    // would normally pull it to the middle. But the new line appears exactly
-    // where the divider that spawned it was — already under the pointer — so
-    // centring it only shifts everything the user was looking at.
-    if (skipFollowRef.current) {
-      skipFollowRef.current = false
-      return
-    }
+    // An action just put the active line where the user is already looking;
+    // centring it now would shift everything around it instead.
+    if (performance.now() < followQuietUntilRef.current) return
 
     let frame = 0
     const step = (): void => {
@@ -471,12 +485,12 @@ export default function SubtitleList({
     // it would pull the line just typed into towards the middle — the list
     // jumping the instant Enter is pressed. Covers Escape and blur too, both
     // of which come through here.
-    skipFollowRef.current = true
+    holdFollow()
     editingIdRef.current = null
     draftRef.current = ''
     setEditingId(null)
     setDraft('')
-  }, [])
+  }, [holdFollow])
 
   const commitEdit = useCallback((): void => {
     const id = editingIdRef.current
@@ -638,7 +652,7 @@ export default function SubtitleList({
       onTimeBlur: commitTimeEdit,
 
       onAdd: (afterId: string) => {
-        skipFollowRef.current = true
+        holdFollow()
         onAdd(afterId)
       },
       onMerge,
@@ -651,6 +665,7 @@ export default function SubtitleList({
       commitTimeEdit,
       endEdit,
       endTimeEdit,
+      holdFollow,
       onAdd,
       onMerge,
       onSeek,

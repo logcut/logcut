@@ -12,7 +12,7 @@ import {
   setUtteranceTime,
   speakerIdsOf
 } from '@logcut/core'
-import type { Utterance } from '@logcut/core'
+import type { Transcript, Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
@@ -442,18 +442,30 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
    * own ids, so both are translated back before the transcript sees them —
    * the same crossing `activeSourceId` makes in the other direction.
    */
-  const handleTrimUtterance = (id: string, edge: 'start' | 'end', timelineMs: number): void => {
-    const line = utterances.find((utterance) => utterance.id === id)
-    const transcript = line ? transcripts[line.assetId] : null
-    if (!line || !transcript) return
-    const clip = clips.find((candidate) => candidate.id === line.clipId)
-    const next = setUtteranceTime(
-      transcript,
-      line.sourceId,
-      edge,
-      timelineMs - (clip?.startMs ?? 0)
+  const handleTrimUtterances = (
+    edge: 'start' | 'end',
+    changes: { id: string; timeMs: number }[]
+  ): void => {
+    // Grouped by asset and written once each, so a drag over lines from
+    // several clips is one edit and one undo step. Within a transcript the
+    // changes chain, because each call returns a new one.
+    const byAsset = new Map<string, Transcript>()
+    for (const change of changes) {
+      const line = utterances.find((utterance) => utterance.id === change.id)
+      if (!line) continue
+      const transcript = byAsset.get(line.assetId) ?? transcripts[line.assetId]
+      if (!transcript) continue
+      const clip = clips.find((candidate) => candidate.id === line.clipId)
+      byAsset.set(
+        line.assetId,
+        setUtteranceTime(transcript, line.sourceId, edge, change.timeMs - (clip?.startMs ?? 0))
+      )
+    }
+    applyTranscripts(
+      [...byAsset]
+        .filter(([assetId, transcript]) => transcript !== transcripts[assetId])
+        .map(([assetId, transcript]) => ({ assetId, transcript }))
     )
-    if (next !== transcript) applyTranscript(line.assetId, next)
   }
 
   const togglePlay = (): void => {
@@ -628,7 +640,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
               onSeek={playback.seek}
               onScrub={applyTime}
               onDropAsset={(assetId) => void addClip(assetId)}
-              onTrimUtterance={handleTrimUtterance}
+              onTrimUtterances={handleTrimUtterances}
               onTogglePlay={togglePlay}
               onEditSubtitlesAt={openSubtitlesAt}
             />

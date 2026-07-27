@@ -33,8 +33,16 @@ const MIN_CAPTION_PX = 28
  */
 const MIN_TRIM_PX = 20
 
-/** How much of each edge takes the drag. */
-const TRIM_HANDLE_PX = 6
+/**
+ * The white bar drawn at a selected line's edge, and the wider strip that
+ * actually takes the drag. A 3px bar is all the look needs; a 3px target is
+ * not something anyone can hit, so the two are separate.
+ */
+const TRIM_BAR_PX = 3
+const TRIM_HIT_PX = 8
+
+/** How far the selection plate stands proud above and below the line. */
+const SELECTION_EDGE_PX = 1
 
 /** Mirrors --timeline-media-strip-height; the frame maths needs the number. */
 const STRIP_BAND_HEIGHT = 39
@@ -133,8 +141,8 @@ interface TimelineProps {
    * it does not exist until the timeline has a playable clip.
    */
   hasPlayer: boolean
-  /** An edge of a subtitle was dragged to a new time on the timeline's clock. */
-  onTrimUtterance(id: string, edge: 'start' | 'end', timelineMs: number): void
+  /** Subtitle edges were dragged to new times, on the timeline's clock. */
+  onTrimUtterances(edge: 'start' | 'end', changes: { id: string; timeMs: number }[]): void
   /** Space, while the strip has focus. */
   onTogglePlay(): void
   /** An asset was dragged here from the media library. */
@@ -217,7 +225,7 @@ export default function Timeline({
   onSeek,
   clipOffsetMs,
   hasPlayer,
-  onTrimUtterance,
+  onTrimUtterances,
   onTogglePlay,
   onDropAsset,
   onEditSubtitlesAt
@@ -235,13 +243,24 @@ export default function Timeline({
    */
   const dragRef = useRef<'scrub' | 'marquee' | 'trim' | 'none'>('none')
   /**
-   * The edge being dragged and where it is now. Held here rather than pushed
-   * through onTrim on every move: the line is rewritten once, on release, so
-   * the drag is a single undo step instead of one per pixel.
+   * The edge being dragged, everything it moves, and how far.
+   *
+   * A shift rather than a destination, because a drag on one end of a
+   * selection moves **all** of their matching ends by the same amount — the
+   * lines keep their relative timing, which is the only reading of "drag the
+   * selection" that does not silently collapse them onto each other.
+   *
+   * Held here rather than pushed out on every move: the transcript is
+   * rewritten once, on release, so a drag is one undo step and not one per
+   * pixel.
    */
-  const [trim, setTrim] = useState<{ id: string; edge: 'start' | 'end'; timeMs: number } | null>(
-    null
-  )
+  const [trim, setTrim] = useState<{
+    edge: 'start' | 'end'
+    ids: string[]
+    /** The pressed edge's own value, which the pointer is measured against. */
+    originMs: number
+    deltaMs: number
+  } | null>(null)
   /**
    * A press that has not yet turned into a drag. Outside the ruler the
    * playhead must not move until the press is known to be a click — dragging
@@ -361,7 +380,9 @@ export default function Timeline({
     () =>
       trim
         ? utterances.map((utterance) =>
-            utterance.id === trim.id ? { ...utterance, [trim.edge]: trim.timeMs } : utterance
+            trim.ids.includes(utterance.id)
+              ? { ...utterance, [trim.edge]: utterance[trim.edge] + trim.deltaMs }
+              : utterance
           )
         : utterances,
     [utterances, trim]
@@ -475,6 +496,35 @@ export default function Timeline({
       .map((utterance) => utterance.id)
   }
 
+  /**
+   * The largest shift the pointer is asking for that **no** line in the
+   * selection has to be clamped out of.
+   *
+   * Each line is clamped on its own by core's `clampUtteranceTime` — the same
+   * function the inspector's time fields use, so a dragged edge and a typed
+   * one cannot disagree about where the limit is — and the most restrictive
+   * answer wins. Letting each line clamp itself instead would break the group
+   * apart the moment one of them hit its neighbour.
+   *
+   * Clamped against the pristine list, not the preview: only this one edge is
+   * moving, so every bound in play belongs to an edge that is standing still.
+   */
+  const allowedTrimDelta = (
+    current: { edge: 'start' | 'end'; ids: string[]; originMs: number },
+    clientX: number
+  ): number => {
+    let delta = timeAtClientX(clientX) - current.originMs
+    for (const id of current.ids) {
+      const line = utterances.find((utterance) => utterance.id === id)
+      if (!line) continue
+      const allowed =
+        clampUtteranceTime(utterances, id, current.edge, line[current.edge] + delta) -
+        line[current.edge]
+      if (Math.abs(allowed) < Math.abs(delta)) delta = allowed
+    }
+    return delta
+  }
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (durationMs <= 0) return
     // Track heads are left of the scale. Without this, pressing one converts
@@ -482,18 +532,12 @@ export default function Timeline({
     const content = contentRef.current
     if (content && event.clientX < content.getBoundingClientRect().left) return
 
-    // Pressing anywhere in the strip settles what is selected: a clip if the
-    // press landed on one, nothing if it landed on empty track.
     const target = event.target
-    const element = target instanceof Element ? target.closest('[data-clip-id]') : null
-    const clipId = element?.getAttribute('data-clip-id') ?? null
-    onSelectClips(clipId === null ? [] : [clipId])
-    const block = target instanceof Element ? target.closest('[data-subtitle-ids]') : null
-    const blockIds = block?.getAttribute('data-subtitle-ids')
-    onSelectUtterances(blockIds ? blockIds.split(' ') : [])
 
-    // An edge handle takes the gesture outright: it neither seeks nor selects,
-    // so it is settled before anything else looks at the press.
+    // An edge handle takes the gesture outright, and it is settled **before
+    // anything touches the selection**: it drags the whole selection, so
+    // narrowing that down to the pressed line first would throw away the
+    // other lines the drag is meant to move.
     const handle = target instanceof Element ? target.closest('[data-trim-edge]') : null
     if (handle) {
       const id = handle.getAttribute('data-trim-id')
@@ -501,11 +545,23 @@ export default function Timeline({
       const line = utterances.find((utterance) => utterance.id === id)
       if (line && (edge === 'start' || edge === 'end')) {
         dragRef.current = 'trim'
-        setTrim({ id: line.id, edge, timeMs: line[edge] })
+        // Handles are only drawn on selected lines, so the pressed one is
+        // always among them; the fallback is for safety, not for a real case.
+        const ids = selectedUtteranceIds.includes(line.id) ? selectedUtteranceIds : [line.id]
+        setTrim({ edge, ids, originMs: line[edge], deltaMs: 0 })
         event.currentTarget.setPointerCapture(event.pointerId)
         return
       }
     }
+
+    // Pressing anywhere else in the strip settles what is selected: a clip if
+    // the press landed on one, nothing if it landed on empty track.
+    const element = target instanceof Element ? target.closest('[data-clip-id]') : null
+    const clipId = element?.getAttribute('data-clip-id') ?? null
+    onSelectClips(clipId === null ? [] : [clipId])
+    const block = target instanceof Element ? target.closest('[data-subtitle-ids]') : null
+    const blockIds = block?.getAttribute('data-subtitle-ids')
+    onSelectUtterances(blockIds ? blockIds.split(' ') : [])
 
     // What the drag will mean, decided here and only here. Only the ruler
     // drags the playhead: dragging a scrub out of the tracks would fight the
@@ -555,21 +611,8 @@ export default function Timeline({
     }
 
     if (dragRef.current === 'trim') {
-      // Clamped against the neighbours by the same core function the inspector
-      // uses, so a dragged edge and a typed time cannot disagree about where
-      // the limit is (see core/transcript.md).
       setTrim((current) =>
-        current
-          ? {
-              ...current,
-              timeMs: clampUtteranceTime(
-                utterances,
-                current.id,
-                current.edge,
-                timeAtClientX(event.clientX)
-              )
-            }
-          : current
+        current ? { ...current, deltaMs: allowedTrimDelta(current, event.clientX) } : current
       )
       return
     }
@@ -597,7 +640,15 @@ export default function Timeline({
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (trim) {
-      onTrimUtterance(trim.id, trim.edge, trim.timeMs)
+      if (trim.deltaMs !== 0) {
+        onTrimUtterances(
+          trim.edge,
+          trim.ids
+            .map((id) => utterances.find((utterance) => utterance.id === id))
+            .filter((line) => line !== undefined)
+            .map((line) => ({ id: line.id, timeMs: line[trim.edge] + trim.deltaMs }))
+        )
+      }
       setTrim(null)
     }
     // Still pending means the press never became a drag, so it was a click.
@@ -833,45 +884,99 @@ export default function Timeline({
             offsetPx={offsetPx}
             contentRef={subtitleRowRef}
           >
-            {blocks.map((block) => (
-              <div
-                key={block.id}
-                data-subtitle-block
-                data-subtitle-ids={block.id}
-                className={`absolute inset-y-adjust flex items-center overflow-hidden rounded-xs ${
-                  selectedUtteranceIds.includes(block.id) ? 'ring-1 ring-foreground ring-inset' : ''
-                }`}
-                style={{
-                  left: block.leftPx,
-                  width: block.widthPx,
-                  background: 'var(--editor-waveform)'
-                }}
-              >
-                {/* Trim handles, only where there is room for them and a body
-                    between them. The cursor comes with them, which is the only
-                    hint that an edge is draggable at all. */}
-                {block.widthPx >= MIN_TRIM_PX &&
-                  (['start', 'end'] as const).map((edge) => (
-                    <div
-                      key={edge}
-                      data-trim-edge={edge}
-                      data-trim-id={block.id}
-                      className={`absolute inset-y-0 cursor-ew-resize ${
-                        edge === 'start' ? 'left-0' : 'right-0'
-                      }`}
-                      style={{ width: TRIM_HANDLE_PX }}
-                    />
-                  ))}
+            {blocks.map((block) => {
+              const selected = selectedUtteranceIds.includes(block.id)
+              // Handles need room to sit at both ends and still leave a body
+              // to press for selection; below that the whole block would be
+              // handle and there would be no way to select it.
+              const trimmable = selected && block.widthPx >= MIN_TRIM_PX
+              return (
+                <div
+                  key={block.id}
+                  data-subtitle-block
+                  data-subtitle-ids={block.id}
+                  // Lifted while selected: the plate reaches past both ends,
+                  // and a line that starts where this one finishes is a later
+                  // sibling, so it would paint straight over that edge.
+                  className={`absolute inset-y-adjust ${selected ? 'z-10' : ''}`}
+                  style={{ left: block.leftPx, width: block.widthPx }}
+                >
+                  {/* Selection is one plate behind the line, wider than it by
+                      the bar and taller by a hair, so the white that shows is
+                      the part the body does not cover: thick at the two ends,
+                      a hairline along the top and bottom.
 
-                {/* The line itself, once the block is wide enough to hold any
-                    of it. */}
-                {block.text !== '' && block.widthPx >= MIN_CAPTION_PX && (
-                  <span className="pointer-events-none block truncate px-inline text-caption leading-[var(--timeline-subtitle-height)] text-white">
-                    {block.text}
-                  </span>
-                )}
-              </div>
-            ))}
+                      One shape rather than an outline plus two bars. Those
+                      were three rectangles meeting at the corners, and no
+                      radius makes three separate rectangles meet cleanly —
+                      the seams read as notches at the top and bottom of each
+                      end. Here there is nothing to meet. */}
+                  {selected && (
+                    <div
+                      className="pointer-events-none absolute rounded-sm bg-foreground"
+                      style={{
+                        left: -TRIM_BAR_PX,
+                        right: -TRIM_BAR_PX,
+                        top: -SELECTION_EDGE_PX,
+                        bottom: -SELECTION_EDGE_PX
+                      }}
+                    />
+                  )}
+
+                  <div
+                    className="absolute inset-0 flex items-center rounded-xs"
+                    // --editor-waveform is 55% opaque, so the selection plate
+                    // behind would show through and wash the colour out. The
+                    // panel surface goes underneath it here, compositing to
+                    // exactly what an unselected line already looks like while
+                    // leaving the body opaque.
+                    style={{
+                      backgroundColor: 'var(--card)',
+                      backgroundImage:
+                        'linear-gradient(var(--editor-waveform), var(--editor-waveform))'
+                    }}
+                  >
+                    {/* The line itself, once the block is wide enough to hold
+                        any of it.
+
+                        `min-w-0` is what gives truncation an edge to work at:
+                        a flex item will not shrink below its content, so
+                        without it the text overflows the block whole and is
+                        simply cut off rather than ellipsised.
+
+                        Nothing here reacts to selection — the plate is behind
+                        and outside, so the text never shifts under the
+                        pointer. */}
+                    {block.text !== '' && block.widthPx >= MIN_CAPTION_PX && (
+                      <span className="pointer-events-none min-w-0 flex-1 truncate px-inline text-caption leading-[var(--timeline-subtitle-height)] text-white">
+                        {block.text}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* The drag targets. They draw nothing: the plate already
+                      shows where the ends are. A cursor that only appears on
+                      hover is not an affordance — nobody sweeps a track
+                      looking for one, which is why the ends are only shown,
+                      and only draggable, once the line is selected. */}
+                  {trimmable &&
+                    (['start', 'end'] as const).map((edge) => (
+                      <div
+                        key={edge}
+                        data-trim-edge={edge}
+                        data-trim-id={block.id}
+                        // Straddles the edge so the target is worth aiming at
+                        // from either side of it.
+                        className="absolute inset-y-0 cursor-ew-resize"
+                        style={{
+                          width: TRIM_HIT_PX,
+                          [edge === 'start' ? 'left' : 'right']: -TRIM_BAR_PX
+                        }}
+                      />
+                    ))}
+                </div>
+              )
+            })}
           </TimelineTrack>
 
           {/* Main track: a caption bar, the filmstrip, then the audio envelope.
