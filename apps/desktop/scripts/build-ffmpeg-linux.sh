@@ -37,7 +37,8 @@ JOBS="$(nproc)"
 # This matters far more here than on macOS: a distro build host has libva,
 # libdrm, libxcb, SDL2 and friends installed, and ffmpeg's configure will
 # happily link every one of them if it can see them.
-export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig"
+# lib64 as well: some distributions' autotools default there rather than lib.
+export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig"
 
 mkdir -p "$DEPS" "$SRC" "$OUT"
 
@@ -77,7 +78,11 @@ echo "==> harfbuzz $HARFBUZZ_VERSION"
 fetch "$HARFBUZZ_URL" "harfbuzz-$HARFBUZZ_VERSION.tar.xz" "harfbuzz-$HARFBUZZ_VERSION"
 (
   cd "$SRC/harfbuzz-$HARFBUZZ_VERSION"
-  meson setup build --prefix="$DEPS" --default-library=static --buildtype=release \
+  # --libdir=lib, or meson installs to the distro's multiarch path
+  # (lib/x86_64-linux-gnu) and nothing downstream finds harfbuzz.pc. macOS
+  # never hits this: meson defaults to a plain lib/ there.
+  meson setup build --prefix="$DEPS" --libdir=lib \
+    --default-library=static --buildtype=release \
     -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
     -Dicu=disabled -Dtests=disabled -Ddocs=disabled -Dbenchmark=disabled \
     -Dintrospection=disabled > /dev/null

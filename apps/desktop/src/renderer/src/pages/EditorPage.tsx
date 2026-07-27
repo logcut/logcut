@@ -102,9 +102,11 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   /** Media-library highlight only. What is being edited is on the timeline. */
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
   /** The clip the timeline has selected — what Delete removes. */
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  /** Clips the timeline has selected — what Delete removes. A set, because a
+   *  rubber band takes whatever it covers. */
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
   /**
-   * Whose subtitles the editor is showing. Deliberately not selectedClipId:
+   * Whose subtitles the editor is showing. Deliberately not selectedClipIds:
    * selection is a timeline gesture that arms Delete, while opening the editor
    * is a subtitle gesture. Sharing one state made double-clicking to edit put
    * a selection border on the clip, which reads as "this is about to be
@@ -520,11 +522,12 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
               clips={clipViews}
               utterances={utterances}
               activeUtteranceId={activeUtteranceId}
-              selectedClipId={selectedClipId}
+              selectedClipIds={selectedClipIds}
               videoRef={videoRef}
               clipOffsetMs={playback.clip?.startMs ?? 0}
-              onSelectClip={setSelectedClipId}
-              onRemoveClip={(clipId) => void removeClip(clipId)}
+              hasPlayer={playback.src !== ''}
+              onSelectClips={setSelectedClipIds}
+              onRemoveClips={(clipIds) => void removeClips(clipIds)}
               onSeek={playback.seek}
               onScrub={applyTime}
               onDropAsset={(assetId) => void addClip(assetId)}

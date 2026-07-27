@@ -12,7 +12,18 @@ import type { RefObject } from 'react'
  */
 export function usePlaybackClock(
   videoRef: RefObject<HTMLVideoElement | null>,
-  onTick: (timeMs: number) => void
+  onTick: (timeMs: number) => void,
+  /**
+   * Anything that changes when the element itself appears or is replaced.
+   *
+   * A ref object never changes identity, so an effect that depends on the ref
+   * alone runs exactly once — and at that moment there may be no element at
+   * all. The editor mounts before its project loads, so there are no clips, no
+   * `src`, and no `<video>`; the effect returned early and never ran again,
+   * which left the playhead deaf to every seek and to playback itself. It only
+   * appeared to work because dragging on the timeline writes it directly.
+   */
+  mounted: unknown
 ): void {
   const onTickRef = useRef(onTick)
   onTickRef.current = onTick
@@ -60,5 +71,5 @@ export function usePlaybackClock(
       video.removeEventListener('seeked', emit)
       video.removeEventListener('loadedmetadata', emit)
     }
-  }, [videoRef])
+  }, [videoRef, mounted])
 }

@@ -33,7 +33,8 @@ export interface UseProjectResult {
   /** Append an asset to the timeline. */
   addClip(assetId: string): Promise<void>
   /** Take one clip off the timeline; the asset stays in the library. */
-  removeClip(clipId: string): Promise<void>
+  /** Take clips off the timeline; the assets stay in the library. */
+  removeClips(clipIds: string[]): Promise<void>
   rename(name: string): Promise<void>
   transcribe(assetId: string, config: TranscribeConfig, force?: boolean): Promise<void>
   /** Records an undo snapshot and persists; the single funnel for every edit. */
@@ -170,8 +171,18 @@ export function useProject(projectId: string): UseProjectResult {
     [guard, projectId]
   )
 
-  const removeClip = useCallback(
-    (clipId: string) => guard(() => window.logcut.removeClip(projectId, clipId)),
+  // Sequential rather than parallel: each call returns the whole project, and
+  // concurrent removals would each be computed from the same stale copy, so
+  // the last answer back would put the others' clips right back.
+  const removeClips = useCallback(
+    (clipIds: string[]) =>
+      guard(async () => {
+        let detail = await window.logcut.openProject(projectId)
+        for (const clipId of clipIds) {
+          detail = await window.logcut.removeClip(projectId, clipId)
+        }
+        return detail
+      }),
     [guard, projectId]
   )
 
@@ -241,7 +252,7 @@ export function useProject(projectId: string): UseProjectResult {
     importMedia,
     removeMedia,
     addClip,
-    removeClip,
+    removeClips,
     rename,
     transcribe,
     applyTranscript,

@@ -16,13 +16,6 @@ import { mergeBlocks, pickTickInterval, pxPerMs, tickTimes } from '@/lib/timelin
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
 /**
- * The macOS default sits near 500ms and its slider reaches far slower still,
- * so 400 was under the platform default: an unhurried double-click registered
- * as two separate seeks and the editor never opened.
- */
-const DOUBLE_CLICK_MS = 600
-
-/**
  * Fit-to-width makes a short line a fraction of a pixel wide. Blocks are
  * widened to this so every subtitle stays visible and aimable; nothing is
  * being edited on the timeline, so the drift it introduces costs nothing.
@@ -94,10 +87,10 @@ interface TimelineProps {
   /** Already on the timeline's clock — see lib/timeline.ts layUtterances. */
   utterances: Utterance[]
   activeUtteranceId: string | null
-  selectedClipId: string | null
+  selectedClipIds: string[]
   videoRef: RefObject<HTMLVideoElement | null>
-  onSelectClip(clipId: string | null): void
-  onRemoveClip(clipId: string): void
+  onSelectClips(clipIds: string[]): void
+  onRemoveClips(clipIds: string[]): void
   /**
    * The time the playhead was just moved to by a click or drag, reported the
    * moment it happens rather than when the element catches up.
@@ -111,11 +104,21 @@ interface TimelineProps {
    * the playhead would jump back to the left at each boundary.
    */
   clipOffsetMs: number
+  /**
+   * Whether a `<video>` is on screen. The playhead listens to that element, and
+   * it does not exist until the timeline has a playable clip.
+   */
+  hasPlayer: boolean
   /** Space, while the strip has focus. */
   onTogglePlay(): void
   /** An asset was dragged here from the media library. */
   onDropAsset(assetId: string): void
-  /** Double-click on a subtitle block, with the time that was clicked. */
+  /**
+   * A press landed on a subtitle block, with the time it snapped to. Opening
+   * the editor is a single click: the block is a few pixels wide, and asking
+   * for two hits on it inside the platform's double-click window was the
+   * larger half of "subtitles are hard to click".
+   */
   onEditSubtitlesAt(timeMs: number): void
 }
 
@@ -131,12 +134,15 @@ function TimelineTrack({
   hidden,
   contentWidth,
   offsetPx,
+  contentRef,
   children
 }: {
   icon: JSX.Element
   label: string
   main?: boolean
   hidden?: boolean
+  /** The window, for hit-testing the rubber band against this row. */
+  contentRef?: RefObject<HTMLDivElement | null>
   /** Width of the whole timeline at the current zoom, in pixels. */
   contentWidth: number
   /** How far the view is scrolled into it. */
@@ -161,7 +167,7 @@ function TimelineTrack({
       {/* Two layers: a fixed window, and the full-width strip sliding inside
           it. Clips position themselves in percentages of the strip, so they
           need no knowledge of the zoom or the scroll at all. */}
-      <div className="relative min-w-0 flex-1 overflow-hidden">
+      <div ref={contentRef} className="relative min-w-0 flex-1 overflow-hidden">
         <div className="absolute inset-y-0" style={{ left: -offsetPx, width: contentWidth }}>
           {children}
         </div>
@@ -175,13 +181,14 @@ export default function Timeline({
   utterances,
   activeUtteranceId,
   clips,
-  selectedClipId,
+  selectedClipIds,
   videoRef,
-  onSelectClip,
-  onRemoveClip,
+  onSelectClips,
+  onRemoveClips,
   onScrub,
   onSeek,
   clipOffsetMs,
+  hasPlayer,
   onTogglePlay,
   onDropAsset,
   onEditSubtitlesAt
@@ -192,7 +199,20 @@ export default function Timeline({
    *  time↔pixel conversion is against this, never the whole container. */
   const contentRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
-  const lastPressRef = useRef(0)
+  /**
+   * What the drag that is running means. Fixed at pointerdown by where the
+   * press landed, and never reconsidered: a gesture that changed meaning
+   * halfway through would be unusable.
+   */
+  const dragRef = useRef<'scrub' | 'marquee' | 'none'>('none')
+  /** Where the band began, in client pixels, so hit tests survive a scroll. */
+  const marqueeStartRef = useRef<{ clientX: number; clientY: number } | null>(null)
+  /** The media row's window, which the band has to touch to take anything. */
+  const mediaRowRef = useRef<HTMLDivElement>(null)
+  /** The rubber band, in container-relative pixels. */
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(
+    null
+  )
   /** Latest scrub target, and the frame that will hand it to the element. */
   const pendingSeekRef = useRef<number | null>(null)
   const seekFrameRef = useRef(0)
@@ -262,7 +282,8 @@ export default function Timeline({
     (elementMs: number) => movePlayhead(clipOffsetRef.current + elementMs),
     [movePlayhead]
   )
-  usePlaybackClock(videoRef, onTick)
+  // Re-attaches when the player appears; see usePlaybackClock.
+  usePlaybackClock(videoRef, onTick, hasPlayer)
 
   // Zooming and scrolling move where a given instant sits without the element
   // reporting anything, and the playhead is written imperatively — it is only
@@ -337,6 +358,39 @@ export default function Timeline({
     return index === -1 ? timeMs : (utterances[index]?.start ?? timeMs)
   }
 
+  /** Container-relative pixels, which is what the rubber band is drawn in. */
+  const localPointOf = (event: ReactPointerEvent<HTMLDivElement>): { x: number; y: number } => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) }
+  }
+
+  /** Position along the whole strip, unclamped — a band can lie past the end. */
+  const stripXAt = (clientX: number): number => {
+    const rect = contentRef.current?.getBoundingClientRect()
+    return clientX - (rect?.left ?? 0) + offsetPx
+  }
+
+  /** Clips the band touches. Horizontal overlap plus a hit on the media row. */
+  const clipsWithin = (
+    fromClientX: number,
+    toClientX: number,
+    fromClientY: number,
+    toClientY: number
+  ): string[] => {
+    const row = mediaRowRef.current?.getBoundingClientRect()
+    if (!row || scale <= 0) return []
+    if (Math.max(fromClientY, toClientY) < row.top || Math.min(fromClientY, toClientY) > row.bottom)
+      return []
+    const from = Math.min(stripXAt(fromClientX), stripXAt(toClientX))
+    const to = Math.max(stripXAt(fromClientX), stripXAt(toClientX))
+    return clips
+      .filter((clip) => {
+        const left = clip.startMs * scale
+        return left + clip.durationMs * scale >= from && left <= to
+      })
+      .map((clip) => clip.id)
+  }
+
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (durationMs <= 0) return
     // Track heads are left of the scale. Without this, pressing one converts
@@ -348,32 +402,63 @@ export default function Timeline({
     // press landed on one, nothing if it landed on empty track.
     const target = event.target
     const element = target instanceof Element ? target.closest('[data-clip-id]') : null
-    onSelectClip(element?.getAttribute('data-clip-id') ?? null)
+    const clipId = element?.getAttribute('data-clip-id') ?? null
+    onSelectClips(clipId === null ? [] : [clipId])
 
     const timeMs = pressTimeOf(event)
     seekTo(timeMs)
 
-    // Double-click is detected by hand rather than with onDoubleClick, for two
-    // reasons: capturing the pointer to scrub retargets every later click at
-    // the capturing element, so a handler on an inner track never fires; and
-    // PointerEvent.detail is always 0, unlike MouseEvent's click count.
-    const isSecondClick = event.timeStamp - lastPressRef.current < DOUBLE_CLICK_MS
-    lastPressRef.current = isSecondClick ? 0 : event.timeStamp
-    if (isSecondClick && utterances.length > 0) {
+    // Pressing a subtitle opens the editor on it — one press, not two. The
+    // press still seeks; opening the panel swaps the sidebar's contents and
+    // moves nothing, so it costs the gesture nothing.
+    if (target instanceof Element && target.closest('[data-subtitle-block]')) {
       onEditSubtitlesAt(timeMs)
-      return
+    }
+
+    // What the drag will mean, decided here and only here. Only the ruler
+    // drags the playhead: dragging a scrub out of the tracks would fight the
+    // rubber band for the same gesture, and the ruler is where a desktop
+    // editor puts it anyway. On a clip the press has already selected it and
+    // there is nothing to drag, since clips cannot be moved.
+    const rulerBottom = content?.getBoundingClientRect().bottom ?? 0
+    dragRef.current = event.clientY <= rulerBottom ? 'scrub' : clipId === null ? 'marquee' : 'none'
+
+    if (dragRef.current === 'marquee') {
+      const point = localPointOf(event)
+      marqueeStartRef.current = { clientX: event.clientX, clientY: event.clientY }
+      setMarquee({ x0: point.x, y0: point.y, x1: point.x, y1: point.y })
     }
 
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
-  // Dragging never snaps: scrubbing has to follow the pointer exactly.
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!event.currentTarget.hasPointerCapture(event.pointerId)) return
-    seekTo(timeAtClientX(event.clientX))
+
+    // Dragging never snaps: scrubbing has to follow the pointer exactly.
+    if (dragRef.current === 'scrub') {
+      seekTo(timeAtClientX(event.clientX))
+      return
+    }
+    if (dragRef.current !== 'marquee') return
+
+    const point = localPointOf(event)
+    setMarquee((current) => (current ? { ...current, x1: point.x, y1: point.y } : current))
+    // Live rather than on release, so the band shows what it is about to take.
+    setMarqueeSelection(event)
+  }
+
+  /** Reads the band's own corners from the ref to avoid a stale closure. */
+  const setMarqueeSelection = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    const start = marqueeStartRef.current
+    if (!start) return
+    onSelectClips(clipsWithin(start.clientX, event.clientX, start.clientY, event.clientY))
   }
 
   const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    dragRef.current = 'none'
+    marqueeStartRef.current = null
+    setMarquee(null)
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
@@ -400,9 +485,9 @@ export default function Timeline({
       return
     }
     if (event.key !== 'Delete' && event.key !== 'Backspace') return
-    if (selectedClipId === null) return
+    if (selectedClipIds.length === 0) return
     event.preventDefault()
-    onRemoveClip(selectedClipId)
+    onRemoveClips(selectedClipIds)
   }
 
   /**
@@ -617,6 +702,7 @@ export default function Timeline({
             hidden={!hasMedia}
             contentWidth={contentWidth}
             offsetPx={offsetPx}
+            contentRef={mediaRowRef}
           >
             {clips.map((clip) => (
               <div
@@ -700,13 +786,27 @@ export default function Timeline({
                     own paint layers, which the filmstrip tiles are. A sibling
                     with a z-index is the only version that does not depend on
                     reading paint order correctly. */}
-                {clip.id === selectedClipId && (
+                {selectedClipIds.includes(clip.id) && (
                   <div className="pointer-events-none absolute inset-0 z-10 rounded-xs border-2 border-foreground" />
                 )}
               </div>
             ))}
           </TimelineTrack>
         </div>
+
+        {/* The rubber band. Drawn over the tracks deliberately: covering what it
+          is about to take is exactly how it says what it covers. */}
+        {marquee && (
+          <div
+            className="pointer-events-none absolute border border-primary bg-primary/20"
+            style={{
+              left: Math.min(marquee.x0, marquee.x1),
+              top: Math.min(marquee.y0, marquee.y1),
+              width: Math.abs(marquee.x1 - marquee.x0),
+              height: Math.abs(marquee.y1 - marquee.y0)
+            }}
+          />
+        )}
 
         {/* Playhead spans every track, offset past the heads. Its window clips
           it: once the view is scrolled, the marker's own translate goes

@@ -388,6 +388,8 @@ export default function SubtitleList({
   const utterancesRef = useRef(utterances)
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
+  /** Set by an action whose result is already where the user is looking. */
+  const skipFollowRef = useRef(false)
 
   /**
    * Glide the active line to the middle, a fraction of the way each frame.
@@ -419,6 +421,14 @@ export default function SubtitleList({
    */
   useEffect(() => {
     if (editingId !== null) return
+    // Adding a line moves the playhead onto it, which makes it active, which
+    // would normally pull it to the middle. But the new line appears exactly
+    // where the divider that spawned it was — already under the pointer — so
+    // centring it only shifts everything the user was looking at.
+    if (skipFollowRef.current) {
+      skipFollowRef.current = false
+      return
+    }
 
     let frame = 0
     const step = (): void => {
@@ -617,7 +627,10 @@ export default function SubtitleList({
       },
       onTimeBlur: commitTimeEdit,
 
-      onAdd,
+      onAdd: (afterId: string) => {
+        skipFollowRef.current = true
+        onAdd(afterId)
+      },
       onMerge,
       onSpeakerSave
     }),
