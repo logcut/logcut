@@ -2,7 +2,7 @@ import { randomId } from '@logcut/core'
 import fs from 'node:fs'
 import path from 'node:path'
 import { isSupportedMediaFile } from '../shared/media'
-import { extractPoster, probeMedia } from './ffmpeg'
+import { extractFilmstrip, extractPoster, extractWaveform, probeMedia } from './ffmpeg'
 import {
   addAsset,
   DEFAULT_PROJECT_NAME,
@@ -10,6 +10,7 @@ import {
   renameProject,
   thumbnailPath,
   updateAsset,
+  waveformPath,
   type MediaAsset,
   type ProjectFile
 } from './projects'
@@ -35,23 +36,44 @@ function posterOffsetMs(durationMs: number): number {
 }
 
 /**
- * A poster is decoration. Failing to produce one must never surface as an
- * import error, so this runs detached and the card falls back to a placeholder.
+ * Poster, filmstrip and waveform are all decoration: the card falls back to a
+ * placeholder and the timeline to a plain block. None may surface as an import
+ * error, so each runs detached and only records itself once it succeeds.
+ *
+ * They are sequential rather than parallel — three ffmpeg processes over the
+ * same multi-gigabyte file compete for the same disk, and nothing is waiting
+ * on them.
  */
-function generatePoster(projectId: string, asset: MediaAsset): void {
+function generateArtwork(projectId: string, asset: MediaAsset): void {
   if (asset.durationMs === 0) return
-  const fileName = `${asset.id}.jpg`
-  void extractPoster(
-    asset.path,
-    posterOffsetMs(asset.durationMs),
-    thumbnailPath(projectId, fileName)
-  )
-    .then(() => {
-      updateAsset(projectId, asset.id, { thumbnail: fileName })
-    })
-    .catch((error: unknown) => {
-      console.warn(`[media-import] poster failed for ${asset.fileName}:`, error)
-    })
+
+  const record = (patch: Partial<MediaAsset>) => (): void => {
+    updateAsset(projectId, asset.id, patch)
+  }
+  const warn =
+    (what: string) =>
+    (error: unknown): void => {
+      console.warn(`[media-import] ${what} failed for ${asset.fileName}:`, error)
+    }
+
+  const poster = `${asset.id}.jpg`
+  const filmstrip = `${asset.id}-strip.jpg`
+  const waveform = `${asset.id}.png`
+
+  void extractPoster(asset.path, posterOffsetMs(asset.durationMs), thumbnailPath(projectId, poster))
+    .then(record({ thumbnail: poster }), warn('poster'))
+    .then(() =>
+      extractFilmstrip(asset.path, asset.durationMs, thumbnailPath(projectId, filmstrip)).then(
+        record({ filmstrip }),
+        warn('filmstrip')
+      )
+    )
+    .then(() =>
+      extractWaveform(asset.path, waveformPath(projectId, waveform)).then(
+        record({ waveform }),
+        warn('waveform')
+      )
+    )
 }
 
 /**
@@ -118,7 +140,7 @@ export async function importMedia(
     project = renameProject(projectId, path.parse(first.fileName).name) ?? project
   }
 
-  for (const asset of added) generatePoster(projectId, asset)
+  for (const asset of added) generateArtwork(projectId, asset)
 
   return { project, rejected }
 }

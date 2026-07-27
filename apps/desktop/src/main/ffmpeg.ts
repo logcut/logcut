@@ -160,6 +160,72 @@ export async function probeMedia(filePath: string): Promise<MediaProbe> {
   }
 }
 
+/** Frames in a filmstrip, and the height each is scaled to. */
+const FILMSTRIP_FRAMES = 40
+const STRIP_HEIGHT = 64
+
+/**
+ * A row of evenly spaced frames, tiled into one wide JPEG for the timeline's
+ * media track. One image rather than N keeps it to a single ffmpeg call and a
+ * single request from the renderer, which then just stretches it to the track.
+ *
+ * `-skip_frame nokey` is what makes this affordable: decoding every frame of a
+ * 1.7 GB file to sample 40 of them took 20s, keyframes only takes 6s. The
+ * `select` expression is still needed on top — taking the first 40 keyframes
+ * outright would cover only the opening minute of a densely-keyframed file.
+ */
+export async function extractFilmstrip(
+  filePath: string,
+  durationMs: number,
+  outPath: string
+): Promise<void> {
+  if (durationMs <= 0) throw new Error('Cannot build a filmstrip without a duration')
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  const intervalSeconds = durationMs / 1000 / FILMSTRIP_FRAMES
+  await runFfmpeg([
+    '-y',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-skip_frame',
+    'nokey',
+    '-i',
+    filePath,
+    '-fps_mode',
+    'passthrough',
+    '-vf',
+    `select='isnan(prev_selected_t)+gte(t-prev_selected_t\\,${intervalSeconds.toFixed(3)})',` +
+      `scale=-1:${STRIP_HEIGHT},tile=${FILMSTRIP_FRAMES}x1`,
+    '-frames:v',
+    '1',
+    outPath
+  ])
+}
+
+/**
+ * The audio envelope as a white-on-transparent PNG, coloured by the renderer
+ * with a CSS mask so it follows the theme.
+ *
+ * ffmpeg's showwavespic draws it directly — computing peaks here would mean
+ * piping raw PCM through Node for no gain.
+ */
+export async function extractWaveform(filePath: string, outPath: string): Promise<void> {
+  fs.mkdirSync(path.dirname(outPath), { recursive: true })
+  await runFfmpeg([
+    '-y',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-i',
+    filePath,
+    '-filter_complex',
+    `[0:a]aformat=channel_layouts=mono,showwavespic=s=2000x${STRIP_HEIGHT}:colors=white`,
+    '-frames:v',
+    '1',
+    outPath
+  ])
+}
+
 /** Write a single frame as JPEG, for project cards. */
 export async function extractPoster(
   filePath: string,

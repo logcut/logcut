@@ -33,6 +33,10 @@ export interface MediaAsset {
   addedAt: number
   /** File name inside <projectDir>/thumbs/, absent until a poster exists. */
   thumbnail?: string
+  /** Timeline strip of frames, in <projectDir>/thumbs/. Absent until built. */
+  filmstrip?: string
+  /** Audio envelope PNG, in <projectDir>/waveforms/. Absent until built. */
+  waveform?: string
   transcriptStatus: StoredTranscriptStatus
   /** configCacheKey of the language config the stored transcript came from. */
   transcriptConfigKey?: string
@@ -76,6 +80,10 @@ function rawPath(id: string, assetId: string): string {
 
 export function thumbnailPath(id: string, fileName: string): string {
   return path.join(projectDir(id), 'thumbs', fileName)
+}
+
+export function waveformPath(id: string, fileName: string): string {
+  return path.join(projectDir(id), 'waveforms', fileName)
 }
 
 /**
@@ -170,6 +178,8 @@ export function removeAsset(id: string, assetId: string): ProjectFile | null {
   fs.rmSync(transcriptPath(id, assetId), { force: true })
   fs.rmSync(rawPath(id, assetId), { force: true })
   if (asset.thumbnail) fs.rmSync(thumbnailPath(id, asset.thumbnail), { force: true })
+  if (asset.filmstrip) fs.rmSync(thumbnailPath(id, asset.filmstrip), { force: true })
+  if (asset.waveform) fs.rmSync(waveformPath(id, asset.waveform), { force: true })
 
   return update(id, (current) => {
     current.assets = current.assets.filter((candidate) => candidate.id !== assetId)

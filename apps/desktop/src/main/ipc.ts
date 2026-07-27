@@ -59,6 +59,12 @@ function toAssetSummary(projectId: string, asset: projects.MediaAsset): MediaAss
     thumbnailUrl: asset.thumbnail
       ? mediaUrlIfPresent(projects.thumbnailPath(projectId, asset.thumbnail))
       : null,
+    filmstripUrl: asset.filmstrip
+      ? mediaUrlIfPresent(projects.thumbnailPath(projectId, asset.filmstrip))
+      : null,
+    waveformUrl: asset.waveform
+      ? mediaUrlIfPresent(projects.waveformPath(projectId, asset.waveform))
+      : null,
     missing: state.missing,
     stale: state.stale,
     transcriptStatus: asset.transcriptStatus

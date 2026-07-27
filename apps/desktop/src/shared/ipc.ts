@@ -43,6 +43,10 @@ export interface MediaAssetSummary {
   mediaUrl: string
   /** Poster frame URL, null until one has been generated. */
   thumbnailUrl: string | null
+  /** Row of frames for the timeline's media track; null until generated. */
+  filmstripUrl: string | null
+  /** White-on-transparent audio envelope, coloured by CSS; null until generated. */
+  waveformUrl: string | null
   /** The file is no longer at `path`. */
   missing: boolean
   /** Present but changed since import: transcript and poster may not match. */

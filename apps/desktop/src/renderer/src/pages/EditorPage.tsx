@@ -260,6 +260,8 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
             activeUtteranceId={activeUtteranceId}
             videoRef={videoRef}
             assetName={activeAsset?.fileName ?? null}
+            filmstripUrl={activeAsset?.filmstripUrl ?? null}
+            waveformUrl={activeAsset?.waveformUrl ?? null}
             onEditSubtitlesAt={openSubtitlesAt}
           />
         </Panel>
