@@ -15,7 +15,7 @@ export default function ProjectCard({ project, onOpen, onDelete }: ProjectCardPr
     <div
       role="button"
       tabIndex={0}
-      className="group relative cursor-pointer overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-accent"
+      className="group relative cursor-pointer overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary"
       onClick={() => onOpen(project.id)}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onOpen(project.id)

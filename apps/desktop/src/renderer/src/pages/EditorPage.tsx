@@ -5,7 +5,7 @@ import {
   setUtteranceText
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
-import { Film } from 'lucide-react'
+import { Captions, Film } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
@@ -176,12 +176,19 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                 onValueChange={setTab}
                 className="flex min-h-0 flex-1 flex-col gap-0"
               >
-                <div className="shrink-0 p-inset pb-0">
-                  <TabsList className="w-full">
-                    <TabsTrigger value="media">Media</TabsTrigger>
-                    <TabsTrigger value="subtitle">Subtitles</TabsTrigger>
-                  </TabsList>
-                </div>
+                {/* An icon rail rather than two half-width pills: this is the
+                    panel every future tool arrives in, so it has to stay
+                    readable at a dozen entries. */}
+                <TabsList>
+                  <TabsTrigger value="media">
+                    <Film size={18} />
+                    Media
+                  </TabsTrigger>
+                  <TabsTrigger value="subtitle">
+                    <Captions size={18} />
+                    Subtitles
+                  </TabsTrigger>
+                </TabsList>
                 <TabsContent value="media" className="flex min-h-0 flex-col">
                   <MediaTab
                     assets={project?.assets ?? []}

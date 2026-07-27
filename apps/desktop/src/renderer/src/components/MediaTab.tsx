@@ -32,7 +32,7 @@ export default function MediaTab({
                 role="button"
                 tabIndex={0}
                 className={`group flex cursor-pointer items-center gap-component rounded-lg border p-component transition-colors ${
-                  active ? 'border-accent bg-accent/10' : 'border-border hover:border-input'
+                  active ? 'border-primary bg-primary/10' : 'border-border hover:border-input'
                 }`}
                 onClick={() => onSelect(asset.id)}
                 onKeyDown={(event) => {
