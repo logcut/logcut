@@ -1,18 +1,13 @@
 import {
+  DEFAULT_CAPTION_STYLES,
+  DEFAULT_MAX_CHARS,
   findNearestUtteranceIndex,
-  removeUtterances,
   findUtteranceIndexAt,
-  insertUtteranceAfter,
-  mergeUtterances,
   nextSpeakerId,
-  replaceAllText,
-  segmentTranscript,
-  setUtteranceSpeaker,
-  setUtteranceText,
-  setUtteranceTime,
+  resolveCaptionStyle,
   speakerIdsOf
 } from '@logcut/core'
-import type { Transcript, Utterance } from '@logcut/core'
+import type { CommandResult, Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
@@ -28,6 +23,8 @@ import VideoPlayer from '@/components/VideoPlayer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useProject } from '@/hooks/useProject'
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback'
+import { useCaptionFonts } from '@/hooks/useCaptionFonts'
+import { captionFontStack as captionFontStackFor } from '@/lib/caption-fonts'
 import { layUtterances } from '@/lib/timeline'
 import type { MediaAssetSummary } from '../../../shared/ipc'
 
@@ -101,8 +98,9 @@ export default function EditorPage({
     removeClips,
     rename,
     transcribe,
-    applyTranscript,
-    applyTranscripts,
+    setMaxChars,
+    setCaptionStyles,
+    dispatch,
     undo,
     canUndo,
     canRedo,
@@ -150,6 +148,7 @@ export default function EditorPage({
     )
   )
   const videoRef = useRef<HTMLVideoElement>(null)
+  const captionFonts = useCaptionFonts()
 
   const clips = useMemo(() => project?.timeline ?? [], [project])
   const assets = useMemo(() => project?.assets ?? [], [project])
@@ -300,6 +299,16 @@ export default function EditorPage({
     [subtitleTranscript]
   )
 
+  /**
+   * The caption style, resolved. `base` is all that is settable today, but
+   * resolving through the core means per-speaker and per-line overrides start
+   * working the moment there is UI for them, rather than needing this read to
+   * be rewritten.
+   */
+  const captionStyles = project?.captionStyles ?? DEFAULT_CAPTION_STYLES
+  const captionStyle = resolveCaptionStyle(captionStyles)
+  const captionFontStack = captionFontStackFor(captionStyle.fontFamily, captionFonts)
+
   const captionText =
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
 
@@ -378,77 +387,83 @@ export default function EditorPage({
     openSubtitles()
   }
 
+  /**
+   * Put the last line a batch touched in view.
+   *
+   * Offered rather than applied: whether an edit should move the playhead
+   * depends on who asked for it, not on what it did. A user editing a line is
+   * already looking at it — the seek would be a no-op at best and an
+   * interruption at worst — while an assistant editing ten lines has to show
+   * where it has been. So the same one function serves both, and each caller
+   * decides whether to follow.
+   *
+   * The core reports times on the transcript's own clock, so the offset of the
+   * clip the asset is laid down in goes back on here.
+   */
+  const followFocus = useCallback(
+    (result: CommandResult): void => {
+      const focus = [...result.outcomes].reverse().find((outcome) => outcome.focus)?.focus
+      if (!focus) return
+      const clip = clips.find((candidate) => candidate.assetId === focus.assetId)
+      seekTo((clip?.startMs ?? 0) + focus.timeMs)
+    },
+    [clips, seekTo]
+  )
+
   const handleEditSave = useCallback(
     (id: string, text: string): void => {
-      if (!subtitleTranscript || !subtitleAssetId) return
-      applyTranscript(subtitleAssetId, setUtteranceText(subtitleTranscript, id, text))
+      if (!subtitleAssetId) return
+      dispatch([{ kind: 'subtitle.setText', assetId: subtitleAssetId, id, text }])
     },
-    [applyTranscript, subtitleAssetId, subtitleTranscript]
+    [dispatch, subtitleAssetId]
   )
 
   const handleSpeakerSave = useCallback(
     (id: string, speakerId: string): void => {
-      if (!subtitleTranscript || !subtitleAssetId) return
-      const next = setUtteranceSpeaker(subtitleTranscript, id, speakerId)
-      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+      if (!subtitleAssetId) return
+      dispatch([{ kind: 'subtitle.setSpeaker', assetId: subtitleAssetId, id, speakerId }])
     },
-    [applyTranscript, subtitleAssetId, subtitleTranscript]
+    [dispatch, subtitleAssetId]
   )
 
   const handleTimeSave = useCallback(
     (id: string, edge: 'start' | 'end', timeMs: number): void => {
-      if (!subtitleTranscript || !subtitleAssetId) return
-      const next = setUtteranceTime(subtitleTranscript, id, edge, timeMs)
-      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+      if (!subtitleAssetId) return
+      dispatch([{ kind: 'subtitle.setTime', assetId: subtitleAssetId, id, edge, timeMs }])
     },
-    [applyTranscript, subtitleAssetId, subtitleTranscript]
+    [dispatch, subtitleAssetId]
   )
 
   /**
-   * Add and merge are offered only across a silence, so both core functions
-   * return the transcript unchanged when there is nothing to do — comparing by
-   * identity keeps a no-op out of the undo history.
+   * The one edit that follows its own focus: a new line is empty, and the first
+   * thing anyone does with an empty subtitle is look at the frame it belongs
+   * to. Leaving the playhead where it was would put a blank row in the list
+   * with no way to know what should go in it.
    */
   const handleAdd = useCallback(
     (afterId: string): void => {
-      if (!subtitleTranscript || !subtitleAssetId) return
-      const next = insertUtteranceAfter(subtitleTranscript, afterId)
-      if (next === subtitleTranscript) return
-      applyTranscript(subtitleAssetId, next)
-
-      // Move to where the line was just put. Without this the new line appears
-      // in the list while the picture and the playhead stay wherever they were,
-      // and the first thing anyone does with an empty subtitle is look at the
-      // frame it belongs to.
-      //
-      // The new line starts exactly where the previous one ended (see
-      // core/transcript.md), read off the transcript that produced it rather
-      // than found again in the one just built — same value, one lookup.
-      const before = subtitleTranscript.utterances.find((line) => line.id === afterId)
-      if (before) seekTo((subtitleClip?.startMs ?? 0) + before.end)
+      if (!subtitleAssetId) return
+      followFocus(dispatch([{ kind: 'subtitle.insertAfter', assetId: subtitleAssetId, afterId }]))
     },
-    [applyTranscript, seekTo, subtitleAssetId, subtitleClip, subtitleTranscript]
+    [dispatch, followFocus, subtitleAssetId]
   )
 
   const handleMerge = useCallback(
     (firstId: string): void => {
-      if (!subtitleTranscript || !subtitleAssetId) return
-      const next = mergeUtterances(subtitleTranscript, firstId)
-      if (next !== subtitleTranscript) applyTranscript(subtitleAssetId, next)
+      if (!subtitleAssetId) return
+      // No follow: merging produces nothing new to look at, and staying put
+      // interrupts less.
+      dispatch([{ kind: 'subtitle.merge', assetId: subtitleAssetId, firstId }])
     },
-    [applyTranscript, subtitleAssetId, subtitleTranscript]
+    [dispatch, subtitleAssetId]
   )
 
-  const handleResegment = (): void => {
-    if (!subtitleTranscript || !subtitleAssetId) return
-    applyTranscript(subtitleAssetId, segmentTranscript(subtitleTranscript))
-  }
-
   const handleReplaceAll = (find: string, replace: string): number => {
-    if (!subtitleTranscript || !subtitleAssetId) return 0
-    const result = replaceAllText(subtitleTranscript, find, replace)
-    if (result.count > 0) applyTranscript(subtitleAssetId, result.transcript)
-    return result.count
+    if (!subtitleAssetId) return 0
+    const outcome = dispatch([
+      { kind: 'subtitle.replaceAll', assetId: subtitleAssetId, find, replace }
+    ]).outcomes[0]
+    return outcome?.kind === 'subtitle.replaceAll' ? outcome.count : 0
   }
 
   /**
@@ -461,9 +476,10 @@ export default function EditorPage({
    */
   /**
    * The band hands back timeline ids; a transcript only knows its own. So the
-   * lines are grouped by the asset they came from and each transcript is
-   * rewritten once — a selection can span several clips, and two edits to the
-   * same transcript in a row would each start from the pre-edit copy.
+   * lines are grouped by the asset they came from, one command each.
+   *
+   * The whole deletion is one batch and therefore one history entry: the band
+   * took them in a single gesture and undo should give them back the same way.
    */
   const handleRemoveUtterances = (timelineIds: string[]): void => {
     const byAsset = new Map<string, string[]>()
@@ -472,18 +488,9 @@ export default function EditorPage({
       if (!line) continue
       byAsset.set(line.assetId, [...(byAsset.get(line.assetId) ?? []), line.sourceId])
     }
-    // One history entry for the whole deletion, not one per asset: the band
-    // took them in a single gesture and undo should give them back the same way.
-    const changes = [...byAsset]
-      .map(([assetId, sourceIds]) => ({
-        assetId,
-        transcript: removeUtterances(
-          transcripts[assetId] ?? { audioDurationMs: 0, utterances: [] },
-          sourceIds
-        )
-      }))
-      .filter((change) => change.transcript !== transcripts[change.assetId])
-    applyTranscripts(changes)
+    dispatch(
+      [...byAsset].map(([assetId, ids]) => ({ kind: 'subtitle.remove' as const, assetId, ids }))
+    )
     setSelectedUtteranceIds([])
   }
 
@@ -525,25 +532,24 @@ export default function EditorPage({
     edge: 'start' | 'end',
     changes: { id: string; timeMs: number }[]
   ): void => {
-    // Grouped by asset and written once each, so a drag over lines from
-    // several clips is one edit and one undo step. Within a transcript the
-    // changes chain, because each call returns a new one.
-    const byAsset = new Map<string, Transcript>()
-    for (const change of changes) {
-      const line = utterances.find((utterance) => utterance.id === change.id)
-      if (!line) continue
-      const transcript = byAsset.get(line.assetId) ?? transcripts[line.assetId]
-      if (!transcript) continue
-      const clip = clips.find((candidate) => candidate.id === line.clipId)
-      byAsset.set(
-        line.assetId,
-        setUtteranceTime(transcript, line.sourceId, edge, change.timeMs - (clip?.startMs ?? 0))
-      )
-    }
-    applyTranscripts(
-      [...byAsset]
-        .filter(([assetId, transcript]) => transcript !== transcripts[assetId])
-        .map(([assetId, transcript]) => ({ assetId, transcript }))
+    // One command per line, all in one batch: a drag over lines from several
+    // clips is one gesture and one undo step. Two edits to the same transcript
+    // chain inside the batch rather than each starting from the pre-edit copy.
+    dispatch(
+      changes.flatMap((change) => {
+        const line = utterances.find((utterance) => utterance.id === change.id)
+        if (!line) return []
+        const clip = clips.find((candidate) => candidate.id === line.clipId)
+        return [
+          {
+            kind: 'subtitle.setTime' as const,
+            assetId: line.assetId,
+            id: line.sourceId,
+            edge,
+            timeMs: change.timeMs - (clip?.startMs ?? 0)
+          }
+        ]
+      })
     )
   }
 
@@ -644,6 +650,7 @@ export default function EditorPage({
                       asset={subtitleAssetId ? assetOf(subtitleAssetId) : null}
                       transcript={subtitleTranscript}
                       asr={asr}
+                      maxChars={project?.maxChars ?? DEFAULT_MAX_CHARS}
                       onTranscribe={(config, force) => {
                         if (subtitleAssetId) void transcribe(subtitleAssetId, config, force)
                       }}
@@ -652,6 +659,7 @@ export default function EditorPage({
                         subtitleAssetId ? exportSrt(subtitleAssetId) : Promise.resolve(null)
                       }
                       onOpenSettings={onOpenSettings}
+                      onMaxCharsChange={setMaxChars}
                     />
                   </TabsContent>
                 </Tabs>
@@ -672,6 +680,7 @@ export default function EditorPage({
                   onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}
                   onEnded={playback.advance}
                   captionText={captionText}
+                  captionFontStack={captionFontStack}
                 />
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">
@@ -744,8 +753,14 @@ export default function EditorPage({
                   nextSpeakerId={newSpeakerId}
                   onSpeakerSave={handleSpeakerSave}
                   onUndo={undo}
-                  onResegment={handleResegment}
                   onReplaceAll={handleReplaceAll}
+                  style={captionStyle}
+                  onFontChange={(fontFamily) => {
+                    void setCaptionStyles({
+                      ...captionStyles,
+                      base: { ...captionStyles.base, fontFamily }
+                    })
+                  }}
                 />
               ) : (
                 <div className="flex min-h-0 flex-1 items-center justify-center p-inset">

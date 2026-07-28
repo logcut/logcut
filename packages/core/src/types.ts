@@ -30,6 +30,24 @@ export interface Transcript {
   utterances: Utterance[]
 }
 
+/**
+ * Which line an edit landed on — what a caller with a screen would put in
+ * view afterwards.
+ *
+ * It is a fact about the edit, not an instruction: whether to move the
+ * playhead there is the caller's decision, and a caller without a screen
+ * ignores it entirely.
+ */
+export interface EditFocus {
+  assetId: string
+  utteranceId: string
+  /**
+   * On the transcript's own clock. A caller placing this on a timeline adds
+   * the offset of the clip the asset is laid down in.
+   */
+  timeMs: number
+}
+
 /** User-facing transcription language choice. */
 export type LanguageOption = 'auto' | 'english' | 'simplified' | 'traditional'
 

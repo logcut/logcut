@@ -1,13 +1,26 @@
 import { defaultOption, languageOptionToConfig, orderedOptions } from '@logcut/core'
 import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
-import { Download, Loader2, PencilLine } from 'lucide-react'
+import { ChevronRight, CircleHelp, Download, Loader2, PencilLine } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import LanguageSelect from '@/components/LanguageSelect'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Input } from '@/components/ui/input'
+import { Slider } from '@/components/ui/slider'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { AsrState } from '@/hooks/useProject'
-import type { MediaAssetSummary, TranscribePhase } from '../../../shared/ipc'
+import {
+  MAX_CHARS_MAX,
+  MAX_CHARS_MIN,
+  MAX_CHARS_SLIDER_MAX,
+  type MediaAssetSummary,
+  type TranscribePhase
+} from '../../../shared/ipc'
+
+const LINE_LENGTH_HINT =
+  'The longest a subtitle line may get before it is split. Changing it re-splits the subtitles you already have — locally and for free — but rebuilds each line from its words, discarding manual text edits.'
 
 function describePhase(phase: TranscribePhase): string {
   return phase === 'extracting' ? 'Extracting audio…' : 'Transcribing…'
@@ -18,10 +31,45 @@ function describePhase(phase: TranscribePhase): string {
  * its own separator rather than the list drawing them, so a row that renders
  * conditionally never leaves a stray line behind.
  */
-function Field({ label, children }: { label: string; children: ReactNode }): JSX.Element {
+/** A setting's name, with an optional hint. Shared by the rows in the list and
+ *  the ones inside Advanced, which are laid out differently but named alike. */
+function FieldName({ label, hint }: { label: string; hint?: string }): JSX.Element {
+  return (
+    <span className="flex shrink-0 items-center gap-inline text-label text-foreground">
+      {label}
+      {hint && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {/* A button, not a bare icon: a hint has to be reachable without a
+                pointer, and only a focusable element can be. */}
+            <button
+              type="button"
+              aria-label={`About ${label.toLowerCase()}`}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <CircleHelp className="size-icon-sm" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">{hint}</TooltipContent>
+        </Tooltip>
+      )}
+    </span>
+  )
+}
+
+function Field({
+  label,
+  hint,
+  children
+}: {
+  label: string
+  /** Shown on a help icon beside the name. For anything a name cannot carry. */
+  hint?: string
+  children: ReactNode
+}): JSX.Element {
   return (
     <div className="flex flex-col gap-component border-b border-border py-stack">
-      <span className="text-label text-foreground">{label}</span>
+      <FieldName label={label} hint={hint} />
       {children}
     </div>
   )
@@ -31,11 +79,15 @@ interface SubtitleTabProps {
   asset: MediaAssetSummary | null
   transcript: Transcript | null
   asr: AsrState
+  /** Longest subtitle line, in characters; a project-wide setting. */
+  maxChars: number
   onTranscribe(config: TranscribeConfig, force: boolean): void
   /** Switch the tab to its editing face. */
   onEdit(): void
   onExportSrt(): Promise<string | null>
   onOpenSettings(): void
+  /** Resolves to the assets that could not be re-split, by id. */
+  onMaxCharsChange(maxChars: number): Promise<string[]>
 }
 
 /**
@@ -49,15 +101,31 @@ export default function SubtitleTab({
   asset,
   transcript,
   asr,
+  maxChars,
   onTranscribe,
   onEdit,
   onExportSrt,
-  onOpenSettings
+  onOpenSettings,
+  onMaxCharsChange
 }: SubtitleTabProps): JSX.Element {
   const [languageOrder, setLanguageOrder] = useState<LanguageOption[]>(orderedOptions('en-US'))
   const [language, setLanguage] = useState<LanguageOption>('auto')
   const [replace, setReplace] = useState(false)
   const [message, setMessage] = useState('')
+  /** What the slider shows while it is being dragged; the project's value
+   *  otherwise. Re-splitting on every frame of a drag would rewrite every
+   *  transcript on disk dozens of times for one gesture. */
+  const [lineLength, setLineLength] = useState(maxChars)
+  /** The Advanced number box while it is being typed in. Kept as a string so a
+   *  half-typed or momentarily empty value is not coerced into a number the
+   *  slider would then jump to. */
+  const [typedLength, setTypedLength] = useState(String(maxChars))
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  useEffect(() => {
+    setLineLength(maxChars)
+    setTypedLength(String(maxChars))
+  }, [maxChars])
 
   useEffect(() => {
     void (async () => {
@@ -71,6 +139,38 @@ export default function SubtitleTab({
   const chooseLanguage = (option: LanguageOption): void => {
     setLanguage(option)
     void window.logcut.setLanguagePreference(option)
+  }
+
+  /** Fires when the drag ends, not while it moves. */
+  const commitLineLength = async (next: number): Promise<void> => {
+    if (next === maxChars) return
+    setMessage('')
+    try {
+      const skipped = await onMaxCharsChange(next)
+      if (skipped.length > 0) {
+        setMessage(
+          `${skipped.length} clip${skipped.length === 1 ? '' : 's'} kept the lines ${skipped.length === 1 ? 'it has' : 'they have'} — recognized before the original response was archived. Recognize again to re-split.`
+        )
+      }
+    } catch {
+      setMessage('Could not change the line length.')
+      setLineLength(maxChars)
+    }
+  }
+
+  /** Commit what was typed, or put the box back to the real value. Silence is
+   *  the right answer to nonsense here — the field is not a form to be
+   *  validated, it is a number that either parses or does not. */
+  const commitTypedLength = (): void => {
+    const parsed = Number.parseInt(typedLength, 10)
+    if (Number.isNaN(parsed)) {
+      setTypedLength(String(maxChars))
+      return
+    }
+    const next = Math.min(MAX_CHARS_MAX, Math.max(MAX_CHARS_MIN, parsed))
+    setTypedLength(String(next))
+    setLineLength(next)
+    void commitLineLength(next)
   }
 
   const exportSrt = async (): Promise<void> => {
@@ -100,6 +200,62 @@ export default function SubtitleTab({
         <Field label="Source language">
           <LanguageSelect options={languageOrder} value={language} onChange={chooseLanguage} />
         </Field>
+
+        {/* Collapsed by default: everything in here has a working value that
+            most cuts never need to touch, and an open panel of them reads as
+            work to be done. Line length lives in here rather than above it —
+            the tuned default is right for nearly every cut, and a control that
+            good is noise in the main list. */}
+        <Collapsible
+          open={advancedOpen}
+          onOpenChange={setAdvancedOpen}
+          className="border-b border-border py-stack"
+        >
+          <CollapsibleTrigger className="flex w-full items-center gap-inline text-label text-muted-foreground transition-colors hover:text-foreground">
+            <ChevronRight
+              className={`size-icon-sm transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+            />
+            Advanced
+          </CollapsibleTrigger>
+
+          {/* Applies to the next recognition and, right away, to the subtitles
+              already in hand: re-splitting reads the archived provider response
+              and never touches the network, so it is free to be tried again and
+              again. What it costs is manual text edits, which is why that
+              warning is on the hint rather than left to be discovered.
+
+              The slider stops at MAX_CHARS_SLIDER_MAX and the box does not:
+              spending slider travel on lengths nobody drags to makes the useful
+              range harder to hit, but a number nobody drags to is still a
+              number somebody may need. */}
+          <CollapsibleContent className="flex items-center gap-component pt-stack">
+            <FieldName label="Line length" hint={LINE_LENGTH_HINT} />
+            <Slider
+              value={[Math.min(lineLength, MAX_CHARS_SLIDER_MAX)]}
+              min={MAX_CHARS_MIN}
+              max={MAX_CHARS_SLIDER_MAX}
+              step={1}
+              onValueChange={([next]) => {
+                setLineLength(next)
+                setTypedLength(String(next))
+              }}
+              onValueCommit={([next]) => void commitLineLength(next)}
+            />
+            <Input
+              type="number"
+              min={MAX_CHARS_MIN}
+              max={MAX_CHARS_MAX}
+              value={typedLength}
+              aria-label="Line length in characters"
+              className="h-control-sm w-14 shrink-0 text-right"
+              onChange={(event) => setTypedLength(event.target.value)}
+              onBlur={commitTypedLength}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+              }}
+            />
+          </CollapsibleContent>
+        </Collapsible>
 
         <div className="flex flex-col gap-component py-stack">
           {/* The only other way in is a double-click on the timeline, which

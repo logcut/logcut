@@ -17,6 +17,8 @@ interface VideoPlayerProps {
   onEnded(): void
   /** Text of the utterance playing now; null or empty renders no caption. */
   captionText: string | null
+  /** CSS font-family for the caption; resolved by the caller. */
+  captionFontStack: string
 }
 
 /**
@@ -43,7 +45,8 @@ export default function VideoPlayer({
   durationMs,
   onTimeUpdate,
   onEnded,
-  captionText
+  captionText,
+  captionFontStack
 }: VideoPlayerProps): JSX.Element {
   /** Fullscreen takes the controls with the picture, so it is the whole pane. */
   const paneRef = useRef<HTMLDivElement>(null)
@@ -127,7 +130,13 @@ export default function VideoPlayer({
               className="flex items-end justify-center px-inset pb-block"
               style={{ width: frame.width, height: frame.height }}
             >
-              <span className="max-w-full rounded-panel bg-black/60 px-stack py-inline text-center text-body-lg leading-snug text-white [text-wrap:balance]">
+              {/* The one place an arbitrary font-family is set from data:
+                  the caption is the user's own type choice, not part of the
+                  application's own type scale. */}
+              <span
+                className="max-w-full rounded-panel bg-black/60 px-stack py-inline text-center text-body-lg leading-snug text-white [text-wrap:balance]"
+                style={{ fontFamily: captionFontStack }}
+              >
                 {captionText}
               </span>
             </div>

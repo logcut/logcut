@@ -39,6 +39,10 @@ const api: LogcutApi = {
     ipcRenderer.invoke('transcript:save', projectId, assetId, transcript),
   transcribeAsset: (projectId, assetId, options) =>
     ipcRenderer.invoke('transcript:transcribe', projectId, assetId, options),
+  setMaxChars: (projectId, maxChars) =>
+    ipcRenderer.invoke('transcript:setMaxChars', projectId, maxChars),
+  setCaptionStyles: (projectId, styles) =>
+    ipcRenderer.invoke('project:setCaptionStyles', projectId, styles),
   onTranscribeProgress: (callback) => {
     const listener = (_event: unknown, progress: TranscribeProgress): void => callback(progress)
     ipcRenderer.on('transcribe:progress', listener)

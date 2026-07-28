@@ -1,45 +1,10 @@
-import crypto from 'node:crypto'
 import fs from 'node:fs'
-import type { TranscribeConfig, Transcript, Utterance } from '@logcut/core'
+import { parseVolcanoResponse } from '@logcut/core'
+import type { TranscribeConfig, Transcript } from '@logcut/core'
 
 const FLASH_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash'
 const RESOURCE_ID = 'volc.bigasr.auc_turbo'
 const SUCCESS_STATUS = '20000000'
-
-interface VolcanoWord {
-  text: string
-  start_time: number
-  end_time: number
-}
-
-interface VolcanoUtterance {
-  text: string
-  start_time: number
-  end_time: number
-  additions?: { speaker?: string }
-  words?: VolcanoWord[]
-}
-
-interface VolcanoResponse {
-  audio_info?: { duration?: number }
-  result?: { utterances?: VolcanoUtterance[] }
-}
-
-function mapUtterances(response: VolcanoResponse): Utterance[] {
-  return (response.result?.utterances ?? []).map((utterance) => ({
-    id: crypto.randomUUID(),
-    start: utterance.start_time,
-    end: utterance.end_time,
-    text: utterance.text,
-    speakerId: utterance.additions?.speaker,
-    words: (utterance.words ?? []).map((word) => ({
-      word: word.text,
-      start: word.start_time,
-      end: word.end_time,
-      suspect: false
-    }))
-  }))
-}
 
 /** The mapped transcript plus the untouched provider response, for archival. */
 export interface TranscribeResult {
@@ -102,17 +67,13 @@ export async function transcribeAudio(
     throw new Error(`ASR_FAILED: ${statusCode ?? response.status} ${statusMessage}`)
   }
 
-  const data = (await response.json()) as VolcanoResponse
-  const utterances = mapUtterances(data)
-  if (utterances.length === 0) {
+  // Parsed by the core, which also parses this same body months later when the
+  // archived copy is re-split at a new line length (see core/volcano.ts).
+  const data: unknown = await response.json()
+  const transcript = parseVolcanoResponse(data)
+  if (transcript.utterances.length === 0) {
     throw new Error('ASR_FAILED: The service returned no utterances for this audio')
   }
 
-  return {
-    transcript: {
-      audioDurationMs: data.audio_info?.duration ?? 0,
-      utterances
-    },
-    raw: data
-  }
+  return { transcript, raw: data }
 }

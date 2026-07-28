@@ -1,10 +1,18 @@
-import type { Utterance } from '@logcut/core'
-import { Scissors, Search, Undo2, X } from 'lucide-react'
+import type { CaptionStyle, Utterance } from '@logcut/core'
+import { Search, Undo2, X } from 'lucide-react'
 import { useState } from 'react'
 import type { JSX } from 'react'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
+import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 
 interface SubtitleEditorProps {
   utterances: Utterance[]
@@ -20,8 +28,10 @@ interface SubtitleEditorProps {
   nextSpeakerId: string
   onSpeakerSave(id: string, speakerId: string): void
   onUndo(): void
-  onResegment(): void
   onReplaceAll(find: string, replace: string): number
+  /** The project-wide caption style, already resolved. */
+  style: CaptionStyle
+  onFontChange(fontFamily: string): void
 }
 
 /**
@@ -50,9 +60,11 @@ export default function SubtitleEditor({
   nextSpeakerId,
   onSpeakerSave,
   onUndo,
-  onResegment,
-  onReplaceAll
+  onReplaceAll,
+  style,
+  onFontChange
 }: SubtitleEditorProps): JSX.Element {
+  const fonts = useCaptionFonts()
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
@@ -80,9 +92,6 @@ export default function SubtitleEditor({
           onClick={() => setFindOpen((open) => !open)}
         >
           <Search size={14} />
-        </Button>
-        <Button variant="ghost" size="icon-sm" title="Re-split into lines" onClick={onResegment}>
-          <Scissors size={14} />
         </Button>
         <Button variant="ghost" size="icon-sm" title="Close" onClick={onClose}>
           <X size={14} />
@@ -116,18 +125,43 @@ export default function SubtitleEditor({
       )}
 
       {/* Style settings — the appearance of the captions burned into the
-          picture, which is a property of the whole track rather than of any one
-          line. None of it is built yet, so this is a place, not yet a
-          component: the height is whatever its contents come to, so the
-          controls can arrive without a number here having to be revised.
+          picture. It sits above the list because a setting that governs every
+          line should not be reached by scrolling past the lines it governs.
 
-          It sits above the list because a setting that governs every line
-          should not be reached by scrolling past the lines it governs. */}
-      <section className="shrink-0 border-b border-border p-component">
-        <h2 className="m-0 mb-inline text-caption font-medium text-foreground">Style</h2>
-        <p className="m-0 text-caption font-normal text-muted-foreground">
-          Font, size, colour and position — not built yet.
-        </p>
+          Everything here writes `base`, the whole project's captions. The
+          stored shape already carries per-speaker and per-line overrides and
+          resolves them (see packages/core/src/caption-style.ts); offering them
+          is UI work, not another change to what is on disk. */}
+      {/* A fixed 40% of the column, not the height of its contents. Size,
+          colour, spacing and alignment are still to come, and a section that
+          grew with each one would move the subtitle list down every time —
+          the list is what the eye returns to, so its top edge stays put.
+
+          A layout proportion rather than a spacing value, which is why it is a
+          bare percentage: no spacing token could express it, and the timeline
+          split above uses the same 40% for the same kind of reason. It scrolls,
+          so the controls are reachable before the section is tall enough. */}
+      <section className="h-[40%] shrink-0 overflow-y-auto border-b border-border p-component">
+        <h2 className="m-0 mb-component text-caption font-medium text-foreground">Style</h2>
+        <div className="flex items-center gap-component">
+          <span className="w-12 shrink-0 text-caption font-normal text-muted-foreground">Font</span>
+          <Select value={style.fontFamily} onValueChange={onFontChange}>
+            <SelectTrigger size="sm" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            {/* Hundreds of rows once the machine's own fonts are in, so the
+                list scrolls rather than growing to the height of the window. */}
+            <SelectContent className="max-h-72">
+              {fonts.map((font) => (
+                // Each row set in the font it offers: the names alone say
+                // nothing about what the caption will look like.
+                <SelectItem key={font.value} value={font.value} style={{ fontFamily: font.stack }}>
+                  {font.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </section>
 
       <SubtitleList

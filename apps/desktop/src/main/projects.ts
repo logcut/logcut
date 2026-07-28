@@ -1,7 +1,9 @@
-import { randomId, type Transcript } from '@logcut/core'
+import { normalizeCaptionStyles, randomId } from '@logcut/core'
+import type { CaptionStyles, Transcript } from '@logcut/core'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import { MAX_CHARS_MAX, MAX_CHARS_MIN } from '../shared/ipc'
 import type { MediaKind, TranscriptStatus } from '../shared/ipc'
 
 /**
@@ -60,6 +62,22 @@ export interface ProjectFile {
    */
   timeline: TimelineClip[]
   assets: MediaAsset[]
+  /**
+   * Longest subtitle line, in characters. Absent in projects written before the
+   * setting existed, which read as the core's default — like `timeline`, an
+   * added field with a safe fallback and therefore no schema bump. Bumping
+   * would make loadProject return null and every existing project vanish.
+   *
+   * A project-level setting rather than a per-asset one: line length is how
+   * this cut reads, and one cut should not change its mind between clips.
+   */
+  maxChars?: number
+  /**
+   * How the captions look. Absent in projects written before it existed, and
+   * every field inside is optional too — `normalizeCaptionStyles` fills in the
+   * rest on load, which is why this needed no schema bump either.
+   */
+  captionStyles?: CaptionStyles
 }
 
 /**
@@ -125,6 +143,7 @@ export function loadProject(id: string): ProjectFile | null {
     // in here is why that change needed no schema bump: every reader past this
     // point can assume the array.
     project.timeline ??= []
+    project.captionStyles = normalizeCaptionStyles(project.captionStyles)
     return project
   } catch {
     return null
@@ -159,6 +178,23 @@ function update(id: string, mutate: (project: ProjectFile) => void): ProjectFile
 export function renameProject(id: string, name: string): ProjectFile | null {
   return update(id, (project) => {
     project.name = name.trim() || DEFAULT_PROJECT_NAME
+  })
+}
+
+export function setCaptionStyles(id: string, styles: CaptionStyles): ProjectFile | null {
+  return update(id, (project) => {
+    // Normalized rather than assigned: this arrives from the renderer, and the
+    // same guarantee that makes an old file safe to open makes this safe to
+    // store.
+    project.captionStyles = normalizeCaptionStyles(styles)
+  })
+}
+
+/** Clamped here rather than trusted from the renderer: this value reaches a
+ *  core function that has no opinion about absurd input. */
+export function setMaxChars(id: string, maxChars: number): ProjectFile | null {
+  return update(id, (project) => {
+    project.maxChars = Math.round(Math.min(MAX_CHARS_MAX, Math.max(MAX_CHARS_MIN, maxChars)))
   })
 }
 
@@ -325,9 +361,28 @@ export function loadTranscript(id: string, assetId: string): Transcript | null {
   }
 }
 
-/** Written once when a transcription completes; never read back so far. */
+/** Written once when a transcription completes, then immutable. */
 export function saveRaw(id: string, assetId: string, raw: unknown): void {
   writeJsonAtomic(rawPath(id, assetId), raw)
+}
+
+/**
+ * The archived provider response, or null when this asset has none.
+ *
+ * Re-splitting the subtitles at a new line length reads this rather than the
+ * stored transcript: the stored one is already split, and the splitter works
+ * per utterance without ever merging across them, so re-splitting it could only
+ * ever make lines shorter. The original long utterances are only in here.
+ *
+ * Null for anything transcribed before this file was archived — `hasRaw` on the
+ * asset records which is which.
+ */
+export function loadRaw(id: string, assetId: string): unknown | null {
+  try {
+    return JSON.parse(fs.readFileSync(rawPath(id, assetId), 'utf8')) as unknown
+  } catch {
+    return null
+  }
 }
 
 export interface AssetState {

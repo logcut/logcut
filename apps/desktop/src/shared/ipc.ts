@@ -1,4 +1,4 @@
-import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
+import type { CaptionStyles, LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
 
 /**
  * Contracts for the Electron main <-> renderer boundary. These are shell
@@ -11,6 +11,26 @@ export interface SettingsStatus {
   /** Last 4 characters of the configured key, for display only. */
   apiKeyTail: string
 }
+
+/**
+ * Bounds for the subtitle line length. Here rather than in either end of the
+ * bridge because both need them and they must agree: the controls offer these
+ * ranges, and main clamps rather than trusting what arrives.
+ *
+ * Two ceilings, deliberately. `MAX_CHARS_SLIDER_MAX` is where the slider ends —
+ * past it a line stops fitting across a portrait video, so the common range
+ * should not spend half its travel on lengths nobody drags to. `MAX_CHARS_MAX`
+ * is the real limit, reachable by typing a number under Advanced: a wide
+ * landscape cut, or a language that counts characters differently, has every
+ * right to a longer line, and a slider bound is a presentation choice rather
+ * than a statement about what is valid.
+ *
+ * The floor is where a Chinese line stops being a line and starts being a
+ * stutter of two or three characters per card.
+ */
+export const MAX_CHARS_MIN = 8
+export const MAX_CHARS_SLIDER_MAX = 40
+export const MAX_CHARS_MAX = 200
 
 export type TranscribePhase = 'extracting' | 'transcribing'
 
@@ -102,6 +122,11 @@ export interface ProjectDetail {
   /** Clips laid end to end, in order; empty until one is dragged there. */
   timeline: TimelineClipSummary[]
   assets: MediaAssetSummary[]
+  /** Longest subtitle line, in characters. Always a number on the wire — main
+   *  fills in the core's default for projects that predate the setting. */
+  maxChars: number
+  /** Always complete on the wire; main normalizes what it read from disk. */
+  captionStyles: CaptionStyles
 }
 
 export type ImportRejectReason = 'UNSUPPORTED' | 'UNREADABLE'
@@ -110,6 +135,18 @@ export interface ImportMediaResult {
   project: ProjectDetail
   /** Paths that could not be imported; the rest still were. */
   rejected: { path: string; reason: ImportRejectReason }[]
+}
+
+/**
+ * Outcome of changing the line length. Carries the re-split transcripts so the
+ * renderer replaces them in one go instead of re-fetching each.
+ */
+export interface ResplitResult {
+  project: ProjectDetail
+  /** Re-split transcripts, keyed by asset id; only the ones that changed. */
+  transcripts: Record<string, Transcript>
+  /** Assets left alone because no provider response was archived for them. */
+  skipped: string[]
 }
 
 export interface TranscribeResult {
@@ -188,6 +225,15 @@ export interface LogcutApi {
     assetId: string,
     options?: { force?: boolean; config?: TranscribeConfig }
   ): Promise<TranscribeResult>
+  /**
+   * Set the longest subtitle line and re-split every transcript that has an
+   * archived provider response. Local and free — it spends no API credit,
+   * which is the whole reason the response is archived.
+   */
+  setMaxChars(projectId: string, maxChars: number): Promise<ResplitResult>
+  /** Set how the captions look. Affects the preview at once; nothing is
+   *  re-split and no transcript is touched. */
+  setCaptionStyles(projectId: string, styles: CaptionStyles): Promise<ProjectDetail>
   /** Subscribe to transcription progress. Returns an unsubscribe function. */
   onTranscribeProgress(callback: (progress: TranscribeProgress) => void): () => void
   /**

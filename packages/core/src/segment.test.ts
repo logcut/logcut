@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { segmentTranscript, segmentUtterance } from './segment.ts'
+import { minCharsFor, segmentTranscript, segmentUtterance } from './segment.ts'
 import type { Utterance, Word } from './types.ts'
 
 /** Build words for a string: one Word per non-punctuation token, 200ms each. */
@@ -90,4 +90,37 @@ test('segmentTranscript flattens all utterances and preserves speaker', () => {
   assert.ok(out.utterances.every((u) => u.speakerId === '1'))
   // Fields other than utterances survive the rewrite.
   assert.equal(out.audioDurationMs, 5000)
+})
+
+test('minChars follows maxChars so the comma rule keeps working when lines shorten', () => {
+  const tokens = ['今', '天', '天', '气', '很', '好', '我', '们', '出', '去', '玩']
+  const u = utterance('今天天气很好，我们出去玩', tokens)
+  // maxChars 8 puts the derived floor at 2, so the comma at 6 chars still cuts.
+  // With the old fixed floor of 6 this comma was already past it and the line
+  // ran on to the ceiling instead.
+  const out = segmentUtterance(u, { maxChars: 8 })
+  assert.deepEqual(
+    out.map((s) => s.text),
+    ['今天天气很好，', '我们出去玩']
+  )
+})
+
+test('minCharsFor never returns a floor that could disable the comma rule', () => {
+  for (let maxChars = 2; maxChars <= 60; maxChars++) {
+    assert.ok(
+      minCharsFor(maxChars) < maxChars,
+      `floor ${minCharsFor(maxChars)} must stay below ceiling ${maxChars}`
+    )
+  }
+})
+
+test('an explicit minChars still overrides the derived one', () => {
+  const u = utterance('你好，世界。', ['你', '好', '世', '界'])
+  // Floor above the comma position: the comma rule cannot fire, so the only
+  // cut left is the full stop.
+  const out = segmentUtterance(u, { maxChars: 20, minChars: 99 })
+  assert.deepEqual(
+    out.map((s) => s.text),
+    ['你好，世界。']
+  )
 })

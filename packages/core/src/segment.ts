@@ -12,11 +12,28 @@ export interface SegmentOptions {
   hardMaxChars?: number
 }
 
+export const DEFAULT_MAX_CHARS = 20
+
 const DEFAULTS: Required<SegmentOptions> = {
-  maxChars: 20,
+  maxChars: DEFAULT_MAX_CHARS,
   minChars: 6,
   minGapMs: 250,
   hardMaxChars: 40
+}
+
+/**
+ * The floor that goes with a given ceiling, when the caller sets only the
+ * ceiling. `minChars` gates the comma and pause rules, so it has to stay below
+ * `maxChars` — at or above it, both rules can never fire and line length is
+ * left to the full-stop and the hard cap alone. Deriving it means the one
+ * setting a user is given cannot be turned into that contradiction: 20 keeps
+ * the tuned 6, and a ceiling of 8 brings the floor down to 2 with it.
+ */
+export function minCharsFor(maxChars: number): number {
+  // Clamped below the ceiling rather than merely scaled: at a ceiling of 2 the
+  // proportion alone would land on the ceiling itself and reintroduce exactly
+  // the contradiction this exists to prevent.
+  return Math.max(1, Math.min(maxChars - 1, Math.round(maxChars * 0.3)))
 }
 
 const END_PUNC = /[。！？.!?]$/
@@ -88,7 +105,10 @@ function buildUtterance(group: Piece[], speakerId?: string): Utterance {
 
 /** Split one utterance into subtitle-length lines using its word timestamps. */
 export function segmentUtterance(u: Utterance, options: SegmentOptions = {}): Utterance[] {
-  const { maxChars, minChars, minGapMs, hardMaxChars } = { ...DEFAULTS, ...options }
+  const { maxChars, minGapMs, hardMaxChars } = { ...DEFAULTS, ...options }
+  // An explicit floor still wins; the derived one only covers the common case
+  // of a caller that set the ceiling and nothing else.
+  const minChars = options.minChars ?? minCharsFor(maxChars)
   const pieces = align(u)
   if (pieces.length === 0) return [u]
 

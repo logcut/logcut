@@ -1,5 +1,12 @@
-import type { TranscribeConfig, Transcript } from '@logcut/core'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { applyCommands } from '@logcut/core'
+import type {
+  CaptionStyles,
+  CommandResult,
+  EditCommand,
+  TranscribeConfig,
+  Transcript
+} from '@logcut/core'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { errorMessageOf } from '@/lib/format'
 import type { ProjectDetail, TranscribePhase } from '../../../shared/ipc'
 
@@ -30,6 +37,22 @@ function sameClips(a: EditableState['clips'], b: EditableState['clips']): boolea
   return a.length === b.length && a.every((clip, index) => clip.id === b[index]?.id)
 }
 
+/**
+ * Drop the assets that have no transcript yet.
+ *
+ * On screen "not recognized" and "recognized" share one map, with null for the
+ * former, because the editor has to render both. The core takes only the ones
+ * that exist: a command naming an absent asset reports no change, which is the
+ * same answer without a null to carry through every signature.
+ */
+function present(transcripts: Record<string, Transcript | null>): Record<string, Transcript> {
+  const kept: Record<string, Transcript> = {}
+  for (const [assetId, transcript] of Object.entries(transcripts)) {
+    if (transcript) kept[assetId] = transcript
+  }
+  return kept
+}
+
 export interface UseProjectResult {
   project: ProjectDetail | null
   /**
@@ -52,10 +75,25 @@ export interface UseProjectResult {
   removeClips(clipIds: string[]): Promise<void>
   rename(name: string): Promise<void>
   transcribe(assetId: string, config: TranscribeConfig, force?: boolean): Promise<void>
-  /** Records history and persists; the single funnel for every subtitle edit. */
-  applyTranscript(assetId: string, next: Transcript): void
-  /** Same, for an edit spanning several assets — one history entry, not one each. */
-  applyTranscripts(changes: { assetId: string; transcript: Transcript }[]): void
+  /**
+   * Set the longest subtitle line and re-split every transcript that can be.
+   * Local and free — unlike `transcribe` it spends no API credit. Resolves to
+   * the asset ids left alone for want of an archived provider response.
+   */
+  setMaxChars(maxChars: number): Promise<string[]>
+  /** Change how the captions look. Presentation only: no transcript is
+   *  touched, so it neither joins nor clears the undo history. */
+  setCaptionStyles(styles: CaptionStyles): Promise<void>
+  /**
+   * The single funnel for every edit: applies a batch, records one history
+   * entry, persists whatever changed, and hands the outcomes back so the caller
+   * can react to where the edits landed.
+   *
+   * A batch is deliberately the unit rather than a single command — an
+   * assistant's turn is several commands and must undo as one, and a click is
+   * simply a batch of one.
+   */
+  dispatch(commands: EditCommand[]): CommandResult
   undo(): void
   redo(): void
   exportSrt(assetId: string): Promise<string | null>
@@ -260,6 +298,44 @@ export function useProject(projectId: string): UseProjectResult {
   )
 
   /**
+   * Change how the captions look. No transcript is touched and nothing is
+   * re-split — this is presentation, so it neither joins the undo history nor
+   * clears it.
+   */
+  const setCaptionStyles = useCallback(
+    // Through `guard` like every other mutation: on its own it swallowed
+    // failures whole. The caller fires it with `void`, so a rejection here
+    // surfaces nowhere at all — the font simply would not change and nothing
+    // would say why.
+    (styles: CaptionStyles) => guard(() => window.logcut.setCaptionStyles(projectId, styles)),
+    [guard, projectId]
+  )
+
+  /**
+   * Change the longest subtitle line and re-split what can be re-split.
+   *
+   * Like recognition, this clears the history rather than joining it: every
+   * older entry describes lines that no longer exist, and main has already
+   * written the new ones. Unlike recognition it costs nothing and touches no
+   * network, so it is free to be tried and tried again.
+   *
+   * Returns the assets left alone for want of an archived provider response, so
+   * the caller can say which rather than let the user wonder why some clips did
+   * not move.
+   */
+  const setMaxChars = useCallback(
+    async (maxChars: number): Promise<string[]> => {
+      const result = await window.logcut.setMaxChars(projectId, maxChars)
+      setTranscripts((current) => ({ ...current, ...result.transcripts }))
+      setPast([])
+      setFuture([])
+      setProject(result.project)
+      return result.skipped
+    },
+    [projectId]
+  )
+
+  /**
    * Write a state back to disk and to the screen.
    *
    * Only what actually differs is persisted: a transcript whose reference is
@@ -282,10 +358,27 @@ export function useProject(projectId: string): UseProjectResult {
     [projectId]
   )
 
-  const applyTranscripts = useCallback(
-    (changes: { assetId: string; transcript: Transcript }[]): void => {
-      if (changes.length === 0) return
+  /**
+   * Run a batch of commands and land the result.
+   *
+   * The document handed to the core is read off the ref rather than taken as a
+   * dependency, so this callback is stable — every subtitle row holds a handler
+   * that ends up here, and those rows are memoized.
+   *
+   * Only assets the batch actually changed are written: `changed` is the core's
+   * answer to that question, and rewriting the rest would cost a file write per
+   * edit per asset for nothing.
+   */
+  const dispatch = useCallback(
+    (commands: EditCommand[]): CommandResult => {
+      const result = applyCommands({ transcripts: present(stateRef.current.transcripts) }, commands)
+      if (result.changed.length === 0) return result
+
       record()
+      const changes = result.changed.flatMap((assetId) => {
+        const transcript = result.doc.transcripts[assetId]
+        return transcript ? [{ assetId, transcript }] : []
+      })
       setTranscripts((current) => {
         const next = { ...current }
         for (const change of changes) next[change.assetId] = change.transcript
@@ -294,13 +387,9 @@ export function useProject(projectId: string): UseProjectResult {
       for (const change of changes) {
         void window.logcut.saveTranscript(projectId, change.assetId, change.transcript)
       }
+      return result
     },
     [projectId, record]
-  )
-
-  const applyTranscript = useCallback(
-    (assetId: string, next: Transcript): void => applyTranscripts([{ assetId, transcript: next }]),
-    [applyTranscripts]
   )
 
   const undo = useCallback((): void => {
@@ -341,8 +430,9 @@ export function useProject(projectId: string): UseProjectResult {
     removeClips,
     rename,
     transcribe,
-    applyTranscript,
-    applyTranscripts,
+    setMaxChars,
+    setCaptionStyles,
+    dispatch,
     undo,
     redo,
     exportSrt

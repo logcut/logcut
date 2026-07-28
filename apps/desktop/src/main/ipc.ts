@@ -1,5 +1,12 @@
-import { configCacheKey, segmentTranscript, toSrt } from '@logcut/core'
-import type { LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
+import {
+  configCacheKey,
+  DEFAULT_CAPTION_STYLES,
+  DEFAULT_MAX_CHARS,
+  parseVolcanoResponse,
+  segmentTranscript,
+  toSrt
+} from '@logcut/core'
+import type { CaptionStyles, LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -10,6 +17,7 @@ import type {
   ProjectDetail,
   TimelineClipSummary,
   ProjectSummary,
+  ResplitResult,
   TranscribePhase,
   TranscribeResult,
   UpdateState
@@ -97,7 +105,11 @@ function toDetail(project: projects.ProjectFile): ProjectDetail {
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     timeline: toTimeline(project),
-    assets: project.assets.map((asset) => toAssetSummary(project.id, asset))
+    assets: project.assets.map((asset) => toAssetSummary(project.id, asset)),
+    // Resolved here so the renderer never has to know that older projects
+    // simply have no such field.
+    maxChars: project.maxChars ?? DEFAULT_MAX_CHARS,
+    captionStyles: project.captionStyles ?? DEFAULT_CAPTION_STYLES
   }
 }
 
@@ -230,6 +242,55 @@ export function registerIpc(): void {
     }
   )
 
+  /**
+   * Change the subtitle line length and re-split every transcript that can be,
+   * without going near the network.
+   *
+   * Re-splitting starts from the archived provider response, not from the
+   * stored transcript. `segmentTranscript` works per utterance and never merges
+   * across them, so re-splitting an already-split transcript can only ever cut
+   * it finer — a longer line would silently do nothing. The original long
+   * utterances survive only in `raw/`.
+   *
+   * Assets with no archived response (transcribed before it was kept) keep the
+   * subtitles they have; the setting still applies to their next transcription.
+   * They are reported back so the UI can say which, rather than leaving the
+   * user to notice that some clips did not move.
+   */
+  ipcMain.handle(
+    'project:setCaptionStyles',
+    (_event, projectId: string, styles: CaptionStyles): ProjectDetail => {
+      const project = projects.setCaptionStyles(projectId, styles)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return toDetail(project)
+    }
+  )
+
+  ipcMain.handle(
+    'transcript:setMaxChars',
+    (_event, projectId: string, maxChars: number): ResplitResult => {
+      const project = projects.setMaxChars(projectId, maxChars)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+
+      const transcripts: Record<string, Transcript> = {}
+      const skipped: string[] = []
+      for (const asset of project.assets) {
+        if (asset.transcriptStatus !== 'ready') continue
+        const raw = projects.loadRaw(projectId, asset.id)
+        if (raw === null) {
+          skipped.push(asset.id)
+          continue
+        }
+        const transcript = segmentTranscript(parseVolcanoResponse(raw), {
+          maxChars: project.maxChars
+        })
+        projects.saveTranscript(projectId, asset.id, transcript, { immediate: true })
+        transcripts[asset.id] = transcript
+      }
+      return { project: toDetail(project), transcripts, skipped }
+    }
+  )
+
   ipcMain.handle(
     'transcript:transcribe',
     async (
@@ -263,9 +324,13 @@ export function registerIpc(): void {
       try {
         sendProgress('transcribing')
         const { transcript: rawTranscript, raw } = await transcribeAudio(audioPath, apiKey, config)
-        // Re-split long ASR utterances into subtitle-length lines before saving;
-        // the untouched provider response is archived alongside as the rollback source.
-        const transcript = segmentTranscript(rawTranscript)
+        // Re-split long ASR utterances into subtitle-length lines before saving,
+        // at this project's line length. The untouched provider response is
+        // archived alongside so the length can be changed later without paying
+        // for another transcription (see 'transcript:setMaxChars').
+        const transcript = segmentTranscript(rawTranscript, {
+          maxChars: requireProject(projectId).maxChars ?? DEFAULT_MAX_CHARS
+        })
         projects.saveTranscript(projectId, assetId, transcript, { immediate: true })
         projects.saveRaw(projectId, assetId, raw)
         projects.updateAsset(projectId, assetId, {
