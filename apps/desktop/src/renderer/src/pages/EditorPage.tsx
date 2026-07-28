@@ -9,7 +9,7 @@ import {
 } from '@logcut/core'
 import type { CaptionStyle, CommandResult, Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
 import MediaTab from '@/components/MediaTab'
@@ -401,6 +401,10 @@ export default function EditorPage({
     const index = findUtteranceIndexAt(utterances, timeMs)
     const line = index === -1 ? null : utterances[index]
     if (!line) return
+    // The cut acts on what is selected, and the playhead only says where. One
+    // test covers both ways of having nothing to act on: nothing selected at
+    // all, and a selection the playhead is not inside.
+    if (!selectedUtteranceIds.includes(line.id)) return
     const clip = clips.find((candidate) => candidate.id === line.clipId)
     dispatch([
       {
@@ -410,7 +414,7 @@ export default function EditorPage({
         timeMs: timeMs - (clip?.startMs ?? 0)
       }
     ])
-  }, [clips, dispatch, utterances])
+  }, [clips, dispatch, selectedUtteranceIds, utterances])
 
   const toggleSnap = useCallback((): void => setSnapEnabled((on) => !on), [])
 
@@ -445,6 +449,25 @@ export default function EditorPage({
     },
     [utterances]
   )
+
+  /**
+   * Re-resolve both ids whenever the lines change, not only when the time does.
+   *
+   * They are ids, and **an id does not survive an edit of the line it names**.
+   * Splitting replaces one line with two new ones, deleting takes one away,
+   * merging consumes the second — after any of those the id held here points at
+   * nothing, `find` returns null, and the caption vanishes from the picture
+   * while the playhead has not moved at all. It came back on the next
+   * `timeupdate`, which is what made it look like a flicker rather than a bug.
+   *
+   * `applyTime` is a pure re-resolution and its identity already tracks
+   * `utterances`, so running it again on the same instant is exactly the
+   * question that needs re-asking. Edits that leave ids alone — text, style,
+   * speaker — still land on the bail-outs above and cost no render.
+   */
+  useEffect(() => {
+    applyTime(playheadRef.current)
+  }, [applyTime])
 
   /**
    * The scrubbing path into `applyTime`, collapsed to one call per frame — a
@@ -901,46 +924,60 @@ export default function EditorPage({
           </Panel>
         </div>
 
-        {/* The handle is rendered with the column, so closing it takes the gap
-            back too. The empty state exists for the title-bar route alone: the
-            other two entrances start from a line that already exists. */}
-        {subtitlesOpen && (
-          <>
-            <ResizeHandle orientation="vertical" onResize={resizeSubtitles} />
+        {/*
+          Built once, then shown and hidden — not mounted and unmounted.
 
-            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: subtitlesWidth }}>
-              {subtitleTranscript ? (
-                <SubtitleEditor
-                  utterances={subtitleTranscript.utterances}
-                  activeId={activeSourceId}
-                  canUndo={canUndo}
-                  onClose={() => setSubtitlesOpen(false)}
-                  onSeek={seekToUtterance}
-                  onEditSave={handleEditSave}
-                  onTimeSave={handleTimeSave}
-                  onAdd={handleAdd}
-                  onMerge={handleMerge}
-                  speakerIds={speakerIds}
-                  nextSpeakerId={newSpeakerId}
-                  onSpeakerSave={handleSpeakerSave}
-                  onUndo={undo}
-                  onReplaceAll={handleReplaceAll}
-                  style={scopedStyle}
-                  onChange={applyStylePatch}
-                  scope={captionScope}
-                  onScopeChange={setCaptionScope}
-                  hasSelection={selectedLine !== null}
-                />
-              ) : (
-                <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
-                  <p className="m-0 text-center text-caption font-normal text-muted-foreground">
-                    No subtitles yet — recognize this clip first.
-                  </p>
-                </div>
-              )}
-            </Panel>
-          </>
-        )}
+          Rebuilding it was the whole cost of opening this column: several
+          hundred rows of fiber and DOM, thrown away on close and built again
+          identically on the next open. `Activity` keeps the DOM and the state
+          while `hidden` (React clears the effects, so nothing is left running
+          behind it), and renders it at low priority — the work lands in idle
+          time after the editor loads rather than under the click. Opening is
+          then a `display` change.
+
+          This is why `subtitleClip` falls back to `clips[0]` above: with no
+          fallback the transcript would not exist until the first click, and
+          there would be nothing for this to have built in advance.
+
+          The handle is inside it, so closing takes the gap back too. The empty
+          state exists for the title-bar route alone: the other two entrances
+          start from a line that already exists.
+        */}
+        <Activity mode={subtitlesOpen ? 'visible' : 'hidden'}>
+          <ResizeHandle orientation="vertical" onResize={resizeSubtitles} />
+
+          <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: subtitlesWidth }}>
+            {subtitleTranscript ? (
+              <SubtitleEditor
+                utterances={subtitleTranscript.utterances}
+                activeId={activeSourceId}
+                canUndo={canUndo}
+                onClose={() => setSubtitlesOpen(false)}
+                onSeek={seekToUtterance}
+                onEditSave={handleEditSave}
+                onTimeSave={handleTimeSave}
+                onAdd={handleAdd}
+                onMerge={handleMerge}
+                speakerIds={speakerIds}
+                nextSpeakerId={newSpeakerId}
+                onSpeakerSave={handleSpeakerSave}
+                onUndo={undo}
+                onReplaceAll={handleReplaceAll}
+                style={scopedStyle}
+                onChange={applyStylePatch}
+                scope={captionScope}
+                onScopeChange={setCaptionScope}
+                hasSelection={selectedLine !== null}
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+                <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                  No subtitles yet — recognize this clip first.
+                </p>
+              </div>
+            )}
+          </Panel>
+        </Activity>
       </div>
 
       {error !== null && (

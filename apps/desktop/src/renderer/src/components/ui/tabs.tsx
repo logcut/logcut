@@ -13,14 +13,8 @@ function Tabs({ className, ...props }: React.ComponentProps<typeof TabsPrimitive
   )
 }
 
-/**
- * A left-aligned rail of icon-over-label entries, not a segmented control.
- *
- * The segmented look shadcn ships divides the width evenly between however
- * many tabs exist, so it only reads well with two or three. This panel is
- * meant to grow to a dozen entries, so each one takes a fixed slot and the
- * row scrolls sideways once they no longer fit.
- */
+/** A left-aligned rail of fixed-width entries, scrolling sideways once they
+ *  no longer fit — not a segmented control (DESIGN.md). */
 function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
@@ -34,15 +28,9 @@ function TabsList({ className, ...props }: React.ComponentProps<typeof TabsPrimi
   )
 }
 
-/**
- * Children are read as icon first, label second — pass an icon element and a
- * string. Selection is carried by colour alone; a filled pill would fight the
- * panel it sits on now that the row has no track of its own.
- *
- * Every entry is readable at rest and the selected one is the brand colour —
- * so `primary`, never `accent`: shadcn's `accent` is the hover surface, and
- * using it here painted the selected tab a flat grey (DESIGN.md).
- */
+/** Children are read as icon first, label second — pass an icon element and a
+ *  string. Selection is colour alone, and it is `primary`, never `accent`
+ *  (DESIGN.md). */
 function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
   return (
     <TabsPrimitive.Trigger

@@ -261,6 +261,29 @@
   .titlebar {
     padding-left: var(--spacing-inset);
   }
+
+  /*
+   * Motion is a preference the OS already collects, so nothing in the app asks
+   * again. Cut rather than shortened: a 20ms version of a movement still moves,
+   * and movement is the thing being opted out of.
+   *
+   * Blanket rather than per-animation. Any animation added later is covered on
+   * the day it is written, and the alternative — remembering each time — fails
+   * silently and only for the people who need it to work.
+   *
+   * Not zero: `0s` can skip transitionend entirely, and code that waits for it
+   * would hang. A duration this short is over within a frame but still fires.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
 /* ---- Subtitle panel scroll area ---- */
@@ -273,4 +296,27 @@
 }
 .ConvertResult::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/*
+ * Off-screen subtitle lines skip layout, paint and hit testing.
+ *
+ * The list renders every line — not virtualised, on purpose (see
+ * SubtitleList.md) — so all several hundred were being laid out, painted and
+ * hit-tested for a panel showing twenty of them. This hands that back to the
+ * browser without moving anything into React, which is what virtualising got
+ * wrong.
+ *
+ * It goes on the content grid rather than on `.ConvertItem`: `content-visibility`
+ * implies `contain: paint`, and the row's hover strip is deliberately half
+ * outside the row's own box. Containing the row would clip it.
+ *
+ * The length is a guess at a one-line row, needed only until a row has been
+ * rendered once — `auto` then keeps its measured height. It is not a design
+ * value and has no token; being wrong costs a slightly inaccurate scrollbar,
+ * not a wrong layout.
+ */
+.AimText {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 68px;
 }

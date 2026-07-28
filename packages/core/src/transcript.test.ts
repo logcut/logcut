@@ -13,6 +13,7 @@ import {
   setUtteranceText,
   setUtteranceTime,
   speakerIdsOf,
+  splitUtterance,
   setUtteranceStyle
 } from './transcript.ts'
 import type { Transcript, Utterance } from './types.ts'
@@ -313,4 +314,69 @@ test('setUtteranceStyle leaves every other line alone', () => {
   assert.deepEqual(after.utterances[0], before.utterances[0])
   assert.equal(after.utterances[0].style, undefined)
   assert.equal(after.utterances[2].style, undefined)
+})
+
+test('splitUtterance gives both halves the whole text', () => {
+  const t = fixture()
+  const out = splitUtterance(t, 'b', 600)
+  const [first, second] = out.utterances.slice(1, 3)
+  // The playhead divides the block, not what it says.
+  assert.equal(first.text, '卷子卷子不是 Agent')
+  assert.equal(second.text, '卷子卷子不是 Agent')
+  assert.deepEqual([first.start, first.end], [400, 600])
+  assert.deepEqual([second.start, second.end], [600, 800])
+})
+
+test('splitUtterance leaves the lines around it alone', () => {
+  const t = fixture()
+  const out = splitUtterance(t, 'b', 600)
+  assert.equal(out.utterances.length, 4)
+  assert.deepEqual(out.utterances[0], t.utterances[0])
+  assert.deepEqual(out.utterances[3], t.utterances[2])
+})
+
+test('splitUtterance carries speaker, styling and words across whole', () => {
+  const t = fixture()
+  t.utterances[1] = {
+    ...t.utterances[1],
+    speakerId: '3',
+    style: { bold: true },
+    words: [{ word: '卷', start: 400, end: 500, suspect: false }]
+  }
+  const out = splitUtterance(t, 'b', 600)
+  for (const half of out.utterances.slice(1, 3)) {
+    assert.equal(half.speakerId, '3')
+    assert.equal(half.style?.bold, true)
+    // Words are the recording's anchors; the recording did not change.
+    assert.deepEqual(half.words, t.utterances[1].words)
+  }
+})
+
+test('splitUtterance gives each half a new id', () => {
+  const out = splitUtterance(fixture(), 'b', 600)
+  const [first, second] = out.utterances.slice(1, 3)
+  assert.notEqual(first.id, second.id)
+  assert.notEqual(first.id, 'b')
+  assert.notEqual(second.id, 'b')
+})
+
+test('splitUtterance refuses a cut that would leave a zero-length half', () => {
+  const t = fixture()
+  // On either bound, or outside it, one half would have no duration at all.
+  assert.equal(splitUtterance(t, 'b', 400), t)
+  assert.equal(splitUtterance(t, 'b', 800), t)
+  assert.equal(splitUtterance(t, 'b', 100), t)
+  assert.equal(splitUtterance(t, 'b', 900), t)
+  assert.equal(splitUtterance(t, 'nope', 600), t)
+})
+
+test('splitUtterance cuts a single-word line like any other', () => {
+  const t: Transcript = {
+    audioDurationMs: 1000,
+    utterances: [{ id: 'only', start: 0, end: 400, text: '你', words: [] }]
+  }
+  const out = splitUtterance(t, 'only', 200)
+  // Nothing about the text decides this any more, so one word is no obstacle.
+  assert.equal(out.utterances.length, 2)
+  assert.ok(out.utterances.every((u) => u.text === '你'))
 })

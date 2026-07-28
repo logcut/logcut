@@ -179,14 +179,10 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
 
   return (
     <section className="h-[40%] shrink-0 overflow-y-auto border-b border-border p-component">
-      {/* What the controls below write to. It sits in the heading rather than
-              in a row of its own because it is not a setting — it is the question
-              "which subtitles are we talking about", and every row under it
-              inherits the answer.
-
-              The values shown are always the *resolved* ones for that scope, so a
-              speaker that overrides nothing still reads as what it will look
-              like; changing a control then writes only into the chosen layer. */}
+      {/* What the controls below write to — the question "which subtitles
+              are we talking about", which is why it lives in the heading and not
+              in a row of its own (see SubtitleEditor.md). Resolution rules are
+              with `styleForScope`. */}
       <div className="mb-component flex items-center gap-component">
         <h2 className="m-0 flex-1 text-caption font-medium text-foreground">Style</h2>
         <Select value={scopeValue} onValueChange={onScopeSelect}>
@@ -479,23 +475,9 @@ export default function SubtitleEditor({
         </p>
       )}
 
-      {/* Style settings — the appearance of the captions burned into the
-          picture. It sits above the list because a setting that governs every
-          line should not be reached by scrolling past the lines it governs.
-
-          Everything here writes `base`, the whole project's captions. The
-          stored shape already carries per-speaker and per-line overrides and
-          resolves them (see packages/core/src/caption-style.ts); offering them
-          is UI work, not another change to what is on disk. */}
-      {/* A fixed 40% of the column, not the height of its contents. Size,
-          colour, spacing and alignment are still to come, and a section that
-          grew with each one would move the subtitle list down every time —
-          the list is what the eye returns to, so its top edge stays put.
-
-          A layout proportion rather than a spacing value, which is why it is a
-          bare percentage: no spacing token could express it, and the timeline
-          split above uses the same 40% for the same kind of reason. It scrolls,
-          so the controls are reachable before the section is tall enough. */}
+      {/* Style settings — the captions burned into the picture. Above the
+              list, at a fixed share of the column, and writing `base` only: all
+              three are deliberate, see SubtitleEditor.md. */}
       <CaptionStylePanel
         style={style}
         onChange={onChange}

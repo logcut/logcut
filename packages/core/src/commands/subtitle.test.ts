@@ -306,3 +306,32 @@ test('setTime clamps into the room the neighbours leave', () => {
   assert.equal(result.doc.transcripts.asset1?.utterances[1]?.start, 400)
   assert.equal(result.outcomes[0]?.focus?.timeMs, 400)
 })
+
+test('split focuses the second half, not the first line of the transcript', () => {
+  const result = applyCommand(doc(), {
+    kind: 'subtitle.split',
+    assetId: 'asset1',
+    id: 'b',
+    timeMs: 600
+  })
+
+  const lines = result.doc.transcripts.asset1?.utterances ?? []
+  assert.equal(lines.length, 4)
+  // Neither half keeps the id that was cut, so looking the index up after the
+  // cut found nothing and landed on utterances[0] — the wrong line entirely.
+  assert.equal(result.outcomes[0]?.focus?.utteranceId, lines[2]?.id)
+  assert.equal(result.outcomes[0]?.focus?.timeMs, 600)
+})
+
+test('split on a line bound changes nothing', () => {
+  const before = doc()
+  const result = applyCommand(before, {
+    kind: 'subtitle.split',
+    assetId: 'asset1',
+    id: 'b',
+    timeMs: 500
+  })
+
+  assert.equal(result.doc, before)
+  assert.equal(result.outcomes[0]?.changed, false)
+})

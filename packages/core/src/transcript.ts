@@ -1,5 +1,4 @@
 import { randomId } from './id.ts'
-import { splitUtteranceAt } from './segment.ts'
 import type { CaptionStyle } from './caption-style.ts'
 import type { Transcript, Utterance } from './types.ts'
 
@@ -82,20 +81,36 @@ export function setUtteranceStyle(
 }
 
 /**
- * Replace one line with the two halves of a cut at `timeMs`.
+ * Cut one line in two at `timeMs`. **Both halves keep the whole text.**
  *
- * Returns the same transcript when the cut is impossible (see
- * `splitUtteranceAt`), so a click that lands between words costs no undo entry.
+ * The line is a block on a track, and the playhead divides the block — not what
+ * it says. So the halves differ only in where they start and end; text, words,
+ * speaker and styling all go across intact. Retiming one, restyling it,
+ * rewriting it or deleting it is the point of having cut.
+ *
+ * `words` cross whole rather than being dealt out between the halves. They are
+ * the recording's timing anchors and the recording did not change; re-segmenting
+ * reads the archived provider response, never these. Dividing them would also
+ * leave each half's words describing less than its own text.
+ *
+ * Returns the same transcript when `timeMs` is on or outside the line's own
+ * bounds — a half of zero length is not a line — so such a cut costs no undo
+ * entry. See transcript.md for why this is not a cut on a word boundary.
  */
 export function splitUtterance(transcript: Transcript, id: string, timeMs: number): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
   if (index === -1) return transcript
 
-  const halves = splitUtteranceAt(transcript.utterances[index], timeMs)
-  if (!halves) return transcript
+  const line = transcript.utterances[index]
+  if (timeMs <= line.start || timeMs >= line.end) return transcript
 
   const utterances = [...transcript.utterances]
-  utterances.splice(index, 1, ...halves)
+  utterances.splice(
+    index,
+    1,
+    { ...line, id: randomId(), end: timeMs },
+    { ...line, id: randomId(), start: timeMs }
+  )
   return { ...transcript, utterances }
 }
 

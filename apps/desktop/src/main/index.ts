@@ -28,12 +28,8 @@ function createWindow(): void {
     // dark renderer paints.
     backgroundColor: '#101214',
     // macOS only: hide the title bar so content reaches the top edge, and hide
-    // the system buttons too (below) because the renderer draws its own. The
-    // AppKit ones cannot be resized or recoloured — only placed — and we want
-    // 12px circles that dim to the panel colour when the window loses focus.
-    //
-    // Other platforms keep their native title bar and its native controls;
-    // nothing here applies to them.
+    // the system buttons because the renderer draws its own (why: see
+    // components/WindowControls.tsx). Other platforms keep both.
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden' as const } : {}),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),

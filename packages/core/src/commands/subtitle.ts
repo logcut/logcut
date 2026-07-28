@@ -176,12 +176,15 @@ export function applySubtitleCommand(
     }
 
     case 'subtitle.split': {
+      // Located before the cut, because neither half keeps the id being cut:
+      // looking afterwards found nothing and silently focused the first line of
+      // the whole transcript.
+      const at = transcript.utterances.findIndex((utterance) => utterance.id === command.id)
       const next = splitUtterance(transcript, command.id, command.timeMs)
       if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
       // Focus goes to the second half: the cut is made to work on what follows
       // it, and the first half is already what it was.
-      const at = next.utterances.findIndex((utterance) => utterance.id === command.id)
-      const second = next.utterances[at + 1] ?? next.utterances[at]
+      const second = next.utterances[at + 1]
       return landed(command.kind, next, command.assetId, second)
     }
 

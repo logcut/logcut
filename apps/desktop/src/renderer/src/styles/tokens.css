@@ -152,12 +152,21 @@
   --shadow-3: 0 2px 4px rgba(0, 0, 0, 0.04), 0 12px 24px -6px rgba(0, 0, 0, 0.1);
 
   /* ---- Motion scale ---- */
-  --duration-fast: 100ms; /* hover, press feedback */
+  --duration-fast: 150ms; /* hover, press feedback */
   --duration-base: 180ms; /* regular transitions */
   --duration-slow: 300ms; /* overlays, large changes */
   --ease-out: cubic-bezier(0, 0, 0.2, 1); /* default for entrances, state changes */
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); /* positional movement */
   --ease-swift: cubic-bezier(0.175, 0.885, 0.32, 1.1); /* overlay appearance, slight overshoot */
+  /*
+   * How far a control dips while held. Two values, because the eye reads the
+   * distance travelled, not the percentage: on a 90px button 0.97 moves each
+   * edge 1.35px, and on a bare 14px glyph the same 0.97 moves it 0.21px, which
+   * is nothing. The smaller step therefore scales harder to travel a
+   * comparable distance — 0.9 on 14px is 0.7px a side.
+   */
+  --press-scale: 0.97; /* controls with a body: a block wide enough to see move */
+  --press-scale-icon: 0.9; /* bare glyphs, where the same ratio is sub-pixel */
 
   /* ==========================================================
      SEMANTIC (application code uses only these)
@@ -284,11 +293,22 @@
   --shadow-modal: var(--shadow-3); /* modals */
 
   /* ---- Motion responsibilities ---- */
+  /*
+   * Every property a control animates, listed by name. Not `all`: `all` picks
+   * up whatever else happens to change and animates that too, and the browser
+   * has to watch every property to find out.
+   *
+   * `scale` is the press feedback, and it is spelled `scale` rather than
+   * `transform` on purpose — Tailwind v4 compiles `scale-*` to the standalone
+   * `scale` property, so a list naming `transform` would not cover it and the
+   * button would jump between sizes instead of moving between them. Same
+   * duration in and out, so releasing is the mirror of pressing.
+   */
   --transition-control:
     color var(--duration-fast) var(--ease-out),
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out);
+    box-shadow var(--duration-fast) var(--ease-out), scale var(--duration-fast) var(--ease-in-out);
   --motion-overlay: var(--duration-slow) var(--ease-swift); /* modal/drawer appearance */
   --motion-popover: 200ms var(--ease-swift); /* dropdown/tooltip appearance */
 

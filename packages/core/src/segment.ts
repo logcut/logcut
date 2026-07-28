@@ -154,41 +154,6 @@ export function segmentUtterance(u: Utterance, options: SegmentOptions = {}): Ut
   return result.length > 0 ? result : [u]
 }
 
-/**
- * Cut one line in two at a moment inside it.
- *
- * The split lands on a **word boundary**, not on the instant asked for: a
- * subtitle whose halves each own part of a word would have timings that no
- * longer describe anything spoken. The boundary chosen is the first word that
- * starts at or after the moment.
- *
- * Returns null when there is nothing to cut — the moment falls outside the
- * line, or every word is on one side of it, which would produce an empty half.
- * The caller then leaves the transcript alone rather than storing a blank line.
- *
- * Both halves keep the original's `speakerId` and its own styling: a cut is
- * about where a line ends, not about what it looks like or who said it.
- */
-export function splitUtteranceAt(u: Utterance, timeMs: number): [Utterance, Utterance] | null {
-  if (timeMs <= u.start || timeMs >= u.end) return null
-
-  const pieces = align(u)
-  if (pieces.length < 2) return null
-
-  const at = pieces.findIndex((piece) => piece.effStart >= timeMs)
-  if (at <= 0 || at >= pieces.length) return null
-
-  const first = buildUtterance(pieces.slice(0, at), u.speakerId)
-  const second = buildUtterance(pieces.slice(at), u.speakerId)
-  // Trimming can empty a half whose pieces were all spacing.
-  if (first.text === '' || second.text === '') return null
-
-  return [
-    { ...first, style: u.style },
-    { ...second, style: u.style }
-  ]
-}
-
 /** Re-segment every utterance into subtitle-length lines. */
 export function segmentTranscript(transcript: Transcript, options?: SegmentOptions): Transcript {
   return {

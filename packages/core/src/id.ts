@@ -1,10 +1,8 @@
 /**
- * WebCrypto's randomUUID, present in every browser and in Node 19+. It is
- * declared locally rather than pulled in from the DOM or @types/node libs so
- * the core keeps typechecking with no platform globals at all.
+ * WebCrypto's randomUUID, present in every browser and in Node 19+.
  *
- * This is also the single place to swap in a deterministic generator once
- * edits are expressed as a replayable command list.
+ * **Declared locally** rather than pulled from the DOM or @types/node libs,
+ * so the core keeps typechecking with no platform globals at all.
  */
 interface CryptoLike {
   randomUUID(): string

@@ -8,13 +8,11 @@ interface ResizeHandleProps {
 }
 
 /**
- * The gap between two panels, doubling as the handle that resizes them.
+ * The gap between two panels, doubling as the handle that resizes them (see
+ * ResizeHandle.md).
  *
- * It draws nothing — the page background shows through, so panels read as
- * separate surfaces without a divider line between them. The only affordance
- * is the cursor. Reporting a delta per event rather than an absolute position
- * keeps the caller free to clamp however it likes without this component
- * knowing any of the limits.
+ * **Reports a delta per event, never an absolute position**, so the caller
+ * clamps however it likes without this component knowing any of the limits.
  */
 export default function ResizeHandle({ orientation, onResize }: ResizeHandleProps): JSX.Element {
   const lastRef = useRef(0)

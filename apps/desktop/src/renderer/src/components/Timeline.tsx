@@ -41,13 +41,6 @@ const SNAP_PX = 8
 const MIN_CAPTION_PX = 28
 
 /**
- * A block narrower than this gets no trim handles. Two handles need room to
- * sit at the edges and still leave a body to press for selection; below that
- * the whole block would be handle, and there would be no way to select it.
- */
-const MIN_TRIM_PX = 20
-
-/**
  * The white bar drawn at a selected line's edge, and the wider strip that
  * actually takes the drag. A 3px bar is all the look needs; a 3px target is
  * not something anyone can hit, so the two are separate.
@@ -924,10 +917,15 @@ export default function Timeline({
           >
             {blocks.map((block) => {
               const selected = selectedUtteranceIds.includes(block.id)
-              // Handles need room to sit at both ends and still leave a body
-              // to press for selection; below that the whole block would be
-              // handle and there would be no way to select it.
-              const trimmable = selected && block.widthPx >= MIN_TRIM_PX
+              // Never wider than half the block, so the two ends cannot overlap
+              // however narrow it gets. There is no width below which the ends
+              // stop being draggable: selecting happens before any handle
+              // exists, and once a block is selected its middle does nothing —
+              // a subtitle block cannot be dragged along the track.
+              const hitPx = Math.min(TRIM_HIT_PX, block.widthPx / 2)
+              // The outset shrinks with it, so a narrow block's handles stay
+              // mostly on the block rather than floating off both sides of it.
+              const outsetPx = Math.min(TRIM_BAR_PX, hitPx / 2)
               return (
                 <div
                   key={block.id}
@@ -997,7 +995,7 @@ export default function Timeline({
                       hover is not an affordance — nobody sweeps a track
                       looking for one, which is why the ends are only shown,
                       and only draggable, once the line is selected. */}
-                  {trimmable &&
+                  {selected &&
                     (['start', 'end'] as const).map((edge) => (
                       <div
                         key={edge}
@@ -1007,8 +1005,8 @@ export default function Timeline({
                         // from either side of it.
                         className="absolute inset-y-0 cursor-ew-resize"
                         style={{
-                          width: TRIM_HIT_PX,
-                          [edge === 'start' ? 'left' : 'right']: -TRIM_BAR_PX
+                          width: hitPx,
+                          [edge === 'start' ? 'left' : 'right']: -outsetPx
                         }}
                       />
                     ))}

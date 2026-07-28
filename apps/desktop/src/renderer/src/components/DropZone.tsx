@@ -7,14 +7,9 @@ interface DropZoneProps {
   onSelect(paths: string[]): void
 }
 
-/**
- * The import surface an empty media panel is made of: a filled plate rather
- * than a dashed outline, carrying one obvious affordance.
- *
- * Dashed borders read as "something is missing here". This is the normal state
- * of a new project, so it reads as a button instead — the whole plate is
- * clickable, and dropping files on it works just the same.
- */
+/** The import surface an empty media panel is made of — a filled plate, not a
+ *  dashed outline (see DropZone.md). The whole plate is clickable, and
+ *  dropping files on it works the same. */
 export default function DropZone({ onSelect }: DropZoneProps): JSX.Element {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')

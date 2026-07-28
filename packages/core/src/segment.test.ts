@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { minCharsFor, segmentTranscript, segmentUtterance, splitUtteranceAt } from './segment.ts'
+import { minCharsFor, segmentTranscript, segmentUtterance } from './segment.ts'
 import type { Utterance, Word } from './types.ts'
 
 /** Build words for a string: one Word per non-punctuation token, 200ms each. */
@@ -123,56 +123,4 @@ test('an explicit minChars still overrides the derived one', () => {
     out.map((s) => s.text),
     ['你好，世界。']
   )
-})
-
-test('splitUtteranceAt cuts on a word boundary and keeps both halves whole', () => {
-  const u = utterance('你好世界', ['你', '好', '世', '界'])
-  // Words are 200ms apart; ask to cut inside the second word.
-  const halves = splitUtteranceAt(u, 250)
-  assert.ok(halves)
-  assert.deepEqual(
-    halves.map((half) => half.text),
-    ['你好', '世界']
-  )
-  // The boundary is a word start, so no half ends mid-word.
-  assert.equal(halves[0].end, 1 * 200 + 150)
-  assert.equal(halves[1].start, 2 * 200)
-})
-
-test('splitUtteranceAt refuses a cut that would leave a half empty', () => {
-  const u = utterance('你好世界', ['你', '好', '世', '界'])
-  // On or outside the line's own bounds there is nothing to divide.
-  assert.equal(splitUtteranceAt(u, u.start), null)
-  assert.equal(splitUtteranceAt(u, u.end), null)
-  assert.equal(splitUtteranceAt(u, u.end + 500), null)
-  // A single word cannot be divided at all: one half would have no text.
-  assert.equal(splitUtteranceAt(utterance('你', ['你']), 50), null)
-})
-
-test('splitUtteranceAt cuts anywhere in the gap before a word', () => {
-  const u = utterance('你好世界', ['你', '好', '世', '界'])
-  // 1ms in is still "before the second word", and that is a real boundary.
-  const halves = splitUtteranceAt(u, 1)
-  assert.ok(halves)
-  assert.deepEqual(
-    halves.map((half) => half.text),
-    ['你', '好世界']
-  )
-})
-
-test('splitUtteranceAt carries the speaker and the styling onto both halves', () => {
-  const u = { ...utterance('你好世界', ['你', '好', '世', '界']), speakerId: '3' as const }
-  const styled = { ...u, style: { bold: true } }
-  const halves = splitUtteranceAt(styled, 450)
-  assert.ok(halves)
-  assert.ok(halves.every((half) => half.speakerId === '3'))
-  assert.ok(halves.every((half) => half.style?.bold === true))
-})
-
-test('splitUtteranceAt gives each half a new id', () => {
-  const u = utterance('你好世界', ['你', '好', '世', '界'])
-  const halves = splitUtteranceAt(u, 450)
-  assert.ok(halves)
-  assert.notEqual(halves[0].id, halves[1].id)
-  assert.notEqual(halves[0].id, u.id)
 })

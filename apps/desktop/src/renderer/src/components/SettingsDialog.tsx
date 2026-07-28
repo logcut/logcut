@@ -37,11 +37,8 @@ interface SettingsDialogProps {
   onOpenChange(open: boolean): void
 }
 
-/**
- * Settings as a modal rather than a page: it is a short form the user visits
- * to change one thing and leave, and routing away from a project to reach it
- * meant losing the editor's scroll and playback position.
- */
+/** Settings as a modal rather than a page, so reaching it never costs the
+ *  editor its scroll and playback position (see SettingsDialog.md). */
 export default function SettingsDialog({ open, onOpenChange }: SettingsDialogProps): JSX.Element {
   const [status, setStatus] = useState<SettingsStatus | null>(null)
   const [draft, setDraft] = useState('')

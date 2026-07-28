@@ -215,16 +215,11 @@ export default function SubtitleTab({
             Advanced
           </CollapsibleTrigger>
 
-          {/* Applies to the next recognition and, right away, to the subtitles
-              already in hand: re-splitting reads the archived provider response
-              and never touches the network, so it is free to be tried again and
-              again. What it costs is manual text edits, which is why that
-              warning is on the hint rather than left to be discovered.
-
-              The slider stops at MAX_CHARS_SLIDER_MAX and the box does not:
-              spending slider travel on lengths nobody drags to makes the useful
-              range harder to hit, but a number nobody drags to is still a
-              number somebody may need. */}
+          {/* Applies to the next recognition and to the subtitles already in
+              hand. **What it costs is manual text edits**, which is why the
+              warning sits on the hint rather than waiting to be discovered.
+              Ranges, and why the slider stops before the box does: see
+              SubtitleTab.md. */}
           <CollapsibleContent className="flex items-center gap-component pt-stack">
             <FieldName label="Line length" hint={LINE_LENGTH_HINT} />
             <Slider

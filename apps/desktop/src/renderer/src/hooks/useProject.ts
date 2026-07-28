@@ -314,11 +314,6 @@ export function useProject(projectId: string): UseProjectResult {
     [projectId]
   )
 
-  /**
-   * Change how the captions look. No transcript is touched and nothing is
-   * re-split — this is presentation, so it neither joins the undo history nor
-   * clears it.
-   */
   const setCaptionStyles = useCallback(
     // Through `guard` like every other mutation: on its own it swallowed
     // failures whole. The caller fires it with `void`, so a rejection here
