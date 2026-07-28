@@ -8,16 +8,13 @@ interface TitleBarProps {
 }
 
 /**
- * Every page carries its own title bar because the window has none of its own
- * on macOS (titleBarStyle: 'hidden'). The consequence that is easy to lose:
- * the strip must be draggable, or the window cannot be moved at all.
+ * Every page carries its own title bar, because on macOS the window has none
+ * (`titleBarStyle: 'hidden'`). **The strip must stay draggable, or the window
+ * cannot be moved at all**, and interactive children must opt out with
+ * `no-drag`.
  *
- * Height comes from --titlebar-height. On macOS the bar also carries the
- * window controls, drawn by us because AppKit's cannot be resized or
- * recoloured; WindowControls renders nothing on other platforms, where the
- * native title bar still owns them.
- *
- * Interactive children must opt out of dragging with `no-drag`.
+ * Height comes from --titlebar-height. WindowControls renders nothing off
+ * macOS.
  */
 export default function TitleBar({ className, children }: TitleBarProps): JSX.Element {
   return (

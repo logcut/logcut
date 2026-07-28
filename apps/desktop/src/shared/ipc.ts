@@ -22,20 +22,12 @@ export interface SettingsStatus {
 }
 
 /**
- * Bounds for the subtitle line length. Here rather than in either end of the
- * bridge because both need them and they must agree: the controls offer these
- * ranges, and main clamps rather than trusting what arrives.
+ * Bounds for the subtitle line length (ranges and their reasons: see
+ * components/SubtitleTab.md).
  *
- * Two ceilings, deliberately. `MAX_CHARS_SLIDER_MAX` is where the slider ends —
- * past it a line stops fitting across a portrait video, so the common range
- * should not spend half its travel on lengths nobody drags to. `MAX_CHARS_MAX`
- * is the real limit, reachable by typing a number under Advanced: a wide
- * landscape cut, or a language that counts characters differently, has every
- * right to a longer line, and a slider bound is a presentation choice rather
- * than a statement about what is valid.
- *
- * The floor is where a Chinese line stops being a line and starts being a
- * stutter of two or three characters per card.
+ * **Here rather than at either end of the bridge, because both need them and
+ * they must agree**: the controls offer these ranges, and main clamps rather
+ * than trusting what arrives.
  */
 export const MAX_CHARS_MIN = 8
 export const MAX_CHARS_SLIDER_MAX = 40
@@ -43,21 +35,16 @@ export const MAX_CHARS_MAX = 200
 
 export type TranscribePhase = 'extracting' | 'transcribing'
 
-/**
- * Addressed by project and asset from the start, so moving recognition onto a
- * background queue later does not change the payload.
- */
+/** Addressed by project and asset from the start, so moving recognition onto a
+ *  background queue later cannot change the payload. */
 export interface TranscribeProgress {
   projectId: string
   assetId: string
   phase: TranscribePhase
 }
 
-/**
- * Where the updater is. 'unsupported' is the development build, which has no
- * update metadata at all — distinct from 'current' so the UI can say so
- * instead of offering a button that always fails.
- */
+/** Where the updater is. `unsupported` (development build) and `current` are
+ *  deliberately distinct — see ipc.md. */
 export type UpdateState =
   | { kind: 'idle' }
   | { kind: 'checking' }
@@ -109,13 +96,8 @@ export interface ProjectSummary {
   thumbnailUrl: string | null
 }
 
-/**
- * One clip on the timeline, with its position already resolved.
- *
- * `startMs` and `durationMs` are computed in main from the asset durations,
- * so the renderer never has to reduce over the list to know where a clip sits
- * — and two places can't disagree about it.
- */
+/** One clip on the timeline, position already resolved in main so the two
+ *  sides cannot disagree about where a clip sits (see ipc.md). */
 export interface TimelineClipSummary {
   id: string
   assetId: string
@@ -171,13 +153,9 @@ export interface ExportSrtResult {
 /**
  * What an agent may ask the editor to do.
  *
- * This is the one channel that runs **main → renderer and back**. Everything
- * else on this bridge is the renderer asking main for something; here main is
- * relaying for a caller that has no window of its own — an MCP client today,
- * the built-in chat later — and the editing document lives in the renderer.
- *
- * The payloads are core types unchanged: an agent speaks the same commands the
- * buttons do (see packages/core/src/commands/index.md).
+ * **The one channel that runs main → renderer and back**; everything else on
+ * this bridge is the renderer asking main. Payloads are core types unchanged
+ * (see ipc.md and packages/core/src/commands/index.md).
  */
 export type AgentRequest =
   | { kind: 'session' }
@@ -200,22 +178,15 @@ export interface AgentSession {
   clips: AgentClip[]
 }
 
-/**
- * Deliberately a result, not a rejection.
- *
- * "No project is open" and "that clip has no transcript yet" are ordinary
- * states of the editor that an agent has to read and act on, not exceptions.
- * Turning them into thrown errors would mean every caller unwrapping them back
- * into text before a model could do anything with them.
- */
+/** **A result, not a rejection.** "No project open" and "that clip has no
+ *  transcript yet" are ordinary states an agent reads and acts on — see
+ *  ipc.md. */
 /**
  * What a batch did, without the document it did it to.
  *
- * `CommandResult` carries the whole new document, which is exactly right for
- * the editor — it is what gets rendered and persisted — and exactly wrong to
- * put on a wire whose far end is a model's context window: a thousand-line
- * transcript would cross the bridge, then be serialized into a tool answer, on
- * every single edit. The outcomes already say what changed.
+ * **Never widen this back to `CommandResult`.** That carries the whole new
+ * document — right for the editor, wrong for a wire whose far end is a model's
+ * context window, where a thousand-line transcript would cross on every edit.
  */
 export type AgentDispatchResult = Omit<CommandResult, 'doc'>
 
@@ -316,11 +287,8 @@ export interface LogcutApi {
   getAppVersion(): Promise<string>
   /** Where the updater is right now; the dialog may open mid-download. */
   getUpdateState(): Promise<UpdateState>
-  /**
-   * Ask for a check. Progress and failures arrive on onUpdateState, not as a
-   * rejection — a check that fails is a state, not an exception at the call
-   * site.
-   */
+  /** Ask for a check. Progress and failures arrive on `onUpdateState`, never as
+   *  a rejection (see ipc.md). */
   checkForUpdates(): Promise<void>
   /** Quit and relaunch into the downloaded version. Only valid when 'ready'. */
   installUpdate(): Promise<void>
@@ -328,12 +296,12 @@ export interface LogcutApi {
   onUpdateState(callback: (state: UpdateState) => void): () => void
 
   /**
-   * Answer agent requests for as long as an editor is on screen.
+   * Answer agent requests for as long as an editor is on screen. Returns an
+   * unsubscribe function.
    *
-   * Registering is also what tells main there is anything to relay to: with no
-   * handler, an agent's call is answered "no editor open" straight away rather
-   * than waiting for a window that may never appear. Returns an unsubscribe
-   * function, which withdraws that too.
+   * **Registering is also what tells main there is anything to relay to**: with
+   * no handler, an agent's call is answered "no editor open" at once rather than
+   * waiting for a window that may never appear.
    */
   onAgentRequest(handler: (request: AgentRequest) => AgentResponse): () => void
 }

@@ -5,16 +5,9 @@ import { callTool, MCP_TOOLS } from './mcp-tools'
 /**
  * An MCP server, so an outside agent can edit the open project.
  *
- * Written against the protocol directly rather than with the reference SDK.
- * The SDK brings express, hono, ajv and jose along for features a stateless
- * tools-only server never reaches — every one of them would be bundled into the
- * main process. What is actually needed is three JSON-RPC methods over one HTTP
- * route, and that is what this is.
- *
- * The transport is Streamable HTTP: the client POSTs a JSON-RPC message and
- * reads the reply from the same response. The spec allows answering with plain
- * JSON whenever the server has nothing to stream, which is always true here —
- * every tool call resolves to one answer.
+ * **Written against the protocol directly, not with the reference SDK** —
+ * everything the SDK drags in would be bundled into the main process for
+ * features a stateless tools-only server never reaches (see mcp-server.md).
  */
 
 /** Fixed so the client config can be written down once and stay written. */

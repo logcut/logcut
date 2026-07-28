@@ -83,10 +83,9 @@ export interface ProjectFile {
 /**
  * One entry on the timeline.
  *
- * A clip references an asset rather than being one: the same file can sit on
- * the timeline twice, and removing a clip must not touch the library. There is
- * deliberately no in/out point yet — v1 clips are always the whole asset, and
- * the moment trimming arrives it belongs here and nowhere else.
+ * **A clip references an asset rather than being one**: the same file can sit
+ * on the timeline twice, and removing a clip must not touch the library. No
+ * in/out point yet — see projects.md.
  */
 export interface TimelineClip {
   id: string

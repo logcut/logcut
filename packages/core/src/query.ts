@@ -4,11 +4,8 @@ import type { Transcript, Utterance } from './types.ts'
 /**
  * Reading the document, for callers that cannot hold it.
  *
- * The editor renders straight from the transcripts and needs none of this. It
- * exists for a reader with a context budget: an assistant cannot be handed a
- * thousand-line transcript and asked to find the line about the budget, and it
- * cannot quote a line back without an id, so reading has to be a query with an
- * answer small enough to send.
+ * Not for the editor, which renders straight from the transcripts. This is
+ * for a reader with a context budget — see query.md.
  */
 
 /** One line, flattened to what a reader outside the editor needs. */

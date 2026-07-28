@@ -37,13 +37,12 @@ function posterOffsetMs(durationMs: number): number {
 }
 
 /**
- * Poster, filmstrip and waveform are all decoration: the card falls back to a
- * placeholder and the timeline to a plain block. None may surface as an import
- * error, so each runs detached and only records itself once it succeeds.
+ * Artwork generation. All of it is decoration (see media-import.md), so none
+ * of it may surface as an import error: each runs detached and records itself
+ * only once it succeeds.
  *
- * They are sequential rather than parallel — three ffmpeg processes over the
- * same multi-gigabyte file compete for the same disk, and nothing is waiting
- * on them.
+ * **Sequential, not parallel.** Three ffmpeg processes over the same
+ * multi-gigabyte file compete for one disk, and nothing is waiting on them.
  */
 function generateArtwork(projectId: string, asset: MediaAsset): void {
   if (asset.durationMs === 0) return
@@ -88,9 +87,9 @@ function generateArtwork(projectId: string, asset: MediaAsset): void {
 /**
  * Validate, probe and persist each path as an asset of the project.
  *
- * Probing blocks because the duration is needed the moment the card and the
- * timeline render; it is a sub-second ffprobe call. A probe that fails still
- * imports the file, with a zero duration the UI renders as `--:--`.
+ * **The probe blocks** — the duration is needed the moment the card and the
+ * timeline render, and it is a sub-second ffprobe call. A probe that fails
+ * still imports the file, with a zero duration.
  */
 export async function importMedia(
   projectId: string,

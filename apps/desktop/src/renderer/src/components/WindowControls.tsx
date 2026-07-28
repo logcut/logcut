@@ -57,13 +57,10 @@ const CONTROLS: ControlSpec[] = [
 /**
  * The traffic lights, drawn by us.
  *
- * AppKit's own buttons cannot be resized or recoloured — only positioned — so
- * matching a 12px circle that dims to the panel colour when the window is
- * inactive means drawing them. main/index.ts hides the system set and this
- * renders in its place; on Windows nothing renders here at all, because the
- * native title bar still owns these actions.
- *
- * Glyphs appear on hover over the whole group, which is how macOS behaves.
+ * **AppKit's own buttons can only be positioned, not resized or recoloured**,
+ * so matching a 12px circle that dims with the window means drawing them.
+ * main/index.ts hides the system set; on Windows this renders nothing at all,
+ * because the native title bar still owns these actions.
  */
 export default function WindowControls(): JSX.Element | null {
   const [focused, setFocused] = useState(() => document.hasFocus())

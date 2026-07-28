@@ -1,19 +1,11 @@
 /**
- * How captions look burned into the picture.
+ * How captions look burned into the picture. Three scopes — `base` complete,
+ * `bySpeaker` and `utterance` partial — of which only `base` is settable today
+ * (see caption-style.md).
  *
- * Three scopes are planned and the shape is built for all three from the start,
- * because the storage format is the expensive thing to change later:
- *
- *   base      one complete value, the whole project's captions
- *   bySpeaker partial overrides, applied to every line of one speaker
- *   utterance partial overrides on the line itself (Utterance.style)
- *
- * Only `base` is settable today. The other two resolve correctly already, so
- * the controls for them are UI work rather than another migration.
- *
- * Overrides are partial on purpose: storing a complete style per speaker would
- * freeze whatever the base was at the moment the speaker was first touched, and
- * later changes to the base would silently stop reaching them.
+ * **The overrides are partial on purpose.** A complete style per speaker would
+ * freeze whatever the base was when that speaker was first touched, and later
+ * changes to the base would silently stop reaching them.
  */
 export type CaptionAlign = 'left' | 'center' | 'right'
 
@@ -101,15 +93,10 @@ export const DEFAULT_CAPTION_STYLES: CaptionStyles = {
 /**
  * The frame height a caption size is quoted against.
  *
- * The size is *stored* as a share of the picture, which is the only form that
- * survives a 400px preview and a 4K export both. But "5.5% of the height" is
- * not how anyone thinks about type, so the controls show pixels — and pixels
- * are meaningless without saying at what size, hence a fixed reference rather
- * than the preview's own height, which would change as the window is dragged.
- *
- * 1080 because it is the height most footage is still cut at, so the number
- * shown matches the export for most projects and is a familiar scale for the
- * rest.
+ * The size is *stored* as a share of the picture — the only form that survives
+ * a 400px preview and a 4K export both — but the controls show pixels, and
+ * pixels mean nothing without saying at what size. **A fixed reference, not
+ * the preview's own height**, which changes as the window is dragged.
  */
 export const CAPTION_REFERENCE_HEIGHT = 1080
 

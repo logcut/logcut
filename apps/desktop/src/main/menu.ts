@@ -23,12 +23,8 @@ function openSettings(): void {
 
 const isMac = process.platform === 'darwin'
 
-/**
- * Where Settings lives differs by platform, and both are conventions users
- * already have: the application menu on macOS, the File menu everywhere else.
- * The accelerator follows the same convention — Cmd+, is a system-wide macOS
- * shortcut, Ctrl+, is what desktop apps use on Windows and Linux.
- */
+/** Placement and accelerator both follow the platform convention — see
+ *  menu.md. */
 const settingsItem: MenuItemConstructorOptions = {
   label: 'Settings…',
   accelerator: isMac ? 'Cmd+,' : 'Ctrl+,',

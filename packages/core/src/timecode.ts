@@ -17,21 +17,17 @@ export function formatTimecode(ms: number): string {
 }
 
 /**
- * Every field, every time: `HH:MM:SS.mm`, hundredths of a second at the end.
+ * Every field, every time: `HH:MM:SS.mm`. Both properties that matter come
+ * from it being fixed width:
  *
- * Two properties matter, and both come from it being fixed width:
+ * - **it round-trips.** `formatTimecode` drops the fraction, so a line at
+ *   08:25.400 shows as `08:25`; typing that back moves it 400ms — invisible in
+ *   the UI, plain on the subtitle. Anything editable must show what it holds.
+ * - **the digits do not move.** A column of times that gains and loses its
+ *   hour field cannot be read down, and the field under the caret would shift
+ *   as the value crossed an hour.
  *
- *  - **it round-trips.** `formatTimecode` drops the fraction, so a line that
- *    began at 08:25.400 shows as `08:25`; type that straight back and it has
- *    moved four hundred milliseconds — plainly visible on a subtitle, entirely
- *    invisible in the UI. Anything editable has to show what it holds.
- *  - **the digits do not move.** A list of times that gains and loses its hour
- *    field cannot be read down a column, and the field under the caret would
- *    shift as the value crossed an hour.
- *
- * Hundredths rather than milliseconds is a deliberate trade: the last digit of
- * a millisecond is a third of the way into a frame, so it is noise the user
- * would have to type. Times are quantised to 10ms when one is committed.
+ * Hundredths rather than milliseconds: see timecode.md.
  */
 export function formatTimecodeFull(ms: number): string {
   const clamped = Math.max(0, Math.round(ms))
@@ -44,12 +40,11 @@ export function formatTimecodeFull(ms: number): string {
 }
 
 /**
- * Read `ss` / `mm:ss` / `h:mm:ss`, each optionally with `.mmm`. Returns null
- * for anything else, which callers treat as "leave the value alone" — a typo
- * must never be interpreted as a time.
+ * Read `ss` / `mm:ss` / `h:mm:ss`, each optionally with `.mmm`. **Null for
+ * anything else**, which callers treat as "leave the value alone" — a typo
+ * must never be read as a time.
  *
- * A short fraction is padded, not zero-filled from the left: `.4` is four
- * hundred milliseconds, the way a decimal reads everywhere else.
+ * A short fraction is padded, not zero-filled from the left: `.4` is 400ms.
  */
 export function parseTimecode(text: string): number | null {
   const trimmed = text.trim()

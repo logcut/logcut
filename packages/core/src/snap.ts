@@ -1,14 +1,9 @@
 /**
- * Pull a dragged time onto a nearby landmark.
+ * Pull a dragged time onto a nearby landmark (see snap.md).
  *
- * Editing on a timeline is mostly about making two things line up exactly, and
- * a pointer cannot land on an exact millisecond — at a typical zoom one pixel
- * is tens of them. Snapping is what makes "put this edge where the playhead is"
- * a gesture rather than a numeric entry.
- *
- * The tolerance is in **milliseconds**, and the caller converts it from a pixel
- * distance at the current zoom: a snap that felt right zoomed out would be
- * unusable zoomed in, where the same tolerance covers a whole word.
+ * **The tolerance is in milliseconds and the caller converts it from a pixel
+ * distance at the current zoom.** One that felt right zoomed out covers a
+ * whole word zoomed in.
  */
 export function snapTime(timeMs: number, candidates: number[], toleranceMs: number): number {
   if (toleranceMs <= 0) return timeMs
@@ -28,15 +23,11 @@ export function snapTime(timeMs: number, candidates: number[], toleranceMs: numb
 }
 
 /**
- * Every edge a line offers as a landmark.
+ * Every edge a line offers as a landmark, deduplicated.
  *
- * Both ends of every line, deduplicated: lines that touch share an edge, and
- * offering it twice would make no difference to the result but does make the
- * candidate list twice as long on a transcript of a thousand lines.
- *
- * `exclude` drops the line being dragged. Without it an edge snaps to itself
- * the instant the drag begins, and the other end of the same line pulls it into
- * a zero-length subtitle.
+ * **`exclude` drops the line being dragged.** Without it an edge snaps to
+ * itself the instant the drag begins, and the other end of the same line pulls
+ * it into a zero-length subtitle.
  */
 export function utteranceEdges(
   utterances: { id: string; start: number; end: number }[],

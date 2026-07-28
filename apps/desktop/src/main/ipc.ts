@@ -246,16 +246,10 @@ export function registerIpc(): void {
    * Change the subtitle line length and re-split every transcript that can be,
    * without going near the network.
    *
-   * Re-splitting starts from the archived provider response, not from the
-   * stored transcript. `segmentTranscript` works per utterance and never merges
-   * across them, so re-splitting an already-split transcript can only ever cut
-   * it finer — a longer line would silently do nothing. The original long
-   * utterances survive only in `raw/`.
-   *
-   * Assets with no archived response (transcribed before it was kept) keep the
-   * subtitles they have; the setting still applies to their next transcription.
-   * They are reported back so the UI can say which, rather than leaving the
-   * user to notice that some clips did not move.
+   * **Re-splitting starts from the archived provider response, never from the
+   * stored transcript** — see projects.md `loadRaw` for why the stored one
+   * cannot answer. Assets with no archive keep the subtitles they have and are
+   * reported back so the UI can name them.
    */
   ipcMain.handle(
     'project:setCaptionStyles',

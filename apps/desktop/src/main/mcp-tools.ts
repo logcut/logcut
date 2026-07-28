@@ -210,13 +210,8 @@ function failed(message: string): ToolOutcome {
   return { text: message, isError: true }
 }
 
-/**
- * Which asset a command names.
- *
- * Optional while there is one asset, because insisting on it would make every
- * simple edit a two-call affair. With several, refusing beats picking: the
- * wrong guess silently edits the wrong clip's subtitles.
- */
+/** Which asset a command names. Optional while there is one; with several,
+ *  **refusing beats guessing** — see mcp-tools.md. */
 async function assetIdFor(args: ToolArgs): Promise<string | { error: string }> {
   const given = args['assetId']
   if (typeof given === 'string' && given !== '') return given

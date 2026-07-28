@@ -40,16 +40,9 @@ import { useCaptionFonts } from '@/hooks/useCaptionFonts'
  */
 const REFERENCE_HINT = `Pixels at ${CAPTION_REFERENCE_HEIGHT}p. Stored relative to the picture, so it holds at any export size.`
 
-/**
- * One setting per row: a fixed-width name, then the control taking the rest.
- *
- * **Every row is the same height**, whatever is in it. A slider is 16px of
- * thumb, a bordered toggle is 22px, a select is 22px plus its border — left to
- * their natural heights the rows come out three different sizes and the gaps
- * between them read as uneven, which is what makes a column of unrelated
- * controls look broken rather than merely varied. The name column lining up is
- * the other half of it.
- */
+/** One setting per row: a fixed-width name, the control, a fixed-width readout.
+ *  **Every row is the same height whatever is in it** — see SubtitleEditor.md
+ *  for why that is not cosmetic. */
 function StyleRow({
   label,
   readout,
@@ -88,11 +81,9 @@ function StyleRow({
 /**
  * A number typed rather than dragged.
  *
- * The value is held as a string while it is being edited, so a half-typed or
- * momentarily empty box is not coerced into a number the rest of the panel
- * jumps to. It commits on blur or Enter, clamped; anything unparseable puts the
- * box back to the real value, which is the whole of the error handling a
- * numeric field needs.
+ * **Held as a string while being edited**, so a half-typed or momentarily empty
+ * box is not coerced into a number the rest of the panel jumps to. Commits on
+ * blur or Enter, clamped; anything unparseable puts the box back.
  */
 function NumberField({
   value,
@@ -401,16 +392,12 @@ interface SubtitleEditorProps {
 }
 
 /**
- * Subtitle editing: the second face of the Subtitles tab, reached by
- * double-clicking a block on the timeline or by the button on the tab's form.
+ * Subtitle editing: the toolbar, the style panel, and the list of lines.
  *
- * It is the tab's *content*, not an overlay over the panel. As an overlay it
- * covered the tab strip too, and a panel that loses its own navigation reads
- * as a different, broken screen rather than as this panel in another mode.
- *
- * Nothing about it is modal: the player keeps its full width beside it and
- * playback carries on, which is the whole point — subtitles get fixed while
- * watching them.
+ * **Nothing about it is modal.** The player keeps its full width beside it and
+ * playback carries on — subtitles get fixed while they are being watched, which
+ * is the whole reason this is a column and not a dialog. Where it lives and how
+ * it is opened: see SubtitleEditor.md.
  */
 export default function SubtitleEditor({
   utterances,

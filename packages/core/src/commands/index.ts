@@ -3,18 +3,13 @@ import type { SubtitleCommand, SubtitleOutcome } from './subtitle.ts'
 import type { Transcript } from '../types.ts'
 
 /**
- * Every edit the editor can make, as data.
+ * Every edit the editor can make, as data. One union across all scopes, each
+ * scope in its own module.
  *
- * One union across all scopes, each scope in its own module. The dividing line
- * between what belongs here and what does not is **whether the edit is a pure
- * transformation of the document**: importing media reads the disk and probes
- * the file, transcribing costs money and needs the network. Those are shell
- * actions. Putting them in this union would mean every consumer immediately
- * growing branches for "this one is async", "this one can fail", "this one
- * cannot be undone" — and the union would be worthless within a week.
- *
- * Timeline commands (`timeline.*`) are the next scope to land here; the
- * dispatch below gets a second branch when they do.
+ * **The dividing line is whether an edit is a pure transformation of the
+ * document** — importing media reads the disk, transcribing costs money and
+ * needs the network. Admitting those would grow every consumer a branch for
+ * "this one is async", "this one can fail", "this one cannot be undone".
  */
 export type EditCommand = SubtitleCommand
 

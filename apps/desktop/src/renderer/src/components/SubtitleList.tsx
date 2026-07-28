@@ -32,27 +32,21 @@ type TimeEdge = 'start' | 'end'
 const MS_PER_PIXEL = 10
 const DRAG_THRESHOLD_PX = 3
 
-/**
- * How much of the remaining distance the list closes each frame while chasing
- * the active line. ~0.18 lands it in a quarter of a second and reads as the
- * list gliding after the playhead rather than snapping to it.
- */
+/** How much of the remaining distance the list closes each frame while
+ *  chasing the active line. ~0.18 arrives in about a quarter second. */
 const FOLLOW_EASE = 0.18
 
-/**
- * How long the follow stays quiet after an action that anchored the view
- * itself. Long enough to cover a seek making its way back through the element's
- * events, short enough that nobody notices playback resuming its chase.
- */
+/** How long the follow stays quiet after an action that anchored the view
+ *  itself — long enough for a seek to make its way back through the
+ *  element's events. */
 const FOLLOW_QUIET_MS = 400
 
 /**
  * Everything a row can do, in one object with a stable identity.
  *
- * One bundle rather than a dozen separate callback props: the row is memoized,
- * and every extra prop is another value its shallow compare walks on each of
- * the list's renders — of which there are a great many, because the highlight
- * tracks the playhead.
+ * One bundle rather than a dozen callback props: the row is memoized and this
+ * list re-renders at pointer rate, so every extra prop is another value the
+ * shallow compare walks each time.
  *
  * The edit state machine stays in the list. Rows only report events.
  */
@@ -103,18 +97,14 @@ interface SubtitleRowProps {
 /**
  * One line.
  *
- * **Memoized, and every prop above is either a primitive or something the list
- * pins.** Scrubbing the timeline drags the highlight along, and with several
- * hundred lines spread over a thousand pixels a new one goes active every few
- * pixels of pointer travel — so this renders at pointer rate. Unmemoized that
- * meant the entire list, twenty-odd elements and a Radix dropdown per row,
- * hundreds of times a second: the timeline stuttered whenever this panel was
- * open and was smooth the moment it closed.
+ * **Memoized, and every prop above is either a primitive or something the
+ * list pins.** Scrubbing drags the highlight along at pointer rate; unmemoized
+ * that re-rendered the whole list — twenty-odd elements and a Radix dropdown
+ * per row — hundreds of times a second.
  *
- * Memoizing is only half of it. **A single prop rebuilt on each of the list's
- * renders — a fresh `speakerIds` array, an inline arrow — defeats the shallow
- * compare completely, and silently.** If this ever feels slow again, look at
- * what is being passed in before changing anything here.
+ * **One prop rebuilt on each of the list's renders — a fresh array, an inline
+ * arrow — defeats the shallow compare completely, and silently.** If this ever
+ * feels slow again, look at what is passed in before changing anything here.
  */
 const SubtitleRow = memo(function SubtitleRow({
   utterance,
@@ -135,6 +125,33 @@ const SubtitleRow = memo(function SubtitleRow({
   // fill. So the boundary exists wherever there is one, and only Add turns
   // itself off.
   const canAdd = previous !== undefined && utterance.start > previous.end
+
+  /**
+   * Whether this row's speaker menu exists yet. Until it is pressed the row
+   * renders a plain button and no Radix at all — the whole list mounts at once
+   * (no virtualisation, on purpose — see SubtitleList.md), so a dropdown per row
+   * would mean several hundred Radix roots in the one render that opens the
+   * panel.
+   *
+   * **It never goes back to false.** Tearing a menu down takes its trigger with
+   * it, and Radix returns focus to the trigger on close — to a node that no
+   * longer exists. Some rows carrying a menu is the intended end state.
+   */
+  const [menuMounted, setMenuMounted] = useState(false)
+
+  /** The same button either way: as the menu's trigger once there is a menu,
+   *  and as the thing that brings one into being before that. */
+  const speakerButton = (onClick?: () => void): JSX.Element => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-fit cursor-pointer items-center gap-inline rounded border border-transparent px-inline py-inline text-caption font-medium text-muted-foreground transition-colors hover:border-input hover:text-foreground"
+    >
+      <UserRound size={12} />
+      {utterance.speakerId === undefined ? 'No speaker' : `Speaker ${utterance.speakerId}`}
+      <ChevronDown size={12} />
+    </button>
+  )
 
   const timecodeCell = (edge: TimeEdge, className: string): JSX.Element => {
     if (timeEditEdge === edge) {
@@ -269,36 +286,34 @@ const SubtitleRow = memo(function SubtitleRow({
 
         {/* Always present, even on a line the ASR left unattributed:
                   it is the only place a speaker can be assigned, so hiding it
-                  would make those lines the ones you cannot fix. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-fit cursor-pointer items-center gap-inline rounded border border-transparent px-inline py-inline text-caption font-medium text-muted-foreground transition-colors hover:border-input hover:text-foreground"
-            >
-              <UserRound size={12} />
-              {utterance.speakerId === undefined ? 'No speaker' : `Speaker ${utterance.speakerId}`}
-              <ChevronDown size={12} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {speakerIds.map((speakerId) => (
-              <DropdownMenuCheckboxItem
-                key={speakerId}
-                checked={speakerId === utterance.speakerId}
-                onCheckedChange={() => handlers.onSpeakerSave(utterance.id, speakerId)}
+                  would make those lines the ones you cannot fix.
+                  The menu behind it is not — see `menuMounted`. */}
+        {menuMounted ? (
+          <DropdownMenu defaultOpen>
+            <DropdownMenuTrigger asChild>{speakerButton()}</DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {speakerIds.map((speakerId) => (
+                <DropdownMenuCheckboxItem
+                  key={speakerId}
+                  checked={speakerId === utterance.speakerId}
+                  onCheckedChange={() => handlers.onSpeakerSave(utterance.id, speakerId)}
+                >
+                  <UserRound size={12} />
+                  Speaker {speakerId}
+                </DropdownMenuCheckboxItem>
+              ))}
+              {speakerIds.length > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuItem
+                onSelect={() => handlers.onSpeakerSave(utterance.id, nextSpeakerId)}
               >
-                <UserRound size={12} />
-                Speaker {speakerId}
-              </DropdownMenuCheckboxItem>
-            ))}
-            {speakerIds.length > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuItem onSelect={() => handlers.onSpeakerSave(utterance.id, nextSpeakerId)}>
-              <Plus size={12} />
-              Add new speaker
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <Plus size={12} />
+                Add new speaker
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          speakerButton(() => setMenuMounted(true))
+        )}
 
         {timecodeCell('end', 'text-muted-foreground/60')}
 
@@ -338,11 +353,9 @@ interface SubtitleListProps {
   utterances: Utterance[]
   activeId: string | null
   /**
-   * Text click: jump there but stay paused. Clicking a line has to move the
-   * video — reading a line without seeing its frame is the whole reason this
-   * list sits beside a player — but this click also opens the editor, and a
-   * video that starts playing under the caret drags the highlight off the line
-   * being typed into.
+   * Text click: jump there but stay paused. The same click opens the editor, and
+   * a video playing on under the caret drags the highlight off the line being
+   * typed into.
    */
   onSeek(utterance: Utterance): void
   /** A timecode was retyped. Bounds are core's problem, not this component's. */
@@ -400,23 +413,6 @@ export default function SubtitleList({
     moved: boolean
   } | null>(null)
 
-  /**
-   * Only the rows on screen are rendered.
-   *
-   * `memo` on a row stops it re-rendering, but it cannot stop the row's element
-   * being *created* — that happens in the map below, before React has anything
-   * to compare. So the whole list used to be rebuilt on every frame of a
-   * timeline drag, for the sake of moving one highlight. This makes the cost
-   * proportional to the height of the window instead of to the length of the
-   * transcript.
-   *
-   * `estimateSize` is only the first guess; every row is measured for real once
-   * it mounts (see `measureElement`), because a line's height depends on how
-   * far its text wraps and on whether it is being edited.
-   *
-   * `overscan` keeps a few rows beyond each edge alive so a fast scroll does
-   * not expose blank space before the next render lands.
-   */
   // `utterances` through a ref as well: the handlers below read it, and
   // depending on it directly would rebuild the whole bundle — and with it
   // re-render every row — on any edit at all.
@@ -425,16 +421,13 @@ export default function SubtitleList({
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
   /**
-   * When the follow is allowed to resume. An action whose result is already
-   * where the user is looking pushes this out, and the follow ignores every
-   * request until it passes.
+   * When the follow may resume. An action whose result is already where the user
+   * is looking pushes this out.
    *
-   * A window rather than a one-shot flag, because one action produces more than
-   * one `activeId` change: adding a line writes the transcript *and* seeks, and
-   * the seek only reaches `applyTime` once the element reports back — by then
-   * the new line exists, resolves differently from the first pass, and changes
-   * the active line a second time. A flag cleared by the first change let that
-   * second one recentre, which is precisely the jump this exists to stop.
+   * **A window, not a one-shot flag**: one action changes `activeId` more than
+   * once — adding a line writes the transcript *and* seeks, and the seek reports
+   * back later, against a transcript that by then resolves differently. A flag
+   * cleared by the first change let the second one recentre.
    *
    * Set where the action happens, never inferred from what `activeId` did.
    */
@@ -446,30 +439,22 @@ export default function SubtitleList({
   /**
    * Glide the active line to the middle, a fraction of the way each frame.
    *
-   * Not `scrollIntoView`, with or without `behavior: 'smooth'`. Plain, it
-   * teleports. Smooth, it is worse: dragging the timeline re-targets it every
-   * frame, and each call restarts the browser's ~300ms animation, so the list
-   * never arrives anywhere and crawls behind the pointer.
+   * **Not `scrollIntoView`.** Plain, it teleports. Smooth is worse: dragging the
+   * timeline re-targets it every frame and each call restarts the browser's
+   * ~300ms animation, so the list never arrives anywhere. Easing by hand
+   * converges however often the target moves.
    *
-   * Easing by hand converges no matter how often the target moves — each frame
-   * simply closes part of whatever distance is left, so a target that keeps
-   * running just keeps it moving. That is also what makes it read as following
-   * rather than jumping.
+   * Measured with rects, not `offsetTop`: nothing between the rows and the
+   * scroller is positioned, so offsets would be relative to something further up
+   * the tree entirely.
    *
-   * Measured with rects rather than `offsetTop`: the rows' offsetParent is not
-   * the scroller (nothing between them is positioned), so offsets would be
-   * relative to something further up the tree entirely.
-   *
-   * **The frame handle is a local, and the cleanup is this effect's own.** It
-   * lived in a ref once, guarded by `if (ref.current === 0)`, with the cancel
-   * in a separate mount-only effect that never put the ref back to 0 — so
-   * StrictMode's mount/unmount/remount left a stale handle sitting there and
-   * the guard refused to schedule anything ever again. The follow was dead in
+   * **The frame handle is a local, and the cleanup is this effect's own.** Held
+   * in a ref, guarded by `if (ref.current === 0)` and cancelled from a
+   * mount-only effect that never reset it, StrictMode's remount left a stale
+   * handle and the guard refused to schedule anything ever again — dead in
    * development from the first render, and nothing about it looked broken.
    *
-   * Not while a row is being edited — the list must not move under the caret.
-   * That also covers clicking a line's text, which begins an edit: the list
-   * stays where it is instead of yanking the line you just aimed at.
+   * Not while a row is being edited: the list must not move under the caret.
    */
   useEffect(() => {
     if (editingId !== null) return

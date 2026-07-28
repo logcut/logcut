@@ -17,13 +17,9 @@ interface MediaTabProps {
 }
 
 /**
- * The library, not the edit. Selecting an entry only highlights it — an asset
- * reaches the timeline by being dragged there, which is what MEDIA_ASSET_DRAG
- * carries.
- *
- * Two layouts: an empty project is one large import plate, and once anything is
- * in it the plate shrinks to a toolbar button above a grid of thumbnails. Files
- * can be dropped on the panel in either state.
+ * The library, not the edit. **Selecting an entry only highlights it** — an
+ * asset reaches the timeline by being dragged, which is what
+ * MEDIA_ASSET_DRAG carries. Layouts and drop behaviour: see MediaTab.md.
  */
 export default function MediaTab({
   assets,

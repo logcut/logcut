@@ -15,22 +15,14 @@ import type { CaptionStyle } from '../caption-style.ts'
 import type { EditFocus, Transcript, Utterance } from '../types.ts'
 
 /**
- * Every edit that changes a transcript, as data.
+ * Every edit that changes a transcript, as data (see commands/index.md).
  *
- * The functions in `transcript.ts` take a transcript and give one back, which
- * is exactly what a caller holding the transcript wants and exactly what a
- * caller on the other end of a wire cannot express. These are the same edits
- * written as values: a chat model can emit one, an IPC channel can carry one,
- * a log can replay one.
+ * **`kind` carries its scope as a prefix rather than sitting beside a separate
+ * `scope` field**, which keeps this a one-level discriminated union — a nested
+ * one needs nested switches, and a missing branch stops being a type error.
  *
- * `kind` carries its scope as a prefix rather than sitting next to a separate
- * `scope` field. It stays a one-level discriminated union that way — a nested
- * one needs nested switches, and a missing branch stops being a type error —
- * and the string doubles as the name this edit goes by everywhere else: a tool
- * name for a model, an entry in a log, the subject of an error message.
- *
- * `assetId` travels in the command because one batch may touch the subtitles of
- * several assets at once. A rubber-band delete across clips already does.
+ * `assetId` travels in the command because one batch may touch several assets:
+ * a rubber-band delete across clips already does.
  */
 export type SubtitleCommand =
   | { kind: 'subtitle.setText'; assetId: string; id: string; text: string }
@@ -64,20 +56,14 @@ export type SubtitleCommand =
 /**
  * What one command did.
  *
- * `changed: false` is an ordinary answer, not a failure — asking for the text a
- * line already has, or a merge with nothing after it, is a no-op the caller
- * should be able to see rather than a reason to throw. It is also what keeps a
- * pointless click out of the undo history.
+ * **`changed: false` is an ordinary answer, not a failure** — asking for text a
+ * line already has is a no-op the caller should see rather than a reason to
+ * throw, and it is what keeps a pointless click out of the undo history.
  *
- * **`lines` is what makes a reader able to skip re-reading.** A caller with no
- * copy of the document — an assistant working from queries — would otherwise
- * have to fetch the transcript again after every edit to know what it now says.
- * Reporting the affected lines as they now stand costs a few hundred bytes and
- * saves a round trip and a page of context each time.
- *
- * Two commands report no lines, for opposite reasons: `remove` names what is
- * gone (`removedIds`), and `replaceAll` may touch hundreds at once, so it
- * reports only how many — a reader that needs the new text queries for it.
+ * `lines` reports the affected lines as they now stand, so a caller holding no
+ * copy of the document need not re-fetch. Two commands report none, for
+ * opposite reasons: `remove` names what is gone, `replaceAll` may touch
+ * hundreds and so reports only how many.
  */
 interface OutcomeBase {
   changed: boolean
@@ -149,14 +135,9 @@ function find(transcript: Transcript, idOrPrefix: string): Utterance | undefined
     : transcript.utterances.find((utterance) => utterance.id === resolved)
 }
 
-/**
- * Apply one command to one transcript.
- *
- * Every case delegates to the function that already implements the edit; this
- * layer only decides what the command meant and what to report back. Two
- * implementations of "merge two lines" would be one too many, and the second
- * one would be the one nobody tests.
- */
+/** Apply one command to one transcript. Every case delegates to the function
+ *  that already implements the edit; this layer only decides what the command
+ *  meant and what to report. */
 export function applySubtitleCommand(
   transcript: Transcript,
   command: SubtitleCommand

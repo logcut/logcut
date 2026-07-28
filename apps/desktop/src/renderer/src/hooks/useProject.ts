@@ -29,12 +29,7 @@ export type AsrState =
 interface EditableState {
   transcripts: Record<string, Transcript | null>
   clips: { id: string; assetId: string }[]
-  /**
-   * Included because captions are dragged and rotated on the picture, and an
-   * object moved on a canvas is expected to come back with Cmd+Z. Treating
-   * them as settings instead — which is what they look like from the panel —
-   * left the one gesture that most obviously wants undo without it.
-   */
+  /** In the undo history, not in settings — see useProject.md. */
   captionStyles: CaptionStyles
 }
 
@@ -100,13 +95,11 @@ export interface UseProjectResult {
    */
   setCaptionStyles(styles: CaptionStyles, options?: { record?: boolean }): Promise<void>
   /**
-   * The single funnel for every edit: applies a batch, records one history
-   * entry, persists whatever changed, and hands the outcomes back so the caller
-   * can react to where the edits landed.
+   * The single funnel for every edit: applies a batch, records one history entry,
+   * persists what changed, hands the outcomes back.
    *
-   * A batch is deliberately the unit rather than a single command — an
-   * assistant's turn is several commands and must undo as one, and a click is
-   * simply a batch of one.
+   * **A batch is the unit, never a single command** — an assistant's turn is
+   * several commands and must undo as one (see useProject.md).
    */
   dispatch(commands: EditCommand[], options?: { record?: boolean }): CommandResult
   /**
@@ -121,12 +114,9 @@ export interface UseProjectResult {
   exportSrt(assetId: string): Promise<string | null>
 }
 
-/**
- * Owns everything about one open project: the detail record, the transcripts
- * of whatever is on the timeline, and the transcription job. Every mutation
- * goes through here so the persisted state and what the editor shows cannot
- * drift.
- */
+/** Owns one open project: its detail record, the transcripts of whatever is on
+ *  the timeline, and the transcription job. **Every mutation goes through
+ *  here**, so what is persisted and what is shown cannot drift. */
 export function useProject(projectId: string): UseProjectResult {
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const [transcripts, setTranscripts] = useState<Record<string, Transcript | null>>({})
@@ -352,14 +342,11 @@ export function useProject(projectId: string): UseProjectResult {
   /**
    * Change the longest subtitle line and re-split what can be re-split.
    *
-   * Like recognition, this clears the history rather than joining it: every
-   * older entry describes lines that no longer exist, and main has already
-   * written the new ones. Unlike recognition it costs nothing and touches no
-   * network, so it is free to be tried and tried again.
+   * **Clears the history rather than joining it**: every older entry describes
+   * lines that no longer exist, and main has already written the new ones.
    *
    * Returns the assets left alone for want of an archived provider response, so
-   * the caller can say which rather than let the user wonder why some clips did
-   * not move.
+   * the caller can name them instead of letting the user wonder.
    */
   const setMaxChars = useCallback(
     async (maxChars: number): Promise<string[]> => {

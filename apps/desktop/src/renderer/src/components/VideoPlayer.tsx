@@ -27,12 +27,12 @@ interface VideoPlayerProps {
    *  showing; this component only knows what it says. */
   onCaptionEdit(text: string): void
   /**
-   * Position, size and rotation dragged on the picture. Goes to whichever
-   * scope the style panel has selected — this component does not know which.
+   * Position, size and rotation dragged on the picture. Goes to whichever scope
+   * the style panel has selected — this component does not know which.
    *
-   * Called **once per gesture, on release**, not on every frame: the caption
-   * follows the pointer from this component's own state, and the document
-   * hears the result. One call is also one entry in the undo history.
+   * Called **once per gesture, on release**, never per frame: the caption
+   * follows the pointer from local state and the document hears the result. One
+   * call is also one undo entry.
    */
   onCaptionStyleChange(patch: Partial<CaptionStyle>): void
   /** CSS font-family for the caption; resolved by the caller. */
@@ -45,25 +45,10 @@ interface VideoPlayerProps {
  * The video sits centred in whatever space the pane gives it, letterboxed by
  * the panel surface on the short axis.
  *
- * The native `controls` bar is deliberately absent. It belongs to the file in
- * the element, and the element only ever holds one clip of a timeline that may
- * be made of several — its scrubber would measure the wrong thing, and its
- * clock would restart at every cut. Position is the timeline's job, so the bar
- * here carries only what a monitor needs: where playback is against the whole
- * timeline, a transport toggle, and fullscreen. Scrubbing lives on the
- * timeline, which is why there is no progress bar.
- *
- * Captions have no toggle: they show whenever the active asset has a
- * transcript, and there is nothing to show when it does not. A switch would
- * only ever be turned off to see a frame unobstructed, which the caption's
- * placement already allows.
- */
-/**
- * Where the caption block sits when it is narrower than the picture.
- *
- * `text-align` alone only moves the text inside the block; with a background
- * behind it, the block itself has to move too or "align left" leaves a centred
- * box with left-aligned text in it.
+ * **No native `controls`, and no caption toggle** — the reasons for both are
+ * in VideoPlayer.md. What matters here: the element holds one clip of a
+ * timeline that may have several, so its clock is not the timeline's, and
+ * position is reported against the timeline instead.
  */
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value))
 const clampSize = (value: number): number =>
@@ -135,16 +120,12 @@ export default function VideoPlayer({
   /**
    * What the gesture has changed so far, not yet committed.
    *
-   * A drag used to write to the document on every frame. That is one state
-   * update per frame in the page above, and it re-renders everything the
-   * editor is showing — the subtitle list and the whole style panel — when the
-   * only thing that has to move is this one block. Measured on a packaged
-   * build, a four-second drag spent ~660ms in React, a third of it inside the
-   * panel's own controls.
+   * Writing to the document per frame re-rendered everything the editor shows —
+   * the subtitle list and the whole style panel — to move one block; a
+   * four-second drag spent ~660ms in React on a packaged build.
    *
-   * So the gesture keeps its result here and the document hears about it once,
-   * on release. Held twice over: the ref is what the release reads (state set
-   * during a gesture is not visible to the handler that ends it), the state is
+   * **Held twice over**: the ref is what the release reads, because state set
+   * during a gesture is not visible to the handler that ends it; the state is
    * what makes the caption follow the pointer.
    */
   const pendingRef = useRef<Partial<CaptionStyle> | null>(null)
@@ -242,12 +223,11 @@ export default function VideoPlayer({
   /**
    * The gesture is over: hand the result to the document, once.
    *
-   * The overlay is dropped in the same breath. It does not flash back to the
-   * old value in between — the page applies the change to its own state before
-   * it goes to disk, so the next render already carries it.
+   * The overlay drops in the same breath without flashing back to the old value
+   * — the page applies the change to its own state before it goes to disk.
    *
-   * A press that never moved leaves `pendingRef` null and commits nothing,
-   * which is what keeps a click that only selects out of the undo history.
+   * A press that never moved leaves `pendingRef` null and commits nothing, which
+   * is what keeps a click that only selects out of the undo history.
    */
   const endDrag = (event: ReactPointerEvent<HTMLElement>): void => {
     if (dragRef.current?.pointerId !== event.pointerId) return

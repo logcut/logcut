@@ -61,11 +61,8 @@ const SELECTION_EDGE_PX = 1
 /** Mirrors --timeline-media-strip-height; the frame maths needs the number. */
 const STRIP_BAND_HEIGHT = 39
 
-/**
- * How far the pointer may wander and still count as a click rather than a
- * drag. A press is ambiguous until it either moves or is released, and the
- * hand slips a pixel or two on the way up.
- */
+/** How far the pointer may wander and still count as a click — the hand slips
+ *  a pixel or two on the way up (see Timeline.md). */
 const CLICK_SLOP_PX = 3
 
 /** A thumb narrower than this is not worth aiming at, however deep the zoom. */
@@ -80,13 +77,12 @@ const MIN_THUMB_PX = 24
 const MIN_ZOOM = 0.25
 
 /**
- * Where each frame of the filmstrip band comes from, laid left to right.
+ * Where each frame of the filmstrip band comes from, laid left to right (see
+ * Timeline.md).
  *
- * Frames keep their own aspect ratio and repeat once the clip is wider than
- * the sheet has frames for. Scaling the sheet to the clip's width instead is
- * what squashed every face: the sheet is
- * FILMSTRIP_FRAMES frames wide no matter how many pixels the clip occupies,
- * so the two only agree by accident.
+ * **Frames keep their own aspect ratio and repeat.** Scaling the sheet to the
+ * clip's width is what squashed every face: the sheet is FILMSTRIP_FRAMES wide
+ * however many pixels the clip occupies, so the two agree only by accident.
  */
 function filmstripTiles(
   clipWidthPx: number,
@@ -161,12 +157,8 @@ interface TimelineProps {
   onTogglePlay(): void
   /** An asset was dragged here from the media library. */
   onDropAsset(assetId: string): void
-  /**
-   * A press landed on a subtitle block, with the time it snapped to. Opening
-   * the editor is a single click: the block is a few pixels wide, and asking
-   * for two hits on it inside the platform's double-click window was the
-   * larger half of "subtitles are hard to click".
-   */
+  /** A press landed on a subtitle block, with the time it snapped to. A single
+   *  click, not a double — see Timeline.md. */
   onEditSubtitlesAt(timeMs: number): void
   /** Whether drags land on nearby landmarks. Off is a real working mode — a
    *  line placed deliberately a few frames off an edge cannot be nudged there
@@ -175,9 +167,10 @@ interface TimelineProps {
 }
 
 /**
- * One lane: a fixed head naming the track, and the content area the clips are
- * positioned in. The head is inside the scale-free region deliberately — it
- * must not move when the content is scaled or scrolled.
+ * One lane: a fixed head, and the content area the clips are positioned in.
+ *
+ * **The head sits inside the scale-free region deliberately.** It must not
+ * move when the content is scaled or scrolled.
  */
 function TimelineTrack({
   icon,
@@ -258,23 +251,15 @@ export default function Timeline({
   /** Where the playhead is, in timeline ms. A ref, not state: it changes every
    *  animation frame during playback and must not re-render anything. */
   const playheadMsRef = useRef(0)
-  /**
-   * What the drag that is running means. Fixed at pointerdown by where the
-   * press landed, and never reconsidered: a gesture that changed meaning
-   * halfway through would be unusable.
-   */
+  /** What the running drag means. Fixed at pointerdown by where the press
+   *  landed, and **never reconsidered** on move (see Timeline.md). */
   const dragRef = useRef<'scrub' | 'marquee' | 'trim' | 'none'>('none')
   /**
-   * The edge being dragged, everything it moves, and how far.
+   * The edge being dragged, everything it moves, and how far — a shift, not a
+   * destination (see Timeline.md).
    *
-   * A shift rather than a destination, because a drag on one end of a
-   * selection moves **all** of their matching ends by the same amount — the
-   * lines keep their relative timing, which is the only reading of "drag the
-   * selection" that does not silently collapse them onto each other.
-   *
-   * Held here rather than pushed out on every move: the transcript is
-   * rewritten once, on release, so a drag is one undo step and not one per
-   * pixel.
+   * Held here rather than pushed out on every move: the transcript is rewritten
+   * once, on release, so a drag is one undo step and not one per pixel.
    */
   const [trim, setTrim] = useState<{
     edge: 'start' | 'end'
@@ -283,11 +268,8 @@ export default function Timeline({
     originMs: number
     deltaMs: number
   } | null>(null)
-  /**
-   * A press that has not yet turned into a drag. Outside the ruler the
-   * playhead must not move until the press is known to be a click — dragging
-   * to select is not a request to seek.
-   */
+  /** A press that has not yet turned into a drag. Outside the ruler the playhead
+   *  must not move until the press is known to be a click (see Timeline.md). */
   const pendingClickRef = useRef<{
     timeMs: number
     clientX: number
@@ -422,9 +404,8 @@ export default function Timeline({
    * How far from a landmark a drag still lands on it, converted from a fixed
    * pixel distance at the current zoom.
    *
-   * Pixels rather than a fixed duration because that is what the gesture is:
-   * "near enough on screen". A tolerance in milliseconds would be unusably
-   * wide zoomed in — covering whole words — and imperceptible zoomed out.
+   * **Pixels, never a duration.** A tolerance in milliseconds would cover whole
+   * words zoomed in and be imperceptible zoomed out.
    */
   const snapToleranceMs = (): number => (snapEnabled && scale > 0 ? SNAP_PX / scale : 0)
 
@@ -437,13 +418,12 @@ export default function Timeline({
   }
 
   /**
-   * Everything the user can see moves now; only the element's own seek waits.
+   * Everything visible moves now; only the element's own seek waits.
    *
-   * The playhead and the subtitle highlight are driven from the pointer, not
-   * from the element: `timeupdate` fires about 4Hz and only once a seek has
-   * finished, so a 60Hz drag hung on it looks like it is stuttering. The
-   * `currentTime` write is coalesced to one per frame — asking a multi-gigabyte
-   * file to seek on every pointermove is what makes the drag itself stutter.
+   * The playhead and the highlight are driven from the pointer because
+   * `timeupdate` is ~4Hz and only fires once a seek completes. The `currentTime`
+   * write is coalesced to one per frame — asking a multi-gigabyte file to seek on
+   * every pointermove is what makes the drag itself stutter.
    */
   const seekTo = (timeMs: number): void => {
     movePlayhead(timeMs)
@@ -754,12 +734,11 @@ export default function Timeline({
   }
 
   /**
-   * Wheel with the middle button held (or Cmd/Ctrl) zooms; otherwise the wheel
-   * pans, which only does anything once zoomed in past the window.
+   * Wheel: zoom with a modifier, pan otherwise (see Timeline.md).
    *
-   * Bound natively rather than through onWheel because React registers wheel
-   * listeners as passive, and a passive listener cannot preventDefault — which
-   * both branches need, or the gesture reaches the page behind.
+   * **Bound natively, not through `onWheel`.** React registers wheel listeners
+   * as passive, and a passive listener cannot `preventDefault` — which both
+   * branches need, or the gesture reaches the page behind.
    */
   useEffect(() => {
     const container = containerRef.current

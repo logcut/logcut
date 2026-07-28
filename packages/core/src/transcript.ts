@@ -7,10 +7,9 @@ import type { Transcript, Utterance } from './types.ts'
  * Index of the first utterance still running at `timeMs`, or `length` when the
  * time is past the last one.
  *
- * Binary search: the lookups built on this run on every timeupdate (~4Hz)
- * against transcripts that reach a few thousand utterances for an hour of
- * speech. Requires utterances sorted by `start` and non-overlapping, which is
- * how the ASR returns them and how segmentation preserves them.
+ * **Requires utterances sorted by `start` and non-overlapping** — which is how
+ * the ASR returns them and how segmentation preserves them. Binary search
+ * because the lookups on top of this run on every timeupdate.
  */
 function firstEndingAfter(utterances: Utterance[], timeMs: number): number {
   let low = 0
@@ -24,12 +23,12 @@ function firstEndingAfter(utterances: Utterance[], timeMs: number): number {
 }
 
 /**
- * Index of the utterance covering `timeMs`, or -1 when the time falls in a gap
- * between utterances or outside the transcript. `end` is exclusive, so the
- * boundary between two adjacent utterances belongs to the later one.
+ * Index of the utterance covering `timeMs`, or -1 in a gap or outside the
+ * transcript. **`end` is exclusive**, so the boundary between two adjacent
+ * utterances belongs to the later one.
  *
- * This is the lookup for "which line is playing", where a gap genuinely means
- * no line. For resolving a click, use findNearestUtteranceIndex.
+ * "Which line is playing". For resolving a click use
+ * `findNearestUtteranceIndex` — the split is deliberate, see transcript.md.
  */
 export function findUtteranceIndexAt(utterances: Utterance[], timeMs: number): number {
   const index = firstEndingAfter(utterances, timeMs)
@@ -37,15 +36,9 @@ export function findUtteranceIndexAt(utterances: Utterance[], timeMs: number): n
   return utterance && timeMs >= utterance.start ? index : -1
 }
 
-/**
- * Same, but a time in a gap or off either end resolves to the closest
- * utterance instead of nothing. Only an empty list gives -1.
- *
- * The timeline needs this rather than an exact hit: it is fit-to-width, so a
- * line is a few pixels wide and the silence between two lines is exactly as
- * clickable. Requiring a hit made clicking a subtitle fail most of the time,
- * with no feedback to say why.
- */
+/** Same, but a gap or either end resolves to the closest utterance instead of
+ *  nothing; only an empty list gives -1. "Which line did the user mean" — see
+ *  transcript.md for why this must stay separate. */
 export function findNearestUtteranceIndex(utterances: Utterance[], timeMs: number): number {
   if (utterances.length === 0) return -1
   const index = firstEndingAfter(utterances, timeMs)
@@ -60,12 +53,9 @@ export function findNearestUtteranceIndex(utterances: Utterance[], timeMs: numbe
   return timeMs - previous.end <= candidate.start - timeMs ? index - 1 : index
 }
 
-/**
- * Return a new transcript with one utterance's text replaced.
- * Words are intentionally left untouched: they carry the original ASR timing
- * anchors, while utterance.text is the single source of truth for display and
- * SRT export.
- */
+/** Return a new transcript with one utterance's text replaced. **`words` are
+ *  left untouched**: they carry the original ASR timing anchors, while
+ *  `utterance.text` is the source of truth for display and SRT export. */
 /**
  * Merge a patch into one line's own styling.
  *
@@ -156,15 +146,11 @@ function joinText(before: string, after: string): string {
 }
 
 /**
- * Fold the utterance after `firstId` into it: one line spanning both, with the
- * silence between them swallowed.
+ * Fold the utterance after `firstId` into it, swallowing the silence between
+ * (see transcript.md).
  *
- * The ASR splits on pauses, so it routinely cuts a sentence in half at a breath.
- * Merging is how that gets undone, and it is a text operation — `words` are
- * concatenated untouched because they are the original timing anchors.
- *
- * Returns the same object when `firstId` is unknown or last, so callers can
- * compare by identity to know nothing happened.
+ * `words` are concatenated untouched — they are the original timing anchors.
+ * Returns the same object when `firstId` is unknown or last.
  */
 export function mergeUtterances(transcript: Transcript, firstId: string): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === firstId)
@@ -191,16 +177,11 @@ export function mergeUtterances(transcript: Transcript, firstId: string): Transc
 }
 
 /**
- * Drop utterances by id.
+ * Drop utterances by id. **The lines around them keep their own timings** — the
+ * removed span becomes silence rather than the rest sliding earlier (see
+ * transcript.md).
  *
- * The lines around them keep their own timings — the removed span becomes
- * silence rather than the rest sliding earlier. Subtitles are annotations on
- * a timeline they do not own: closing the gap would put every later line out
- * of step with the audio it belongs to. Cutting the media itself is a clip
- * operation and lives nowhere near here.
- *
- * Returns the same object when nothing matched, so a caller comparing by
- * reference can skip an empty undo entry.
+ * Returns the same object when nothing matched.
  */
 export function removeUtterances(transcript: Transcript, ids: string[]): Transcript {
   const doomed = new Set(ids)
@@ -210,16 +191,9 @@ export function removeUtterances(transcript: Transcript, ids: string[]): Transcr
   return { ...transcript, utterances }
 }
 
-/**
- * Put an empty utterance in the silence after `afterId`.
- *
- * It fills the gap exactly rather than taking a fixed length: the gap is the
- * only place it can go without overlapping its neighbours, and the editor only
- * offers this where a gap exists.
- *
- * Returns the same object when `afterId` is unknown or last, or when the two
- * lines already touch — there is nowhere to put it.
- */
+/** Put an empty utterance in the silence after `afterId`, filling the gap
+ *  exactly. Returns the same object when there is nowhere to put it — unknown
+ *  or last id, or the two lines already touch. */
 export function insertUtteranceAfter(transcript: Transcript, afterId: string): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === afterId)
   const before = transcript.utterances[index]
@@ -277,13 +251,7 @@ export function clampUtteranceTime(
   return Math.round(Math.min(Math.max(timeMs, lower), Math.max(lower, upper)))
 }
 
-/**
- * Move one edge of a line.
- *
- * Clamping rather than rejecting: the field is free text and also draggable,
- * and silently refusing a value leaves the user staring at a number that did
- * not take. Landing on the nearest legal value is visible and undoable.
- */
+/** Move one edge of a line. **Clamped, never rejected** (see transcript.md). */
 export function setUtteranceTime(
   transcript: Transcript,
   id: string,
@@ -309,14 +277,8 @@ export function setUtteranceTime(
   }
 }
 
-/**
- * Every speaker the transcript mentions, in the order a list should show them.
- *
- * Sorted numerically where the id is a number — the provider hands out "1",
- * "2", … "11", and sorting those as text puts 11 between 1 and 2. Anything
- * non-numeric sorts as text after them, so an id we did not create still has a
- * stable place.
- */
+/** Every speaker the transcript mentions, **sorted numerically** where the id is
+ *  a number — see transcript.md for why text sorting is wrong here. */
 export function speakerIdsOf(transcript: Transcript): string[] {
   const ids = [...new Set(transcript.utterances.map((u) => u.speakerId).filter(isSpeakerId))]
   return ids.sort((a, b) => {
@@ -334,13 +296,8 @@ function isSpeakerId(id: string | undefined): id is string {
   return id !== undefined && id !== ''
 }
 
-/**
- * The lowest positive integer no one is using, as a string.
- *
- * Reusing a freed number rather than always counting up: after reassigning the
- * only line of "Speaker 7" away, adding a speaker should offer 7 again instead
- * of climbing to 12 and leaving a gap that means nothing.
- */
+/** The lowest positive integer no one is using, as a string — freed numbers are
+ *  reused (see transcript.md). */
 export function nextSpeakerId(transcript: Transcript): string {
   const taken = new Set(speakerIdsOf(transcript))
   let candidate = 1

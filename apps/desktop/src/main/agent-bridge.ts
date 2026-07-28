@@ -5,22 +5,14 @@ import type { WebContents } from 'electron'
 import type { AgentDispatchResult, AgentRequest, AgentResponse, AgentSession } from '../shared/ipc'
 
 /**
- * The way in for a caller with no window.
+ * The way in for a caller with no window (see agent-bridge.md).
  *
- * Every other channel on this bridge runs renderer → main: the renderer wants a
- * file read, a dialog shown, ffmpeg run. This one runs the other way, because
- * the thing an agent needs to act on — the open project and its transcripts —
- * lives in the renderer, and an MCP client lives outside the app entirely.
- *
- * Main holds no document of its own and deliberately so. The renderer is not a
- * cache of some authoritative copy over here; it *is* the copy, and this module
+ * **Main holds no document of its own, deliberately.** The renderer is not a
+ * cache of an authoritative copy over here; it *is* the copy, and this module
  * only carries questions to it and answers back. That is what keeps an agent's
- * edits and the user's edits landing in the same undo history without anything
- * having to be kept in sync.
+ * edits and the user's edits in one undo history with nothing to keep in sync.
  *
- * The cost is that there must be an editor on screen. That is a real limit —
- * nothing can be automated with the app closed — and it is the same limit every
- * comparable integration accepts.
+ * The cost is that an editor must be on screen.
  */
 
 /**

@@ -44,27 +44,19 @@ const MIN_CHAT_WIDTH = 280
 const DEFAULT_CHAT_WIDTH = 340
 const MIN_SUBTITLES_WIDTH = 280
 const DEFAULT_SUBTITLES_WIDTH = 340
-/**
- * The two gaps, mirrored from CSS because the split maths needs the numbers.
- * `--space-component` around the outside of the panels, `--space-compact`
- * between them: the cards read as one group that way, rather than as pieces
- * spaced the same distance from each other as from the window.
- */
+/** Mirrored from CSS (`--space-component`, `--space-compact`), which the split
+ *  maths needs as numbers. */
 const OUTER_GAP = 8
 const PANE_GAP = 6
 
 /**
- * The tab panel and the player open at equal width — they share the upper row,
- * and neither is the one the eye should go to first.
+ * The tab panel and the player open at equal width.
  *
- * The chat column is taken out before the split rather than included in it: it
- * is a fixed number of pixels, so the row being halved is what is left of the
- * window once the column showing on open and every gap have had theirs. The
- * subtitle editor is not subtracted because it starts closed; opening it
- * re-fits the tab panel then (see `fitTabs`).
+ * What is halved is the row *minus* the chat column and every gap — those are
+ * fixed pixels and take no part in the split. The subtitle column is not
+ * subtracted because it starts closed; opening it re-fits through `fitTabs`.
  */
 function defaultTabsWidth(): number {
-  // Two outer paddings plus the two handles between the three columns.
   const consumed = OUTER_GAP * 2 + PANE_GAP * 2 + DEFAULT_CHAT_WIDTH
   return clamp(
     Math.round((window.innerWidth - consumed) / 2),
@@ -115,7 +107,6 @@ export default function EditorPage({
   const [tab, setTab] = useState('media')
   /** Media-library highlight only. What is being edited is on the timeline. */
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
-  /** The clip the timeline has selected — what Delete removes. */
   /** Clips the timeline has selected — what Delete removes. A set, because a
    *  rubber band takes whatever it covers. */
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
@@ -133,20 +124,23 @@ export default function EditorPage({
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
-  /** Where the playhead is, on the timeline's clock. Held here because the
-   *  toolbar acts on it and a ref would not re-enable its buttons. */
-  const [playheadMs, setPlayheadMs] = useState(0)
-  /** Snapping is on by default: lining edges up is the common intent, and the
-   *  toolbar says plainly that it can be turned off. */
-  const [snapEnabled, setSnapEnabled] = useState(true)
-  /** The left-hand column. */
-  const [chatOpen, setChatOpen] = useState(true)
   /**
-   * The right-hand column. Closed on open: reading and correcting subtitles is
-   * something the user goes to, so clicking a line on the timeline is what
-   * brings the column in. Closing it again is always deliberate — nothing takes
-   * it away on its own.
+   * Where the playhead is, on the timeline's clock.
+   *
+   * A ref, not state. It changes on every frame of a drag, so as state it
+   * forced a re-render of this page every frame — defeating the bail-outs on
+   * the two ids below, which exist precisely so that moving *within* one line
+   * costs nothing. One per-frame state is enough to cancel every bail-out on
+   * the same tree.
+   *
+   * Nothing renders it. Its only reader is the split action, which runs on a
+   * click or a keystroke and reads the current value then.
    */
+  const playheadRef = useRef(0)
+  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [chatOpen, setChatOpen] = useState(true)
+  /** The right-hand column, closed on open. Nothing but the user ever closes
+   *  it again — see EditorPage.md. */
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
   /** Which subtitles the style panel writes to. Held raw; `liveScope` is what
    *  the rest of the page reads, so a scope that vanishes cannot be used. */
@@ -191,11 +185,8 @@ export default function EditorPage({
     [clips, assets]
   )
 
-  /**
-   * Every clip's subtitles on the timeline's own clock. Downstream this reads
-   * exactly like one transcript, which is what keeps the searches, the block
-   * merging and the highlight unaware that the timeline is made of pieces.
-   */
+  /** Every clip's subtitles on the timeline's own clock, and downstream this
+   *  must keep reading as one transcript — nothing below knows about pieces. */
   const utterances = useMemo(() => layUtterances(clips, transcripts), [clips, transcripts])
 
   /** Subtitle work targets the selected clip, or the first one laid down. */
@@ -214,13 +205,10 @@ export default function EditorPage({
 
   /**
    * Pull the tab panel back within bounds before a side column takes its width.
-   * The player is the only pane that flexes, so it is the one that absorbs the
-   * loss, and without this it is squeezed to nothing on a narrow window while
-   * the tab panel keeps a width no longer available.
    *
-   * The slices are passed in rather than read off state: the caller is opening
-   * a column, and its own slice has to count as present before the state that
-   * says so has been committed.
+   * The slices are arguments, not reads off state: the caller is opening a
+   * column, and its slice has to count as present before the state saying so
+   * has committed.
    */
   const fitTabs = (chat: number, subtitles: number): void => {
     setTabsWidth((current) =>
@@ -260,12 +248,8 @@ export default function EditorPage({
     )
   }
 
-  /**
-   * The one way in. Three things open this column — the title bar, clicking a
-   * subtitle on the timeline, and SubtitleTab's "Edit subtitles" — and each of
-   * them takes the same width out of the row, so the re-fit lives here rather
-   * than at any one of the three.
-   */
+  /** The one way in — three callers, so the re-fit belongs here and not at any
+   *  one of them (see EditorPage.md). */
   const openSubtitles = (): void => {
     if (!subtitlesOpen) fitTabs(chatSlice(), subtitlesWidth)
     setSubtitlesOpen(true)
@@ -299,7 +283,6 @@ export default function EditorPage({
   const activeSourceId =
     utterances.find((utterance) => utterance.id === activeUtteranceId)?.sourceId ?? null
 
-  /** Both the list and the inspector offer the same speakers. */
   // Memoized, like every other prop that reaches a subtitle row: those rows are
   // memoized components and a fresh array here would defeat all of it, silently
   // (see components/SubtitleList.tsx).
@@ -312,20 +295,11 @@ export default function EditorPage({
     [subtitleTranscript]
   )
 
-  /**
-   * The caption style, resolved. `base` is all that is settable today, but
-   * resolving through the core means per-speaker and per-line overrides start
-   * working the moment there is UI for them, rather than needing this read to
-   * be rewritten.
-   */
   const captionStyles = project?.captionStyles ?? DEFAULT_CAPTION_STYLES
 
-  /**
-   * The style the picture draws with, resolved for **the line being shown** —
-   * not for the project alone. Resolving only the base would mean a speaker's
-   * colour or a single line's size never appearing on the picture, which is the
-   * one place those settings exist to be seen.
-   */
+  /** Resolved for **the line being shown**, not for the project alone —
+   *  resolving only the base would hide every per-speaker and per-line
+   *  override on the one surface they exist to be seen on. */
   const captionLine = utterances.find((utterance) => utterance.id === captionUtteranceId) ?? null
   const captionStyle = resolveCaptionStyle(
     captionStyles,
@@ -338,22 +312,17 @@ export default function EditorPage({
    */
   const selectedLine = utterances.find((utterance) => utterance.id === activeUtteranceId) ?? null
 
-  /**
-   * A scope can stop existing while it is selected — the line is deselected,
-   * or the last line of a speaker is reassigned. Resolving it on every render
-   * rather than watching for those events means there is no moment where edits
-   * would land somewhere invisible.
-   */
+  /** A scope can stop existing while selected (the line is deselected, a
+   *  speaker's last line is reassigned). Resolved every render rather than
+   *  watched for, so no edit can land somewhere invisible. */
   const captionScope = liveScope(storedScope, speakerIds, selectedLine !== null)
 
   /**
    * The selected line, but only when the panel is actually scoped to it.
    *
-   * `selectedLine` follows the playhead, so it changes on every frame of a
-   * timeline drag. Feeding it to the two memos below unconditionally would
-   * rebuild them at that rate — and with them the whole style panel, whose
-   * Radix controls are not cheap to re-render — even though at any other scope
-   * the value is not read at all. Held to null there, the memos hold still.
+   * `selectedLine` follows the playhead and so changes every frame of a drag.
+   * At any other scope it is not read at all, so pinning it to null there is
+   * what keeps the memos below — and the whole style panel — still.
    */
   const scopeLine = captionScope.kind === 'line' ? selectedLine : null
 
@@ -420,6 +389,32 @@ export default function EditorPage({
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
 
   /**
+   * Cut the line under the playhead in two.
+   *
+   * Declining here — rather than in a disabled button — is what lets the
+   * toolbar and the shortcut share one implementation (see TimelineToolbar.md).
+   * The subtraction puts the time on the transcript's own clock, which is not
+   * the timeline's.
+   */
+  const handleSplit = useCallback((): void => {
+    const timeMs = playheadRef.current
+    const index = findUtteranceIndexAt(utterances, timeMs)
+    const line = index === -1 ? null : utterances[index]
+    if (!line) return
+    const clip = clips.find((candidate) => candidate.id === line.clipId)
+    dispatch([
+      {
+        kind: 'subtitle.split',
+        assetId: line.assetId,
+        id: line.sourceId,
+        timeMs: timeMs - (clip?.startMs ?? 0)
+      }
+    ])
+  }, [clips, dispatch, utterances])
+
+  const toggleSnap = useCallback((): void => setSnapEnabled((on) => !on), [])
+
+  /**
    * The single place a time becomes "which line", called both by the player's
    * timeupdate and — while scrubbing — by the timeline, which reports the
    * pointer directly because timeupdate is far too coarse to follow a drag.
@@ -437,35 +432,9 @@ export default function EditorPage({
    * Both setters bail out on an unchanged id — timeupdate alone is ~4Hz, and
    * this subtree carries every subtitle on screen.
    */
-  /**
-   * The line a cut would land in, with the moment to cut it at — or null when
-   * there is nothing to cut.
-   *
-   * Strict containment, like the burned caption: the playhead sitting in the
-   * silence between two lines is not "in" either of them, and a split there
-   * has no meaning. The time is translated onto the transcript's own clock
-   * here, because that is the clock the command speaks.
-   */
-  const splitTarget = useMemo(() => {
-    const index = findUtteranceIndexAt(utterances, playheadMs)
-    const line = index === -1 ? null : utterances[index]
-    if (!line) return null
-    const clip = clips.find((candidate) => candidate.id === line.clipId)
-    return {
-      assetId: line.assetId,
-      id: line.sourceId,
-      timeMs: playheadMs - (clip?.startMs ?? 0)
-    }
-  }, [clips, playheadMs, utterances])
-
-  const handleSplit = (): void => {
-    if (!splitTarget) return
-    dispatch([{ kind: 'subtitle.split', ...splitTarget }])
-  }
-
   const applyTime = useCallback(
     (timeMs: number): void => {
-      setPlayheadMs(timeMs)
+      playheadRef.current = timeMs
       const covering = findUtteranceIndexAt(utterances, timeMs)
       const nextCaption = covering === -1 ? null : (utterances[covering]?.id ?? null)
       setCaptionUtteranceId((current) => (current === nextCaption ? current : nextCaption))
@@ -478,18 +447,13 @@ export default function EditorPage({
   )
 
   /**
-   * The scrubbing path into `applyTime`, collapsed to one call per frame.
+   * The scrubbing path into `applyTime`, collapsed to one call per frame — a
+   * pointer outruns the screen, and React batches within an event but never
+   * across two (see EditorPage.md).
    *
-   * A pointer reports faster than the screen refreshes — on a 120Hz trackpad,
-   * several `pointermove` events can land between two frames — and each one
-   * arrives as its own event, so React batches within one but never across
-   * two. That means two or three full renders per frame for a picture that can
-   * only be painted once.
-   *
-   * Only the last position in a frame is worth anything, so the rest are
-   * dropped. This wraps the scrub path alone: `timeupdate` is ~4Hz and needs no
-   * help, and the callers that seek then immediately re-derive the highlight
-   * (see `openSubtitlesAt`) need it to happen now, not next frame.
+   * **The scrub path only.** `timeupdate` is ~4Hz and needs no help, and the
+   * callers that seek and then immediately re-derive the highlight (see
+   * `openSubtitlesAt`) need it to happen now, not next frame.
    */
   const scrubFrameRef = useRef(0)
   const scrubTimeRef = useRef(0)
@@ -523,14 +487,6 @@ export default function EditorPage({
   )
 
   /**
-   * Seeking before opening is what puts the double-clicked line in view: the
-   * highlight follows the playhead, and the list scrolls to it on its own.
-   *
-   * The seek lands on the line's own start rather than the clicked time, so a
-   * double-click in the silence between two lines still leaves the playhead
-   * inside the line the dialog opened on.
-   */
-  /**
    * Show a line in the editor. **Does not seek**: the press that got here has
    * already put the playhead where it was aimed, and jumping on to the line's
    * start would overrule that. Going to a line's beginning is what clicking
@@ -556,15 +512,11 @@ export default function EditorPage({
   /**
    * Put the last line a batch touched in view.
    *
-   * Offered rather than applied: whether an edit should move the playhead
-   * depends on who asked for it, not on what it did. A user editing a line is
-   * already looking at it — the seek would be a no-op at best and an
-   * interruption at worst — while an assistant editing ten lines has to show
-   * where it has been. So the same one function serves both, and each caller
-   * decides whether to follow.
+   * Offered, never applied on its own: whether an edit moves the playhead
+   * depends on who asked for it, so each caller decides (see EditorPage.md).
    *
-   * The core reports times on the transcript's own clock, so the offset of the
-   * clip the asset is laid down in goes back on here.
+   * The core reports on the transcript's own clock, so the clip's offset goes
+   * back on here.
    */
   const followFocus = useCallback(
     (result: CommandResult): void => {
@@ -615,12 +567,8 @@ export default function EditorPage({
     [dispatch, subtitleAssetId]
   )
 
-  /**
-   * The one edit that follows its own focus: a new line is empty, and the first
-   * thing anyone does with an empty subtitle is look at the frame it belongs
-   * to. Leaving the playhead where it was would put a blank row in the list
-   * with no way to know what should go in it.
-   */
+  /** The one user edit that follows its own focus: a new line is empty, and
+   *  what goes in it is decided by looking at the frame. */
   const handleAdd = useCallback(
     (afterId: string): void => {
       if (!subtitleAssetId) return
@@ -647,13 +595,8 @@ export default function EditorPage({
     return outcome?.kind === 'subtitle.replaceAll' ? outcome.count : 0
   }
 
-  /**
-   * An agent edits through the same funnel a click does, and **does** follow
-   * the focus: the user is not the one making these edits and has no idea where
-   * they landed, so the batch ends with the last touched line in view. That is
-   * the whole difference between the two entry points — the commands, the
-   * history entry and the persistence are identical.
-   */
+  /** An agent edits through the same funnel a click does, and **does** follow
+   *  the focus — that is the only difference between the two entry points. */
   useAgentBridge({
     session: () => ({
       project: project ? { id: project.id, name: project.name } : null,
@@ -678,14 +621,6 @@ export default function EditorPage({
   })
 
   /**
-   * The editor speaks the transcript's own clock; the timeline speaks its own,
-   * so a line's start has to be offset by its clip before anything can seek.
-   *
-   * `applyTime` runs immediately rather than waiting for the player's
-   * timeupdate: that arrives ~4Hz and only once the seek has completed, which
-   * is long enough for the highlight to visibly lag the click.
-   */
-  /**
    * The band hands back timeline ids; a transcript only knows its own. So the
    * lines are grouped by the asset they came from, one command each.
    *
@@ -706,17 +641,16 @@ export default function EditorPage({
   }
 
   /**
-   * Undo is a window-level shortcut, not a panel's: it has to work wherever
-   * the user just acted, and after deleting on the timeline the focus is on
-   * the timeline.
+   * Every window-level shortcut, in one listener so a new key cannot quietly
+   * shadow an existing one (see EditorPage.md).
    *
-   * Typing is left alone. An input, textarea or contenteditable has its own
-   * undo stack for the characters being typed, and hijacking Cmd+Z there
-   * would take back the previous *edit* instead of the last few keystrokes.
+   * The typing guard covers all of them. For a bare letter it is the whole
+   * premise — `n` in a subtitle is the letter n. For Cmd+Z it is subtler: an
+   * input has its own undo stack for the characters just typed, and taking
+   * that over would undo the previous *edit* instead.
    */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return
       const target = event.target
       if (
         target instanceof HTMLElement &&
@@ -726,13 +660,35 @@ export default function EditorPage({
       ) {
         return
       }
-      event.preventDefault()
-      if (event.shiftKey) redo()
-      else undo()
+      const key = event.key.toLowerCase()
+      // Either modifier: nothing here means Cmd+Ctrl, so accepting both costs
+      // no ambiguity and keeps a foreign keyboard working.
+      const accel = event.metaKey || event.ctrlKey
+
+      if (accel && key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) redo()
+        else undo()
+        return
+      }
+      // Split declines on its own when the playhead is not inside a line, the
+      // same way the toolbar button does — see TimelineToolbar.
+      if (accel && key === 'b') {
+        event.preventDefault()
+        handleSplit()
+        return
+      }
+      // A bare letter, so it must not fire as part of some other combination:
+      // Cmd+N and Ctrl+N belong to the window, and Alt+N starts a dead key on
+      // several layouts.
+      if (key === 'n' && !accel && !event.altKey) {
+        event.preventDefault()
+        toggleSnap()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo])
+  }, [undo, redo, handleSplit, toggleSnap])
 
   /**
    * An edge dragged on the timeline. The timeline speaks its own clock and its
@@ -771,6 +727,14 @@ export default function EditorPage({
     else video.pause()
   }
 
+  /**
+   * The editor speaks the transcript's own clock; the timeline speaks its own,
+   * so a line's start has to be offset by its clip before anything can seek.
+   *
+   * `applyTime` runs immediately rather than waiting for the player's
+   * timeupdate: that arrives ~4Hz and only once the seek has completed, which
+   * is long enough for the highlight to visibly lag the click.
+   */
   const seekToUtterance = useCallback(
     (utterance: Utterance): void => {
       const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
@@ -781,11 +745,9 @@ export default function EditorPage({
   )
 
   return (
-    // Panels are surfaces floating on the page background; the space between
-    // them is the background showing through, and is also what resizes them.
-    // The floors mirror the window's minWidth/minHeight (see main/index.ts).
-    // They matter on the web build and while the window is being resized, where
-    // the renderer can briefly be smaller than the shell allows.
+    // The floors mirror the window's minWidth/minHeight (see main/index.ts):
+    // they carry the web build, and the moments during a resize when the
+    // renderer is briefly smaller than the shell allows.
     <div className="flex h-screen min-h-[650px] min-w-[1180px] flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
@@ -797,11 +759,8 @@ export default function EditorPage({
         onToggleSubtitles={toggleSubtitles}
       />
 
-      {/* Full-height columns: the AI chat, the picture with its timeline, and
-          the subtitle editor on the far right — each side column only while it
-          is showing. Neither side column is a pane in the top row — each holds
-          a column of text, and that wants the window's whole height, which is
-          the height the timeline gives up by not spanning the window. */}
+      {/* Full-height columns, each side one rendered only while it shows —
+          not panes in the top row (see EditorPage.md). */}
       <div className="flex min-h-0 flex-1 px-component pb-component">
         {/* The AI chat column, holding its place until the feature is built.
             Deliberately still a placeholder rather than a component: a file of
@@ -831,9 +790,6 @@ export default function EditorPage({
                   onValueChange={setTab}
                   className="flex min-h-0 flex-1 flex-col gap-0"
                 >
-                  {/* An icon rail rather than two half-width pills: this is the
-                    panel every future tool arrives in, so it has to stay
-                    readable at a dozen entries. */}
                   <TabsList>
                     <TabsTrigger value="media">
                       <Film size={18} />
@@ -917,10 +873,9 @@ export default function EditorPage({
 
           <Panel className="flex shrink-0 flex-col" style={{ height: timelineHeight }}>
             <TimelineToolbar
-              canSplit={splitTarget !== null}
               onSplit={handleSplit}
               snapEnabled={snapEnabled}
-              onToggleSnap={() => setSnapEnabled((on) => !on)}
+              onToggleSnap={toggleSnap}
             />
             <Timeline
               durationMs={playback.durationMs}
@@ -946,14 +901,9 @@ export default function EditorPage({
           </Panel>
         </div>
 
-        {/* The subtitle editor column. Arrives by clicking a line on the
-            timeline, from SubtitleTab, or from the title bar; leaves only when
-            asked. The handle comes with it, so closing the column also takes
-            back its gap.
-
-            The empty state is for the title-bar route: opening the column on a
-            clip that has no transcript yet has to say why it is bare, whereas
-            the double-click route can only ever land on a line that exists. */}
+        {/* The handle is rendered with the column, so closing it takes the gap
+            back too. The empty state exists for the title-bar route alone: the
+            other two entrances start from a line that already exists. */}
         {subtitlesOpen && (
           <>
             <ResizeHandle orientation="vertical" onResize={resizeSubtitles} />

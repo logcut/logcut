@@ -1,16 +1,11 @@
 /**
- * Ids are UUIDs, which is right for storage and wrong for a conversation.
+ * Ids are UUIDs, which is right for storage and wrong for a conversation: a
+ * model has to quote one back, and at 36 characters that is expensive both ways
+ * and unrecoverable if one character is wrong.
  *
- * A model asked to edit a line has to quote its id back. At 36 characters that
- * is expensive to send, expensive to receive, and easy to get wrong by one
- * character in a way nothing can recover from — the id either matches or it
- * does not. Shortening to a prefix that is still unique costs nothing and
- * removes most of both problems.
- *
- * The two directions are deliberately separate functions. Shortening is a
+ * **The two directions are deliberately separate functions.** Shortening is a
  * presentation decision made where output is produced; accepting a prefix is an
- * input decision made where commands are read. Neither implies the other, and a
- * caller that only needs one should not carry the other.
+ * input decision made where commands are read. Neither implies the other.
  */
 
 /**

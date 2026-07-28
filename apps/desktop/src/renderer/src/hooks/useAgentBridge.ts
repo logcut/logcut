@@ -73,19 +73,14 @@ export function useAgentBridge(bridge: AgentBridge): void {
 }
 
 /**
- * This is the boundary where ids get shortened, and the only one.
+ * **The boundary where ids get shortened, and the only one.** Inside the app an
+ * id is the whole UUID; what leaves for a model is not.
  *
- * Inside the app an id is the whole UUID — the editor holds it, the core
- * matches on it, nothing benefits from it being shorter. What leaves for a
- * model does benefit: a UUID costs tokens to send and read, and a single wrong
- * character in one quoted back is unrecoverable.
+ * The map is built from **the whole document**, never from the lines being
+ * returned — see packages/core/src/short-id.ts for what breaks otherwise.
  *
- * The map is built from **the whole document**, not from the lines being
- * returned. Built per answer, the same line would come back as `a1b2c3d4` now
- * and `a1b2c3d45` after another was added, which reads as two different lines.
- *
- * Nothing has to be undone on the way in: commands accept a prefix as readily
- * as a full id (see packages/core/src/commands/subtitle.md).
+ * Nothing is undone on the way in: commands accept a prefix as readily as a
+ * full id.
  */
 function shorten(doc: EditDocument, alsoKnown: string[] = []): (id: string) => string {
   const map = shortIdMap([
