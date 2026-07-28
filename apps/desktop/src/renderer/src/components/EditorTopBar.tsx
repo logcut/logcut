@@ -1,4 +1,4 @@
-import { ChevronLeft, Settings } from 'lucide-react'
+import { ChevronLeft, PanelLeft, PanelRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import TitleBar from '@/components/TitleBar'
@@ -7,9 +7,12 @@ import { Input } from '@/components/ui/input'
 
 interface EditorTopBarProps {
   name: string
+  subtitlesOpen: boolean
+  chatOpen: boolean
   onBack(): void
   onRename(name: string): void
-  onOpenSettings(): void
+  onToggleSubtitles(): void
+  onToggleChat(): void
 }
 
 /**
@@ -22,9 +25,12 @@ interface EditorTopBarProps {
  */
 export default function EditorTopBar({
   name,
+  subtitlesOpen,
+  chatOpen,
   onBack,
   onRename,
-  onOpenSettings
+  onToggleSubtitles,
+  onToggleChat
 }: EditorTopBarProps): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -45,13 +51,13 @@ export default function EditorTopBar({
       {/* Sits right of the window controls: the only way back to the project
           list, since the title bar carries no other navigation. */}
       <Button
-        variant="ghost"
-        size="icon-sm"
+        variant="quiet"
+        size="icon-lg"
         title="Back to projects"
         className="shrink-0 [-webkit-app-region:no-drag]"
         onClick={onBack}
       >
-        <ChevronLeft size={16} />
+        <ChevronLeft />
       </Button>
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -81,15 +87,35 @@ export default function EditorTopBar({
         )}
       </div>
 
+      {/* Both side columns are toggled from this end, each icon facing the side
+          it controls, in the order the columns appear on screen. Settings used
+          to sit here and is now in the application menu (see main/menu.ts): it
+          belongs to the app, not to the project being edited, and a menu is
+          where a desktop app keeps it.
+
+          `aria-pressed` is both the state for assistive tech and what colours
+          the icon while a column is showing. */}
       <div className="flex flex-1 justify-end">
         <Button
-          variant="ghost"
-          size="icon-sm"
-          title="Settings"
+          variant="quiet"
+          size="icon-lg"
+          title={subtitlesOpen ? 'Hide subtitle editor' : 'Show subtitle editor'}
+          aria-pressed={subtitlesOpen}
           className="[-webkit-app-region:no-drag]"
-          onClick={onOpenSettings}
+          onClick={onToggleSubtitles}
         >
-          <Settings size={16} />
+          <PanelLeft />
+        </Button>
+
+        <Button
+          variant="quiet"
+          size="icon-lg"
+          title={chatOpen ? 'Hide AI chat' : 'Show AI chat'}
+          aria-pressed={chatOpen}
+          className="[-webkit-app-region:no-drag]"
+          onClick={onToggleChat}
+        >
+          <PanelRight />
         </Button>
       </div>
     </TitleBar>

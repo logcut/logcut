@@ -136,6 +136,12 @@ export interface LogcutApi {
   minimizeWindow(): Promise<void>
   toggleMaximizeWindow(): Promise<void>
 
+  /**
+   * The application menu's Settings item was chosen. The dialog belongs to the
+   * renderer, so the menu can only ask. Returns an unsubscribe function.
+   */
+  onOpenSettings(callback: () => void): () => void
+
   getSettingsStatus(): Promise<SettingsStatus>
   setApiKey(key: string): Promise<void>
   /** System UI locale (Electron app.getLocale), e.g. 'zh-CN', 'zh-TW', 'en-US'. */

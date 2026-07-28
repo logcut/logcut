@@ -183,8 +183,13 @@
   --spacing-control-sm: var(--size-control-sm);
   --spacing-control-md: var(--size-control-md);
   --spacing-control-lg: var(--size-control-lg);
+  /* All three icon steps, so that size-icon-lg is a real utility. An icon step
+     declared in tokens.css but never mapped here fails silently: Tailwind emits
+     nothing, and the glyph falls back to lucide's own width/height attribute
+     (24px) rather than to the step below. */
   --spacing-icon-sm: var(--icon-sm);
   --spacing-icon-md: var(--icon-md);
+  --spacing-icon-lg: var(--icon-lg);
 
   /* ---- Semantic spacing → Tailwind utilities.
      App code uses p-inset / gap-stack / mb-block, not numeric p-4 / gap-3

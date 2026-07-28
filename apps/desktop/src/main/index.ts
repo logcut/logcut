@@ -2,6 +2,7 @@ import { app, BrowserWindow, protocol } from 'electron'
 import path from 'node:path'
 import { registerIpc } from './ipc'
 import { handleMediaRequest, MEDIA_SCHEME } from './media'
+import { registerMenu } from './menu'
 import { flushTranscripts } from './projects'
 import { registerUpdater } from './updater'
 
@@ -17,7 +18,7 @@ function createWindow(): void {
     height: 850,
     // Below these the editor's panes stop being usable, so the window refuses
     // to shrink any further. The width has to hold four columns at once — the
-    // tab panel, the player, the inspector, and the gaps between them.
+    // tab panel, the player, the chat column, and the gaps between them.
     minWidth: 1180,
     minHeight: 650,
     title: 'LogCut',
@@ -56,6 +57,7 @@ function createWindow(): void {
 void app.whenReady().then(() => {
   protocol.handle(MEDIA_SCHEME, handleMediaRequest)
   registerIpc()
+  registerMenu()
   // After createWindow so the first state broadcast has somewhere to land;
   // the check itself is delayed well past startup regardless.
   createWindow()

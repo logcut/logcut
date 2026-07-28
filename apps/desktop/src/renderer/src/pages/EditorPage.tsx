@@ -20,7 +20,6 @@ import EditorTopBar from '@/components/EditorTopBar'
 import MediaTab from '@/components/MediaTab'
 import Panel from '@/components/Panel'
 import ResizeHandle from '@/components/ResizeHandle'
-import SettingsDialog from '@/components/SettingsDialog'
 import SubtitleEditor from '@/components/SubtitleEditor'
 import SubtitleTab from '@/components/SubtitleTab'
 import Timeline from '@/components/Timeline'
@@ -43,6 +42,8 @@ const MIN_TABS_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
 const MIN_SIDEBAR_WIDTH = 280
 const DEFAULT_SIDEBAR_WIDTH = 340
+const MIN_CHAT_WIDTH = 280
+const DEFAULT_CHAT_WIDTH = 340
 /**
  * The two gaps, mirrored from CSS because the split maths needs the numbers.
  * `--space-component` around the outside of the panels, `--space-compact`
@@ -56,14 +57,15 @@ const PANE_GAP = 6
  * The tab panel and the player open at equal width — they share the upper row,
  * and neither is the one the eye should go to first.
  *
- * The sidebar is taken out before the split rather than included in it: it is a
- * fixed number of pixels, because a list of subtitles wants about the same
- * width whatever size the screen is, so the row being halved is what is left of
- * the window once the sidebar and every gap have had theirs.
+ * The chat column is taken out before the split rather than included in it: it
+ * is a fixed number of pixels, so the row being halved is what is left of the
+ * window once the column showing on open and every gap have had theirs. The
+ * subtitle editor is not subtracted because it starts closed; opening it
+ * re-fits the tab panel then (see `fitTabs`).
  */
 function defaultTabsWidth(): number {
   // Two outer paddings plus the two handles between the three columns.
-  const consumed = OUTER_GAP * 2 + PANE_GAP * 2 + DEFAULT_SIDEBAR_WIDTH
+  const consumed = OUTER_GAP * 2 + PANE_GAP * 2 + DEFAULT_CHAT_WIDTH
   return clamp(
     Math.round((window.innerWidth - consumed) / 2),
     MIN_TABS_WIDTH,
@@ -78,9 +80,15 @@ function clamp(value: number, min: number, max: number): number {
 interface EditorPageProps {
   projectId: string
   onBack(): void
+  /** The dialog itself belongs to App; the subtitle tab needs to reach it. */
+  onOpenSettings(): void
 }
 
-export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.Element {
+export default function EditorPage({
+  projectId,
+  onBack,
+  onOpenSettings
+}: EditorPageProps): JSX.Element {
   const {
     project,
     transcripts,
@@ -123,10 +131,18 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
+  /**
+   * The left-hand column. Closed on open: reading and correcting subtitles is
+   * something the user goes to, so clicking a line on the timeline is what
+   * brings the column in. Closing it again is always deliberate — nothing takes
+   * it away on its own.
+   */
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
+  /** The right-hand column. */
+  const [chatOpen, setChatOpen] = useState(true)
   const [tabsWidth, setTabsWidth] = useState(defaultTabsWidth)
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [timelineHeight, setTimelineHeight] = useState(() =>
     Math.max(
       MIN_TIMELINE_HEIGHT,
@@ -175,12 +191,37 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   const subtitleAssetId = subtitleClip?.assetId ?? null
   const subtitleTranscript = subtitleAssetId ? (transcripts[subtitleAssetId] ?? null) : null
 
+  /** Each side column's slice of the row — nothing while it is hidden. Both are
+   *  optional, so no bound below may assume either one is there. */
+  const sidebarSlice = (): number => (subtitlesOpen ? sidebarWidth : 0)
+  const chatSlice = (): number => (chatOpen ? chatWidth : 0)
+
+  /** What is left for the flexible columns once the chat column has taken its
+   *  fixed slice — the window itself while it is hidden. */
+  const availableWidth = (): number => window.innerWidth - chatSlice()
+
+  /**
+   * Pull the tab panel back within bounds before a side column takes its width.
+   * The player is the only pane that flexes, so it is the one that absorbs the
+   * loss, and without this it is squeezed to nothing on a narrow window while
+   * the tab panel keeps a width no longer available.
+   *
+   * The slices are passed in rather than read off state: the caller is opening
+   * a column, and its own slice has to count as present before the state that
+   * says so has been committed.
+   */
+  const fitTabs = (sidebar: number, chat: number): void => {
+    setTabsWidth((current) =>
+      clamp(current, MIN_TABS_WIDTH, window.innerWidth - sidebar - chat - MIN_PLAYER_WIDTH)
+    )
+  }
+
   // Limits are recomputed per drag rather than cached, so a resized window
   // never leaves a stale bound behind. The ratio only seeds the initial
   // height; past that the size is whatever the user dragged it to.
   const resizeTabs = (delta: number): void => {
     setTabsWidth((current) =>
-      clamp(current + delta, MIN_TABS_WIDTH, window.innerWidth - sidebarWidth - MIN_PLAYER_WIDTH)
+      clamp(current + delta, MIN_TABS_WIDTH, availableWidth() - sidebarSlice() - MIN_PLAYER_WIDTH)
     )
   }
 
@@ -189,8 +230,44 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
   // handle that sits to a panel's left.
   const resizeSidebar = (delta: number): void => {
     setSidebarWidth((current) =>
-      clamp(current + delta, MIN_SIDEBAR_WIDTH, window.innerWidth - tabsWidth - MIN_PLAYER_WIDTH)
+      clamp(current + delta, MIN_SIDEBAR_WIDTH, availableWidth() - tabsWidth - MIN_PLAYER_WIDTH)
     )
+  }
+
+  // The chat column is the last one, so its handle is on its left edge and the
+  // sign flips: dragging left widens it.
+  const resizeChat = (delta: number): void => {
+    setChatWidth((current) =>
+      clamp(
+        current - delta,
+        MIN_CHAT_WIDTH,
+        window.innerWidth - sidebarSlice() - tabsWidth - MIN_PLAYER_WIDTH
+      )
+    )
+  }
+
+  /**
+   * The one way in. Three things open this column — the title bar, clicking a
+   * subtitle on the timeline, and SubtitleTab's "Edit subtitles" — and each of
+   * them takes the same width out of the row, so the re-fit lives here rather
+   * than at any one of the three.
+   */
+  const openSubtitles = (): void => {
+    if (!subtitlesOpen) fitTabs(sidebarWidth, chatSlice())
+    setSubtitlesOpen(true)
+  }
+
+  /** Closing gives the width back, so only the opening half needs the re-fit. */
+  const toggleSubtitles = (): void => {
+    if (subtitlesOpen) setSubtitlesOpen(false)
+    else openSubtitles()
+  }
+
+  const toggleChat = (): void => {
+    setChatOpen((open) => {
+      if (!open) fitTabs(sidebarSlice(), chatWidth)
+      return !open
+    })
   }
 
   const resizeTimeline = (delta: number): void => {
@@ -296,7 +373,7 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
       setSubtitleClipId(line.clipId)
       setActiveUtteranceId(line.id)
     }
-    setSubtitlesOpen(true)
+    openSubtitles()
   }
 
   const handleEditSave = useCallback(
@@ -493,48 +570,62 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
     <div className="flex h-screen min-h-[650px] min-w-[1180px] flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
+        subtitlesOpen={subtitlesOpen}
+        chatOpen={chatOpen}
         onBack={onBack}
         onRename={(name) => void rename(name)}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleSubtitles={toggleSubtitles}
+        onToggleChat={toggleChat}
       />
 
-      {/* Three full-height columns: the picture and its timeline, then the two
-          panels. Neither panel is a pane in the top row — each holds a list,
-          and a list wants the window's whole height, which is the height the
-          timeline gives up by not spanning the window.
-
-          Nothing sits left of the player any more. That edge is the AI chat's
-          when it arrives, which is why the tab panel moved off it. */}
+      {/* Full-height columns: the subtitle editor, the picture with its
+          timeline, and the AI chat on the far right — each side column only
+          while it is showing. Neither side column is a pane in the top row —
+          each holds a column of text, and that wants the window's whole
+          height, which is the height the timeline gives up by not spanning
+          the window. */}
       <div className="flex min-h-0 flex-1 px-component pb-component">
-        <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: sidebarWidth }}>
-          {subtitlesOpen && subtitleTranscript ? (
-            <SubtitleEditor
-              utterances={subtitleTranscript.utterances}
-              activeId={activeSourceId}
-              canUndo={canUndo}
-              onClose={() => setSubtitlesOpen(false)}
-              onSeek={seekToUtterance}
-              onEditSave={handleEditSave}
-              onTimeSave={handleTimeSave}
-              onAdd={handleAdd}
-              onMerge={handleMerge}
-              speakerIds={speakerIds}
-              nextSpeakerId={newSpeakerId}
-              onSpeakerSave={handleSpeakerSave}
-              onUndo={undo}
-              onResegment={handleResegment}
-              onReplaceAll={handleReplaceAll}
-            />
-          ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
-              <p className="m-0 text-center text-caption font-normal text-muted-foreground">
-                Double-click a subtitle on the timeline to read and correct it here.
-              </p>
-            </div>
-          )}
-        </Panel>
+        {/* The subtitle editor column. Arrives by clicking a line on the
+            timeline, from SubtitleTab, or from the title bar; leaves only when
+            asked. The handle comes with it, so closing the column also takes
+            back its gap.
 
-        <ResizeHandle orientation="vertical" onResize={resizeSidebar} />
+            The empty state is for the title-bar route: opening the column on a
+            clip that has no transcript yet has to say why it is bare, whereas
+            the double-click route can only ever land on a line that exists. */}
+        {subtitlesOpen && (
+          <>
+            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: sidebarWidth }}>
+              {subtitleTranscript ? (
+                <SubtitleEditor
+                  utterances={subtitleTranscript.utterances}
+                  activeId={activeSourceId}
+                  canUndo={canUndo}
+                  onClose={() => setSubtitlesOpen(false)}
+                  onSeek={seekToUtterance}
+                  onEditSave={handleEditSave}
+                  onTimeSave={handleTimeSave}
+                  onAdd={handleAdd}
+                  onMerge={handleMerge}
+                  speakerIds={speakerIds}
+                  nextSpeakerId={newSpeakerId}
+                  onSpeakerSave={handleSpeakerSave}
+                  onUndo={undo}
+                  onResegment={handleResegment}
+                  onReplaceAll={handleReplaceAll}
+                />
+              ) : (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+                  <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                    No subtitles yet — recognize this clip first.
+                  </p>
+                </div>
+              )}
+            </Panel>
+
+            <ResizeHandle orientation="vertical" onResize={resizeSidebar} />
+          </>
+        )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
@@ -578,11 +669,11 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
                       onTranscribe={(config, force) => {
                         if (subtitleAssetId) void transcribe(subtitleAssetId, config, force)
                       }}
-                      onEdit={() => setSubtitlesOpen(true)}
+                      onEdit={openSubtitles}
                       onExportSrt={() =>
                         subtitleAssetId ? exportSrt(subtitleAssetId) : Promise.resolve(null)
                       }
-                      onOpenSettings={() => setSettingsOpen(true)}
+                      onOpenSettings={onOpenSettings}
                     />
                   </TabsContent>
                 </Tabs>
@@ -646,9 +737,26 @@ export default function EditorPage({ projectId, onBack }: EditorPageProps): JSX.
             />
           </Panel>
         </div>
-      </div>
 
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        {/* The AI chat column, holding its place until the feature is built.
+            Deliberately still a placeholder rather than a component: a file of
+            its own would need a spec, and there is nothing to specify until it
+            holds something. The handle comes with it, so closing the column
+            also takes back its gap. */}
+        {chatOpen && (
+          <>
+            <ResizeHandle orientation="vertical" onResize={resizeChat} />
+
+            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: chatWidth }}>
+              <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+                <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                  AI chat — not built yet.
+                </p>
+              </div>
+            </Panel>
+          </>
+        )}
+      </div>
 
       {error !== null && (
         <p className="m-0 shrink-0 px-inset pb-component text-caption font-normal text-destructive">

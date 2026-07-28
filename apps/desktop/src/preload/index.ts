@@ -6,6 +6,14 @@ const api: LogcutApi = {
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
 
+  onOpenSettings: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on('menu:open-settings', listener)
+    return () => {
+      ipcRenderer.removeListener('menu:open-settings', listener)
+    }
+  },
+
   getSettingsStatus: () => ipcRenderer.invoke('settings:get-status'),
   setApiKey: (key) => ipcRenderer.invoke('settings:set-api-key', key),
   getSystemLocale: () => ipcRenderer.invoke('system:get-locale'),

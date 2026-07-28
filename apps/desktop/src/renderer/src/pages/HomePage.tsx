@@ -1,9 +1,8 @@
 import logoUrl from '@assets/logo.svg'
-import { Plus, Settings } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import ProjectCard from '@/components/ProjectCard'
-import SettingsDialog from '@/components/SettingsDialog'
 import TitleBar from '@/components/TitleBar'
 import { Button } from '@/components/ui/button'
 import { errorMessageOf } from '@/lib/format'
@@ -16,7 +15,6 @@ interface HomePageProps {
 export default function HomePage({ onOpenProject }: HomePageProps): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [message, setMessage] = useState('')
-  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -51,15 +49,6 @@ export default function HomePage({ onOpenProject }: HomePageProps): JSX.Element 
         {/* The brand mark's only place in the UI since the sidebar went away. */}
         <img src={logoUrl} alt="" className="size-5 shrink-0" />
         <span className="flex-1 text-label font-medium text-foreground">LogCut</span>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          title="Settings"
-          className="[-webkit-app-region:no-drag]"
-          onClick={() => setSettingsOpen(true)}
-        >
-          <Settings size={16} />
-        </Button>
       </TitleBar>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-block">
@@ -92,8 +81,6 @@ export default function HomePage({ onOpenProject }: HomePageProps): JSX.Element 
           </div>
         )}
       </div>
-
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }
