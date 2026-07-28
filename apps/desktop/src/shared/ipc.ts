@@ -1,4 +1,13 @@
-import type { CaptionStyles, LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
+import type {
+  CaptionStyles,
+  CommandResult,
+  EditCommand,
+  LanguageOption,
+  TranscribeConfig,
+  Transcript,
+  UtteranceQuery,
+  UtteranceQueryResult
+} from '@logcut/core'
 
 /**
  * Contracts for the Electron main <-> renderer boundary. These are shell
@@ -160,6 +169,63 @@ export interface ExportSrtResult {
 }
 
 /**
+ * What an agent may ask the editor to do.
+ *
+ * This is the one channel that runs **main → renderer and back**. Everything
+ * else on this bridge is the renderer asking main for something; here main is
+ * relaying for a caller that has no window of its own — an MCP client today,
+ * the built-in chat later — and the editing document lives in the renderer.
+ *
+ * The payloads are core types unchanged: an agent speaks the same commands the
+ * buttons do (see packages/core/src/commands/index.md).
+ */
+export type AgentRequest =
+  | { kind: 'session' }
+  | { kind: 'query'; query: UtteranceQuery }
+  | { kind: 'dispatch'; commands: EditCommand[] }
+
+/** One clip as an agent sees it: what is on the timeline, in what order. */
+export interface AgentClip {
+  clipId: string
+  assetId: string
+  fileName: string
+  startMs: number
+  durationMs: number
+  transcriptStatus: TranscriptStatus
+}
+
+export interface AgentSession {
+  /** null while no project is open — the editor is not on screen at all. */
+  project: { id: string; name: string } | null
+  clips: AgentClip[]
+}
+
+/**
+ * Deliberately a result, not a rejection.
+ *
+ * "No project is open" and "that clip has no transcript yet" are ordinary
+ * states of the editor that an agent has to read and act on, not exceptions.
+ * Turning them into thrown errors would mean every caller unwrapping them back
+ * into text before a model could do anything with them.
+ */
+/**
+ * What a batch did, without the document it did it to.
+ *
+ * `CommandResult` carries the whole new document, which is exactly right for
+ * the editor — it is what gets rendered and persisted — and exactly wrong to
+ * put on a wire whose far end is a model's context window: a thousand-line
+ * transcript would cross the bridge, then be serialized into a tool answer, on
+ * every single edit. The outcomes already say what changed.
+ */
+export type AgentDispatchResult = Omit<CommandResult, 'doc'>
+
+export type AgentResponse =
+  | { ok: true; kind: 'session'; session: AgentSession }
+  | { ok: true; kind: 'query'; result: UtteranceQueryResult }
+  | { ok: true; kind: 'dispatch'; result: AgentDispatchResult }
+  | { ok: false; error: string }
+
+/**
  * API exposed to the renderer through the preload bridge.
  * The plaintext API key never crosses this boundary.
  */
@@ -260,4 +326,14 @@ export interface LogcutApi {
   installUpdate(): Promise<void>
   /** Subscribe to updater state. Returns an unsubscribe function. */
   onUpdateState(callback: (state: UpdateState) => void): () => void
+
+  /**
+   * Answer agent requests for as long as an editor is on screen.
+   *
+   * Registering is also what tells main there is anything to relay to: with no
+   * handler, an agent's call is answered "no editor open" straight away rather
+   * than waiting for a window that may never appear. Returns an unsubscribe
+   * function, which withdraws that too.
+   */
+  onAgentRequest(handler: (request: AgentRequest) => AgentResponse): () => void
 }

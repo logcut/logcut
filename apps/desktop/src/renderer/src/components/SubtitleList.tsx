@@ -165,7 +165,18 @@ const SubtitleRow = memo(function SubtitleRow({
   }
 
   return (
-    <div className="ConvertItem relative" data-index={index} ref={active ? activeRef : undefined}>
+    <div
+      // A rule between lines, and only between them: `previous` is what marks
+      // a boundary that has a line on both sides. On the first row it would
+      // land against the section above and read as a double border.
+      //
+      // The hover strip below sits on this same edge and covers it while open,
+      // so the boundary shows one thing at a time — a divider, or the controls
+      // that act on it.
+      className={`ConvertItem relative ${previous ? 'border-t border-border' : ''}`}
+      data-index={index}
+      ref={active ? activeRef : undefined}
+    >
       {/* Its own hover target: 2px of rule with 6px of slack either
                 side. No spacing token is 14px, and this is not spacing — it
                 is a hit target, sized from what it has to catch.

@@ -1,12 +1,17 @@
+import type { UtteranceView } from '../query.ts'
+import { resolveShortId } from '../short-id.ts'
 import {
   insertUtteranceAfter,
   mergeUtterances,
   removeUtterances,
   replaceAllText,
   setUtteranceSpeaker,
+  setUtteranceStyle,
+  splitUtterance,
   setUtteranceText,
   setUtteranceTime
 } from '../transcript.ts'
+import type { CaptionStyle } from '../caption-style.ts'
 import type { EditFocus, Transcript, Utterance } from '../types.ts'
 
 /**
@@ -31,6 +36,13 @@ export type SubtitleCommand =
   | { kind: 'subtitle.setText'; assetId: string; id: string; text: string }
   | { kind: 'subtitle.setSpeaker'; assetId: string; id: string; speakerId: string }
   | {
+      kind: 'subtitle.setStyle'
+      assetId: string
+      id: string
+      /** Merged into whatever this line already overrides, not a replacement. */
+      style: Partial<CaptionStyle>
+    }
+  | {
       kind: 'subtitle.setTime'
       assetId: string
       id: string
@@ -39,6 +51,13 @@ export type SubtitleCommand =
     }
   | { kind: 'subtitle.insertAfter'; assetId: string; afterId: string }
   | { kind: 'subtitle.merge'; assetId: string; firstId: string }
+  | {
+      kind: 'subtitle.split'
+      assetId: string
+      id: string
+      /** On the transcript's own clock, not the timeline's. */
+      timeMs: number
+    }
   | { kind: 'subtitle.remove'; assetId: string; ids: string[] }
   | { kind: 'subtitle.replaceAll'; assetId: string; find: string; replace: string }
 
@@ -50,23 +69,37 @@ export type SubtitleCommand =
  * should be able to see rather than a reason to throw. It is also what keeps a
  * pointless click out of the undo history.
  *
- * Only `replaceAll` adds a field, so the union is derived from the command
- * kinds rather than written out again: a new command lands in the general case
- * automatically, and never silently misses one.
+ * **`lines` is what makes a reader able to skip re-reading.** A caller with no
+ * copy of the document — an assistant working from queries — would otherwise
+ * have to fetch the transcript again after every edit to know what it now says.
+ * Reporting the affected lines as they now stand costs a few hundred bytes and
+ * saves a round trip and a page of context each time.
+ *
+ * Two commands report no lines, for opposite reasons: `remove` names what is
+ * gone (`removedIds`), and `replaceAll` may touch hundreds at once, so it
+ * reports only how many — a reader that needs the new text queries for it.
  */
+interface OutcomeBase {
+  changed: boolean
+  focus: EditFocus | null
+  /** The affected lines as they now stand. Empty when nothing changed. */
+  lines: UtteranceView[]
+}
+
 export type SubtitleOutcome =
-  | {
-      kind: Exclude<SubtitleCommand['kind'], 'subtitle.replaceAll'>
-      changed: boolean
-      focus: EditFocus | null
-    }
-  | {
+  | (OutcomeBase & {
+      kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>
+    })
+  | (OutcomeBase & {
+      kind: 'subtitle.remove'
+      /** The lines actually dropped — may be fewer than the command named. */
+      removedIds: string[]
+    })
+  | (OutcomeBase & {
       kind: 'subtitle.replaceAll'
-      changed: boolean
-      focus: EditFocus | null
       /** Occurrences replaced across the whole transcript; 0 when none matched. */
       count: number
-    }
+    })
 
 export interface SubtitleCommandResult {
   /** The same object when nothing changed, so callers can compare by identity. */
@@ -78,8 +111,42 @@ function focusOn(assetId: string, utterance: Utterance | undefined): EditFocus |
   return utterance ? { assetId, utteranceId: utterance.id, timeMs: utterance.start } : null
 }
 
-function find(transcript: Transcript, id: string): Utterance | undefined {
-  return transcript.utterances.find((utterance) => utterance.id === id)
+function viewOf(assetId: string, utterance: Utterance | undefined): UtteranceView[] {
+  if (!utterance) return []
+  return [
+    {
+      assetId,
+      id: utterance.id,
+      startMs: utterance.start,
+      endMs: utterance.end,
+      text: utterance.text,
+      ...(utterance.speakerId === undefined ? {} : { speakerId: utterance.speakerId })
+    }
+  ]
+}
+
+/**
+ * The line a command names.
+ *
+ * Ids arrive from two kinds of caller: the editor passes the full id it is
+ * already holding, an assistant passes whatever it was shown, which may have
+ * been shortened (see short-id.ts). Both are accepted here so neither caller
+ * needs to know about the other's habits. An exact match short-circuits, so the
+ * editor's path costs one comparison.
+ *
+ * An ambiguous prefix resolves to nothing rather than to the first candidate:
+ * editing an arbitrary line and reporting success is worse than doing nothing.
+ */
+function find(transcript: Transcript, idOrPrefix: string): Utterance | undefined {
+  const exact = transcript.utterances.find((utterance) => utterance.id === idOrPrefix)
+  if (exact) return exact
+  const resolved = resolveShortId(
+    idOrPrefix,
+    transcript.utterances.map((utterance) => utterance.id)
+  )
+  return resolved === null
+    ? undefined
+    : transcript.utterances.find((utterance) => utterance.id === resolved)
 }
 
 /**
@@ -103,71 +170,95 @@ export function applySubtitleCommand(
       if (!before || before.text === command.text) {
         return { transcript, outcome: unchanged(command.kind) }
       }
-      const next = setUtteranceText(transcript, command.id, command.text)
-      return {
-        transcript: next,
-        outcome: {
-          kind: command.kind,
-          changed: true,
-          focus: focusOn(command.assetId, find(next, command.id))
-        }
-      }
+      const next = setUtteranceText(transcript, before.id, command.text)
+      return landed(command.kind, next, command.assetId, find(next, before.id))
+    }
+
+    case 'subtitle.setStyle': {
+      const next = setUtteranceStyle(transcript, command.id, command.style)
+      if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
+      return landed(command.kind, next, command.assetId, find(next, command.id))
     }
 
     case 'subtitle.setSpeaker': {
-      const next = setUtteranceSpeaker(transcript, command.id, command.speakerId)
-      return settle(command.kind, transcript, next, command.assetId, command.id)
+      const before = find(transcript, command.id)
+      if (!before) return { transcript, outcome: unchanged(command.kind) }
+      const next = setUtteranceSpeaker(transcript, before.id, command.speakerId)
+      return settle(command.kind, transcript, next, command.assetId, before.id)
     }
 
     case 'subtitle.setTime': {
-      const next = setUtteranceTime(transcript, command.id, command.edge, command.timeMs)
-      return settle(command.kind, transcript, next, command.assetId, command.id)
+      const before = find(transcript, command.id)
+      if (!before) return { transcript, outcome: unchanged(command.kind) }
+      const next = setUtteranceTime(transcript, before.id, command.edge, command.timeMs)
+      return settle(command.kind, transcript, next, command.assetId, before.id)
+    }
+
+    case 'subtitle.split': {
+      const next = splitUtterance(transcript, command.id, command.timeMs)
+      if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
+      // Focus goes to the second half: the cut is made to work on what follows
+      // it, and the first half is already what it was.
+      const at = next.utterances.findIndex((utterance) => utterance.id === command.id)
+      const second = next.utterances[at + 1] ?? next.utterances[at]
+      return landed(command.kind, next, command.assetId, second)
     }
 
     case 'subtitle.merge': {
-      const next = mergeUtterances(transcript, command.firstId)
-      // The merged line keeps the first one's id, so the focus is that id in
-      // the transcript that came back — its end moved, its start did not.
-      return settle(command.kind, transcript, next, command.assetId, command.firstId)
+      const before = find(transcript, command.firstId)
+      if (!before) return { transcript, outcome: unchanged(command.kind) }
+      const next = mergeUtterances(transcript, before.id)
+      // The merged line keeps the first one's id, so the line to report is that
+      // id in the transcript that came back — its end moved, its start did not.
+      return settle(command.kind, transcript, next, command.assetId, before.id)
     }
 
     case 'subtitle.insertAfter': {
-      const next = insertUtteranceAfter(transcript, command.afterId)
+      const after = find(transcript, command.afterId)
+      if (!after) return { transcript, outcome: unchanged(command.kind) }
+      const next = insertUtteranceAfter(transcript, after.id)
       if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
       // The new line goes directly after the named one, and it is the line the
       // caller wants in view: an empty subtitle is written by looking at the
       // frame it belongs to.
-      const index = next.utterances.findIndex((utterance) => utterance.id === command.afterId)
+      const index = next.utterances.findIndex((utterance) => utterance.id === after.id)
+      return landed(command.kind, next, command.assetId, next.utterances[index + 1])
+    }
+
+    case 'subtitle.remove': {
+      // Resolved before removing, so a caller naming lines by prefix is
+      // answered with the ids that were actually dropped.
+      const removedIds = command.ids.flatMap((id) => {
+        const line = find(transcript, id)
+        return line ? [line.id] : []
+      })
+      const next = removeUtterances(transcript, removedIds)
+      const changed = next !== transcript
+      // No lines: the ones it named are gone, and there is nothing to look at
+      // where they were.
       return {
         transcript: next,
         outcome: {
           kind: command.kind,
-          changed: true,
-          focus: focusOn(command.assetId, next.utterances[index + 1])
+          changed,
+          focus: null,
+          lines: [],
+          removedIds: changed ? removedIds : []
         }
-      }
-    }
-
-    case 'subtitle.remove': {
-      const next = removeUtterances(transcript, command.ids)
-      // No focus: the lines it names are gone, and there is nothing to look at
-      // where they were.
-      return {
-        transcript: next,
-        outcome: { kind: command.kind, changed: next !== transcript, focus: null }
       }
     }
 
     case 'subtitle.replaceAll': {
       const result = replaceAllText(transcript, command.find, command.replace)
-      // No focus either, for the opposite reason: it edits the whole transcript
-      // at once, so there is no single line the change happened at.
+      // No lines either, for the opposite reason: it may rewrite hundreds at
+      // once, so it reports how many and leaves the new text to a query.
       return {
         transcript: result.transcript,
         outcome: {
           kind: command.kind,
           changed: result.transcript !== transcript,
           focus: null,
+          lines: [],
           count: result.count
         }
       }
@@ -175,23 +266,39 @@ export function applySubtitleCommand(
   }
 }
 
+/** The tail of a case that definitely changed something. */
+function landed(
+  kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>,
+  transcript: Transcript,
+  assetId: string,
+  utterance: Utterance | undefined
+): SubtitleCommandResult {
+  return {
+    transcript,
+    outcome: {
+      kind,
+      changed: true,
+      focus: focusOn(assetId, utterance),
+      lines: viewOf(assetId, utterance)
+    }
+  }
+}
+
 /** The shared tail of the cases whose function reports a no-op by identity. */
 function settle(
-  kind: Exclude<SubtitleCommand['kind'], 'subtitle.replaceAll'>,
+  kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>,
   before: Transcript,
   after: Transcript,
   assetId: string,
   id: string
 ): SubtitleCommandResult {
   if (after === before) return { transcript: before, outcome: unchanged(kind) }
-  return {
-    transcript: after,
-    outcome: { kind, changed: true, focus: focusOn(assetId, find(after, id)) }
-  }
+  return landed(kind, after, assetId, find(after, id))
 }
 
 function unchanged(kind: SubtitleCommand['kind']): SubtitleOutcome {
-  return kind === 'subtitle.replaceAll'
-    ? { kind, changed: false, focus: null, count: 0 }
-    : { kind, changed: false, focus: null }
+  const base = { changed: false, focus: null, lines: [] }
+  if (kind === 'subtitle.replaceAll') return { ...base, kind, count: 0 }
+  if (kind === 'subtitle.remove') return { ...base, kind, removedIds: [] }
+  return { ...base, kind }
 }

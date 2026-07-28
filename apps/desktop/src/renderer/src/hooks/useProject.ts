@@ -1,8 +1,9 @@
-import { applyCommands } from '@logcut/core'
+import { applyCommands, DEFAULT_CAPTION_STYLES } from '@logcut/core'
 import type {
   CaptionStyles,
   CommandResult,
   EditCommand,
+  EditDocument,
   TranscribeConfig,
   Transcript
 } from '@logcut/core'
@@ -28,6 +29,13 @@ export type AsrState =
 interface EditableState {
   transcripts: Record<string, Transcript | null>
   clips: { id: string; assetId: string }[]
+  /**
+   * Included because captions are dragged and rotated on the picture, and an
+   * object moved on a canvas is expected to come back with Cmd+Z. Treating
+   * them as settings instead — which is what they look like from the panel —
+   * left the one gesture that most obviously wants undo without it.
+   */
+  captionStyles: CaptionStyles
 }
 
 /** Deep enough that nobody reaches the end by working; bounded so it cannot grow forever. */
@@ -81,9 +89,16 @@ export interface UseProjectResult {
    * the asset ids left alone for want of an archived provider response.
    */
   setMaxChars(maxChars: number): Promise<string[]>
-  /** Change how the captions look. Presentation only: no transcript is
-   *  touched, so it neither joins nor clears the undo history. */
-  setCaptionStyles(styles: CaptionStyles): Promise<void>
+  /**
+   * Change how the captions look. Joins the undo history, because these are
+   * dragged and rotated on the picture and an object moved on a canvas is
+   * expected to come back with Cmd+Z.
+   *
+   * `record: false` for the middle of a gesture: a drag writes on every frame,
+   * and recording each one would bury the history under a single movement.
+   * The first frame records, the rest do not.
+   */
+  setCaptionStyles(styles: CaptionStyles, options?: { record?: boolean }): Promise<void>
   /**
    * The single funnel for every edit: applies a batch, records one history
    * entry, persists whatever changed, and hands the outcomes back so the caller
@@ -93,7 +108,14 @@ export interface UseProjectResult {
    * assistant's turn is several commands and must undo as one, and a click is
    * simply a batch of one.
    */
-  dispatch(commands: EditCommand[]): CommandResult
+  dispatch(commands: EditCommand[], options?: { record?: boolean }): CommandResult
+  /**
+   * The document the core sees, for callers that read rather than edit — the
+   * agent bridge queries against exactly what a command would be applied to.
+   * A function rather than a value: it is read at the moment of the question,
+   * not captured when a component last rendered.
+   */
+  doc(): EditDocument
   undo(): void
   redo(): void
   exportSrt(assetId: string): Promise<string | null>
@@ -205,10 +227,15 @@ export function useProject(projectId: string): UseProjectResult {
 
   // Read through a ref so recording does not put the whole editable state in
   // every mutating callback's dependency list.
-  const stateRef = useRef<EditableState>({ transcripts: {}, clips: [] })
+  const stateRef = useRef<EditableState>({
+    transcripts: {},
+    clips: [],
+    captionStyles: DEFAULT_CAPTION_STYLES
+  })
   stateRef.current = {
     transcripts,
-    clips: project?.timeline.map((clip) => ({ id: clip.id, assetId: clip.assetId })) ?? []
+    clips: project?.timeline.map((clip) => ({ id: clip.id, assetId: clip.assetId })) ?? [],
+    captionStyles: project?.captionStyles ?? DEFAULT_CAPTION_STYLES
   }
 
   /** Push what is on screen now, and drop the redo branch it invalidates. */
@@ -307,8 +334,11 @@ export function useProject(projectId: string): UseProjectResult {
     // failures whole. The caller fires it with `void`, so a rejection here
     // surfaces nowhere at all — the font simply would not change and nothing
     // would say why.
-    (styles: CaptionStyles) => guard(() => window.logcut.setCaptionStyles(projectId, styles)),
-    [guard, projectId]
+    (styles: CaptionStyles, options: { record?: boolean } = {}) => {
+      if (options.record !== false) record()
+      return guard(() => window.logcut.setCaptionStyles(projectId, styles))
+    },
+    [guard, projectId, record]
   )
 
   /**
@@ -354,6 +384,12 @@ export function useProject(projectId: string): UseProjectResult {
       if (!sameClips(target.clips, current.clips)) {
         setProject(await window.logcut.setTimeline(projectId, target.clips))
       }
+      // Compared by reference: every write produces a new object, so an
+      // unchanged reference means this step did not touch the styling and the
+      // project file should not be rewritten for it.
+      if (target.captionStyles !== current.captionStyles) {
+        setProject(await window.logcut.setCaptionStyles(projectId, target.captionStyles))
+      }
     },
     [projectId]
   )
@@ -369,12 +405,19 @@ export function useProject(projectId: string): UseProjectResult {
    * answer to that question, and rewriting the rest would cost a file write per
    * edit per asset for nothing.
    */
+  const doc = useCallback(
+    (): EditDocument => ({ transcripts: present(stateRef.current.transcripts) }),
+    []
+  )
+
   const dispatch = useCallback(
-    (commands: EditCommand[]): CommandResult => {
-      const result = applyCommands({ transcripts: present(stateRef.current.transcripts) }, commands)
+    (commands: EditCommand[], options: { record?: boolean } = {}): CommandResult => {
+      const result = applyCommands(doc(), commands)
       if (result.changed.length === 0) return result
 
-      record()
+      // A caption dragged on the picture dispatches on every frame; only the
+      // first of them is a step worth going back to.
+      if (options.record !== false) record()
       const changes = result.changed.flatMap((assetId) => {
         const transcript = result.doc.transcripts[assetId]
         return transcript ? [{ assetId, transcript }] : []
@@ -389,7 +432,7 @@ export function useProject(projectId: string): UseProjectResult {
       }
       return result
     },
-    [projectId, record]
+    [doc, projectId, record]
   )
 
   const undo = useCallback((): void => {
@@ -433,6 +476,7 @@ export function useProject(projectId: string): UseProjectResult {
     setMaxChars,
     setCaptionStyles,
     dispatch,
+    doc,
     undo,
     redo,
     exportSrt

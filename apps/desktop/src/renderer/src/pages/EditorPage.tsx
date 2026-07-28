@@ -7,7 +7,7 @@ import {
   resolveCaptionStyle,
   speakerIdsOf
 } from '@logcut/core'
-import type { CommandResult, Utterance } from '@logcut/core'
+import type { CaptionStyle, CommandResult, Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
@@ -18,13 +18,16 @@ import ResizeHandle from '@/components/ResizeHandle'
 import SubtitleEditor from '@/components/SubtitleEditor'
 import SubtitleTab from '@/components/SubtitleTab'
 import Timeline from '@/components/Timeline'
+import TimelineToolbar from '@/components/TimelineToolbar'
 import type { TimelineClipView } from '@/components/Timeline'
 import VideoPlayer from '@/components/VideoPlayer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useAgentBridge } from '@/hooks/useAgentBridge'
 import { useProject } from '@/hooks/useProject'
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback'
 import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 import { captionFontStack as captionFontStackFor } from '@/lib/caption-fonts'
+import { liveScope, styleForScope, type CaptionScope } from '@/lib/caption-scope'
 import { layUtterances } from '@/lib/timeline'
 import type { MediaAssetSummary } from '../../../shared/ipc'
 
@@ -101,6 +104,7 @@ export default function EditorPage({
     setMaxChars,
     setCaptionStyles,
     dispatch,
+    doc,
     undo,
     canUndo,
     canRedo,
@@ -129,6 +133,9 @@ export default function EditorPage({
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
+  /** Where the playhead is, on the timeline's clock. Held here because the
+   *  toolbar acts on it and a ref would not re-enable its buttons. */
+  const [playheadMs, setPlayheadMs] = useState(0)
   /** The left-hand column. */
   const [chatOpen, setChatOpen] = useState(true)
   /**
@@ -138,6 +145,9 @@ export default function EditorPage({
    * it away on its own.
    */
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
+  /** Which subtitles the style panel writes to. Held raw; `liveScope` is what
+   *  the rest of the page reads, so a scope that vanishes cannot be used. */
+  const [storedScope, setCaptionScope] = useState<CaptionScope>({ kind: 'all' })
   const [tabsWidth, setTabsWidth] = useState(defaultTabsWidth)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [subtitlesWidth, setSubtitlesWidth] = useState(DEFAULT_SUBTITLES_WIDTH)
@@ -306,7 +316,81 @@ export default function EditorPage({
    * be rewritten.
    */
   const captionStyles = project?.captionStyles ?? DEFAULT_CAPTION_STYLES
-  const captionStyle = resolveCaptionStyle(captionStyles)
+
+  /**
+   * The style the picture draws with, resolved for **the line being shown** —
+   * not for the project alone. Resolving only the base would mean a speaker's
+   * colour or a single line's size never appearing on the picture, which is the
+   * one place those settings exist to be seen.
+   */
+  const captionLine = utterances.find((utterance) => utterance.id === captionUtteranceId) ?? null
+  const captionStyle = resolveCaptionStyle(
+    captionStyles,
+    captionLine ? { speakerId: captionLine.speakerId, style: captionLine.style } : undefined
+  )
+
+  /**
+   * The line the style panel calls "this line": the one being pointed at,
+   * which is also the one the picture is showing while playback is stopped.
+   */
+  const selectedLine = utterances.find((utterance) => utterance.id === activeUtteranceId) ?? null
+
+  /**
+   * A scope can stop existing while it is selected — the line is deselected,
+   * or the last line of a speaker is reassigned. Resolving it on every render
+   * rather than watching for those events means there is no moment where edits
+   * would land somewhere invisible.
+   */
+  const captionScope = liveScope(storedScope, speakerIds, selectedLine !== null)
+  const scopedStyle = styleForScope(captionStyles, captionScope, selectedLine)
+
+  /**
+   * Where a style edit goes. The two project-level scopes are one write to the
+   * project file; a line's own styling lives on the utterance, so it travels as
+   * a command like every other edit to a transcript — and joins the undo
+   * history, which project settings deliberately do not.
+   */
+  const applyStylePatch = (
+    patch: Partial<CaptionStyle>,
+    // Set while a gesture is in flight. Both paths below write on every frame
+    // of a drag, so only its first frame is a step the history should hold.
+    options: { continuing?: boolean } = {}
+  ): void => {
+    const record = !options.continuing
+    if (captionScope.kind === 'line') {
+      if (!selectedLine) return
+      dispatch(
+        [
+          {
+            kind: 'subtitle.setStyle',
+            assetId: selectedLine.assetId,
+            id: selectedLine.sourceId,
+            style: patch
+          }
+        ],
+        { record }
+      )
+      return
+    }
+    if (captionScope.kind === 'speaker') {
+      const { speakerId } = captionScope
+      void setCaptionStyles(
+        {
+          ...captionStyles,
+          bySpeaker: {
+            ...captionStyles.bySpeaker,
+            [speakerId]: { ...captionStyles.bySpeaker[speakerId], ...patch }
+          }
+        },
+        { record }
+      )
+      return
+    }
+    void setCaptionStyles(
+      { ...captionStyles, base: { ...captionStyles.base, ...patch } },
+      { record }
+    )
+  }
   const captionFontStack = captionFontStackFor(captionStyle.fontFamily, captionFonts)
 
   const captionText =
@@ -330,8 +414,35 @@ export default function EditorPage({
    * Both setters bail out on an unchanged id — timeupdate alone is ~4Hz, and
    * this subtree carries every subtitle on screen.
    */
+  /**
+   * The line a cut would land in, with the moment to cut it at — or null when
+   * there is nothing to cut.
+   *
+   * Strict containment, like the burned caption: the playhead sitting in the
+   * silence between two lines is not "in" either of them, and a split there
+   * has no meaning. The time is translated onto the transcript's own clock
+   * here, because that is the clock the command speaks.
+   */
+  const splitTarget = useMemo(() => {
+    const index = findUtteranceIndexAt(utterances, playheadMs)
+    const line = index === -1 ? null : utterances[index]
+    if (!line) return null
+    const clip = clips.find((candidate) => candidate.id === line.clipId)
+    return {
+      assetId: line.assetId,
+      id: line.sourceId,
+      timeMs: playheadMs - (clip?.startMs ?? 0)
+    }
+  }, [clips, playheadMs, utterances])
+
+  const handleSplit = (): void => {
+    if (!splitTarget) return
+    dispatch([{ kind: 'subtitle.split', ...splitTarget }])
+  }
+
   const applyTime = useCallback(
     (timeMs: number): void => {
+      setPlayheadMs(timeMs)
       const covering = findUtteranceIndexAt(utterances, timeMs)
       const nextCaption = covering === -1 ? null : (utterances[covering]?.id ?? null)
       setCaptionUtteranceId((current) => (current === nextCaption ? current : nextCaption))
@@ -418,6 +529,21 @@ export default function EditorPage({
     [dispatch, subtitleAssetId]
   )
 
+  /**
+   * An edit typed on the picture. The player knows what the caption says; only
+   * this page knows which line that is — and it is a *timeline* line, so both
+   * its asset and the transcript's own id for it have to be recovered before a
+   * command can name it (the same crossing `activeSourceId` makes).
+   */
+  const handleCaptionEdit = useCallback(
+    (text: string): void => {
+      const line = utterances.find((utterance) => utterance.id === captionUtteranceId)
+      if (!line) return
+      dispatch([{ kind: 'subtitle.setText', assetId: line.assetId, id: line.sourceId, text }])
+    },
+    [captionUtteranceId, dispatch, utterances]
+  )
+
   const handleSpeakerSave = useCallback(
     (id: string, speakerId: string): void => {
       if (!subtitleAssetId) return
@@ -465,6 +591,36 @@ export default function EditorPage({
     ]).outcomes[0]
     return outcome?.kind === 'subtitle.replaceAll' ? outcome.count : 0
   }
+
+  /**
+   * An agent edits through the same funnel a click does, and **does** follow
+   * the focus: the user is not the one making these edits and has no idea where
+   * they landed, so the batch ends with the last touched line in view. That is
+   * the whole difference between the two entry points — the commands, the
+   * history entry and the persistence are identical.
+   */
+  useAgentBridge({
+    session: () => ({
+      project: project ? { id: project.id, name: project.name } : null,
+      clips: clips.map((clip) => {
+        const asset = assets.find((candidate) => candidate.id === clip.assetId)
+        return {
+          clipId: clip.id,
+          assetId: clip.assetId,
+          fileName: asset?.fileName ?? 'Missing media',
+          startMs: clip.startMs,
+          durationMs: clip.durationMs,
+          transcriptStatus: asset?.transcriptStatus ?? 'none'
+        }
+      })
+    }),
+    doc,
+    dispatch: (commands) => {
+      const result = dispatch(commands)
+      followFocus(result)
+      return result
+    }
+  })
 
   /**
    * The editor speaks the transcript's own clock; the timeline speaks its own,
@@ -680,7 +836,10 @@ export default function EditorPage({
                   onTimeUpdate={(elementMs) => applyTime(playback.toTimelineMs(elementMs))}
                   onEnded={playback.advance}
                   captionText={captionText}
+                  onCaptionEdit={handleCaptionEdit}
+                  onCaptionStyleChange={applyStylePatch}
                   captionFontStack={captionFontStack}
+                  captionStyle={captionStyle}
                 />
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">
@@ -701,7 +860,8 @@ export default function EditorPage({
 
           <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
 
-          <Panel className="shrink-0" style={{ height: timelineHeight }}>
+          <Panel className="flex shrink-0 flex-col" style={{ height: timelineHeight }}>
+            <TimelineToolbar canSplit={splitTarget !== null} onSplit={handleSplit} />
             <Timeline
               durationMs={playback.durationMs}
               clips={clipViews}
@@ -754,13 +914,11 @@ export default function EditorPage({
                   onSpeakerSave={handleSpeakerSave}
                   onUndo={undo}
                   onReplaceAll={handleReplaceAll}
-                  style={captionStyle}
-                  onFontChange={(fontFamily) => {
-                    void setCaptionStyles({
-                      ...captionStyles,
-                      base: { ...captionStyles.base, fontFamily }
-                    })
-                  }}
+                  style={scopedStyle}
+                  onChange={applyStylePatch}
+                  scope={captionScope}
+                  onScopeChange={setCaptionScope}
+                  hasSelection={selectedLine !== null}
                 />
               ) : (
                 <div className="flex min-h-0 flex-1 items-center justify-center p-inset">

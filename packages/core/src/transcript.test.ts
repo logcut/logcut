@@ -12,7 +12,8 @@ import {
   setUtteranceSpeaker,
   setUtteranceText,
   setUtteranceTime,
-  speakerIdsOf
+  speakerIdsOf,
+  setUtteranceStyle
 } from './transcript.ts'
 import type { Transcript, Utterance } from './types.ts'
 
@@ -291,4 +292,25 @@ test('removeUtterances returns the same transcript when nothing matched', () => 
   const source = fixture()
   assert.equal(removeUtterances(source, []), source)
   assert.equal(removeUtterances(source, ['nope']), source)
+})
+
+// A patch, not a replacement: the panel sends the one field that changed.
+test('setUtteranceStyle merges into what the line already overrides', () => {
+  const bold = setUtteranceStyle(fixture(), 'b', { bold: true })
+  const coloured = setUtteranceStyle(bold, 'b', { color: '#ff0000' })
+  assert.deepEqual(coloured.utterances[1].style, { bold: true, color: '#ff0000' })
+})
+
+test('setUtteranceStyle returns the same transcript when nothing differs', () => {
+  const styled = setUtteranceStyle(fixture(), 'b', { bold: true })
+  assert.equal(setUtteranceStyle(styled, 'b', { bold: true }), styled)
+  assert.equal(setUtteranceStyle(styled, 'missing', { bold: true }), styled)
+})
+
+test('setUtteranceStyle leaves every other line alone', () => {
+  const before = fixture()
+  const after = setUtteranceStyle(before, 'b', { bold: true })
+  assert.deepEqual(after.utterances[0], before.utterances[0])
+  assert.equal(after.utterances[0].style, undefined)
+  assert.equal(after.utterances[2].style, undefined)
 })

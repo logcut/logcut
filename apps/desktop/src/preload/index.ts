@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { LogcutApi, TranscribeProgress, UpdateState } from '../shared/ipc'
+import type {
+  AgentRequest,
+  AgentResponse,
+  LogcutApi,
+  TranscribeProgress,
+  UpdateState
+} from '../shared/ipc'
 
 const api: LogcutApi = {
   closeWindow: () => ipcRenderer.invoke('window:close'),
@@ -70,6 +76,31 @@ const api: LogcutApi = {
     ipcRenderer.on('update:state', listener)
     return () => {
       ipcRenderer.removeListener('update:state', listener)
+    }
+  },
+
+  // The one handler that answers rather than listens: main relays a request
+  // here and waits for the reply carrying the same id back. Registering also
+  // announces that an editor exists to relay to, and unsubscribing withdraws
+  // that — main answers "no editor open" in between rather than waiting.
+  onAgentRequest: (handler) => {
+    const listener = (_event: unknown, requestId: string, request: AgentRequest): void => {
+      // A throw here would leave main waiting out its timeout for something
+      // that has already failed, so it comes back as a plain answer instead.
+      const response: AgentResponse = ((): AgentResponse => {
+        try {
+          return handler(request)
+        } catch (cause: unknown) {
+          return { ok: false, error: cause instanceof Error ? cause.message : String(cause) }
+        }
+      })()
+      ipcRenderer.send('agent:response', requestId, response)
+    }
+    ipcRenderer.on('agent:request', listener)
+    ipcRenderer.send('agent:ready')
+    return () => {
+      ipcRenderer.removeListener('agent:request', listener)
+      ipcRenderer.send('agent:gone')
     }
   }
 }

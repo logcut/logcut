@@ -798,7 +798,10 @@ export default function Timeline({
     <div
       ref={containerRef}
       tabIndex={0}
-      className="relative flex h-full flex-col touch-none overflow-hidden outline-none select-none"
+      // Takes what is left of the panel rather than all of it: the toolbar
+      // above is a sibling, and `h-full` here would push the tracks past the
+      // panel's bottom edge by exactly the toolbar's height.
+      className="relative flex min-h-0 flex-1 flex-col touch-none overflow-hidden outline-none select-none"
       onKeyDown={handleKeyDown}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

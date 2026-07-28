@@ -1,7 +1,9 @@
 import { app, BrowserWindow, protocol } from 'electron'
 import path from 'node:path'
+import { registerAgentBridge } from './agent-bridge'
 import { registerIpc } from './ipc'
 import { handleMediaRequest, MEDIA_SCHEME } from './media'
+import { startMcpServer, stopMcpServer } from './mcp-server'
 import { registerMenu } from './menu'
 import { flushTranscripts } from './projects'
 import { registerUpdater } from './updater'
@@ -57,6 +59,8 @@ function createWindow(): void {
 void app.whenReady().then(() => {
   protocol.handle(MEDIA_SCHEME, handleMediaRequest)
   registerIpc()
+  registerAgentBridge()
+  startMcpServer()
   registerMenu()
   // After createWindow so the first state broadcast has somewhere to land;
   // the check itself is delayed well past startup regardless.
@@ -71,6 +75,7 @@ void app.whenReady().then(() => {
 // Transcript writes are debounced, so the last edits before a quit are still
 // only in memory at this point.
 app.on('before-quit', () => {
+  stopMcpServer()
   flushTranscripts()
 })
 

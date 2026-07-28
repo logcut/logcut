@@ -333,4 +333,8 @@
      Also mirrored by TOP_BAR_HEIGHT in EditorPage, which needs the number in
      JS to split the remaining height. */
   --titlebar-height: 36px;
+  /* The action strip above the timeline. Fixed rather than sized by its
+     buttons: the timeline below is a dragged pixel height, and a toolbar that
+     grew as actions were added would change how much timeline is showing. */
+  --timeline-toolbar-height: 32px;
 }

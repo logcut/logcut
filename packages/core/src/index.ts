@@ -7,6 +7,11 @@ export type {
   Word
 } from './types.ts'
 
+export { queryUtterances, DEFAULT_QUERY_LIMIT } from './query.ts'
+export type { UtteranceQuery, UtteranceQueryResult, UtteranceView } from './query.ts'
+
+export { resolveShortId, shortIdMap, SHORT_ID_FLOOR } from './short-id.ts'
+
 export { applyCommand, applyCommands } from './commands/index.ts'
 export type { CommandOutcome, CommandResult, EditCommand, EditDocument } from './commands/index.ts'
 export type { SubtitleCommand, SubtitleOutcome } from './commands/subtitle.ts'
@@ -20,13 +25,19 @@ export {
 } from './language.ts'
 
 export {
+  CAPTION_REFERENCE_HEIGHT,
+  CAPTION_STYLE_LIMITS,
+  captionLengthFor,
+  captionSizePct,
+  captionSizePx,
+  DEFAULT_LINE_RATIO,
   DEFAULT_CAPTION_STYLE,
   DEFAULT_CAPTION_STYLES,
   normalizeCaptionStyles,
   resolveCaptionStyle,
   SYSTEM_FONT
 } from './caption-style.ts'
-export type { CaptionStyle, CaptionStyles } from './caption-style.ts'
+export type { CaptionAlign, CaptionStyle, CaptionStyles } from './caption-style.ts'
 
 export { randomId } from './id.ts'
 
@@ -49,6 +60,8 @@ export {
   removeUtterances,
   replaceAllText,
   setUtteranceSpeaker,
+  setUtteranceStyle,
+  splitUtterance,
   setUtteranceText,
   setUtteranceTime,
   speakerIdsOf

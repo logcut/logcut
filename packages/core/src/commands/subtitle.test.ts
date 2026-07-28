@@ -187,6 +187,112 @@ test('a batch where nothing changes returns the same document', () => {
   assert.deepEqual(result.changed, [])
 })
 
+test('an outcome carries the line as it now stands', () => {
+  const result = applyCommand(doc(), {
+    kind: 'subtitle.setText',
+    assetId: 'asset1',
+    id: 'b',
+    text: '改好了'
+  })
+
+  // The point of this field: a reader with no copy of the document knows what
+  // the line says now without fetching the transcript again.
+  assert.deepEqual(result.outcomes[0]?.lines, [
+    { assetId: 'asset1', id: 'b', startMs: 500, endMs: 800, text: '改好了', speakerId: '1' }
+  ])
+})
+
+test('a merged line is reported with its new end', () => {
+  const result = applyCommand(doc(), {
+    kind: 'subtitle.merge',
+    assetId: 'asset1',
+    firstId: 'a'
+  })
+
+  assert.equal(result.outcomes[0]?.lines[0]?.endMs, 800)
+  assert.equal(result.outcomes[0]?.lines[0]?.id, 'a')
+})
+
+test('remove names what it dropped and reports no lines', () => {
+  const outcome = applyCommand(doc(), {
+    kind: 'subtitle.remove',
+    assetId: 'asset1',
+    ids: ['a', 'c']
+  }).outcomes[0]
+
+  assert.deepEqual(outcome?.lines, [])
+  assert.deepEqual(outcome.kind === 'subtitle.remove' ? outcome.removedIds : [], ['a', 'c'])
+})
+
+test('remove reports only the ids that existed', () => {
+  const outcome = applyCommand(doc(), {
+    kind: 'subtitle.remove',
+    assetId: 'asset1',
+    ids: ['a', 'gone']
+  }).outcomes[0]
+
+  assert.deepEqual(outcome.kind === 'subtitle.remove' ? outcome.removedIds : [], ['a'])
+})
+
+test('replaceAll reports a count and leaves the new text to a query', () => {
+  const outcome = applyCommand(doc(), {
+    kind: 'subtitle.replaceAll',
+    assetId: 'asset1',
+    find: '卷子',
+    replace: 'Agent'
+  }).outcomes[0]
+
+  assert.deepEqual(outcome?.lines, [])
+  assert.equal(outcome.kind === 'subtitle.replaceAll' ? outcome.count : -1, 3)
+})
+
+test('a command may name a line by a unique prefix', () => {
+  const long: EditDocument = {
+    transcripts: {
+      asset1: {
+        audioDurationMs: 10,
+        utterances: [
+          { id: '3f2a91c0-aaaa', start: 0, end: 5, text: 'one', words: [] },
+          { id: '7b4e05d9-bbbb', start: 5, end: 10, text: 'two', words: [] }
+        ]
+      }
+    }
+  }
+  const result = applyCommand(long, {
+    kind: 'subtitle.setText',
+    assetId: 'asset1',
+    id: '3f2a91c0',
+    text: 'edited'
+  })
+
+  assert.equal(result.doc.transcripts.asset1?.utterances[0]?.text, 'edited')
+  // The outcome answers in full ids; shortening is the output side's business.
+  assert.equal(result.outcomes[0]?.lines[0]?.id, '3f2a91c0-aaaa')
+})
+
+test('an ambiguous prefix edits nothing', () => {
+  const long: EditDocument = {
+    transcripts: {
+      asset1: {
+        audioDurationMs: 10,
+        utterances: [
+          { id: 'aaa-1', start: 0, end: 5, text: 'one', words: [] },
+          { id: 'aaa-2', start: 5, end: 10, text: 'two', words: [] }
+        ]
+      }
+    }
+  }
+  const result = applyCommand(long, {
+    kind: 'subtitle.setText',
+    assetId: 'asset1',
+    id: 'aaa',
+    text: 'edited'
+  })
+
+  assert.equal(result.doc, long)
+  assert.equal(result.outcomes[0]?.changed, false)
+})
+
 test('setTime clamps into the room the neighbours leave', () => {
   const result = applyCommand(doc(), {
     kind: 'subtitle.setTime',

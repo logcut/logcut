@@ -89,7 +89,8 @@ export function applyCommand(doc: EditDocument, command: EditCommand): CommandRe
 }
 
 function missingTranscript(command: EditCommand): CommandOutcome {
-  return command.kind === 'subtitle.replaceAll'
-    ? { kind: command.kind, changed: false, focus: null, count: 0 }
-    : { kind: command.kind, changed: false, focus: null }
+  const base = { changed: false, focus: null, lines: [] }
+  if (command.kind === 'subtitle.replaceAll') return { ...base, kind: command.kind, count: 0 }
+  if (command.kind === 'subtitle.remove') return { ...base, kind: command.kind, removedIds: [] }
+  return { ...base, kind: command.kind }
 }

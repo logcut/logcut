@@ -1,4 +1,6 @@
 import { randomId } from './id.ts'
+import { splitUtteranceAt } from './segment.ts'
+import type { CaptionStyle } from './caption-style.ts'
 import type { Transcript, Utterance } from './types.ts'
 
 /**
@@ -64,6 +66,49 @@ export function findNearestUtteranceIndex(utterances: Utterance[], timeMs: numbe
  * anchors, while utterance.text is the single source of truth for display and
  * SRT export.
  */
+/**
+ * Merge a patch into one line's own styling.
+ *
+ * A merge rather than a replacement: the panel sends the field that changed,
+ * and the rest of this line's overrides have to survive it. Returns the same
+ * transcript when nothing differs, so a no-op costs no undo entry.
+ */
+export function setUtteranceStyle(
+  transcript: Transcript,
+  id: string,
+  patch: Partial<CaptionStyle>
+): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
+  if (index === -1) return transcript
+
+  const current = transcript.utterances[index]
+  const entries = Object.entries(patch) as [keyof CaptionStyle, CaptionStyle[keyof CaptionStyle]][]
+  // Every field of the patch already holds that value, so this changes nothing.
+  if (entries.every(([key, value]) => current.style?.[key] === value)) return transcript
+
+  const utterances = [...transcript.utterances]
+  utterances[index] = { ...current, style: { ...current.style, ...patch } }
+  return { ...transcript, utterances }
+}
+
+/**
+ * Replace one line with the two halves of a cut at `timeMs`.
+ *
+ * Returns the same transcript when the cut is impossible (see
+ * `splitUtteranceAt`), so a click that lands between words costs no undo entry.
+ */
+export function splitUtterance(transcript: Transcript, id: string, timeMs: number): Transcript {
+  const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
+  if (index === -1) return transcript
+
+  const halves = splitUtteranceAt(transcript.utterances[index], timeMs)
+  if (!halves) return transcript
+
+  const utterances = [...transcript.utterances]
+  utterances.splice(index, 1, ...halves)
+  return { ...transcript, utterances }
+}
+
 export function setUtteranceText(transcript: Transcript, id: string, text: string): Transcript {
   return {
     ...transcript,

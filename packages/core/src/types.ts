@@ -1,3 +1,5 @@
+import type { CaptionStyle } from './caption-style.ts'
+
 /** All times are in milliseconds, matching the ASR response. */
 export interface Word {
   word: string
@@ -17,6 +19,16 @@ export interface Utterance {
   /** Punctuated sentence text as returned by the ASR. */
   text: string
   speakerId?: string
+  /**
+   * This line's own look, overriding the project's and its speaker's. Absent
+   * unless something was set on this line specifically — the resolution order
+   * is in caption-style.ts.
+   *
+   * It lives on the utterance rather than in a map on the project so that it
+   * goes wherever the line goes: deleting the line takes its styling with it,
+   * and nothing is left keyed to an id that no longer exists.
+   */
+  style?: Partial<CaptionStyle>
   words: Word[]
 }
 
