@@ -1,4 +1,10 @@
-import { clampUtteranceTime, findNearestUtteranceIndex, formatTimecode } from '@logcut/core'
+import {
+  clampUtteranceTime,
+  findNearestUtteranceIndex,
+  formatTimecode,
+  snapTime,
+  utteranceEdges
+} from '@logcut/core'
 import type { Utterance } from '@logcut/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -14,6 +20,14 @@ import { usePlaybackClock } from '@/hooks/usePlaybackClock'
 import { MEDIA_ASSET_DRAG } from '@/lib/drag'
 import { pickTickInterval, pxPerMs, subtitleBlocks, tickTimes } from '@/lib/timeline'
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
+
+/**
+ * How near a landmark a drag has to get before it lands on it, on screen.
+ *
+ * Half a finger-width would grab things nobody aimed at; a couple of pixels
+ * would never catch. Eight is about the distance a pointer overshoots by.
+ */
+const SNAP_PX = 8
 
 /**
  * Fit-to-width makes a short line a fraction of a pixel wide. Blocks are
@@ -154,6 +168,10 @@ interface TimelineProps {
    * larger half of "subtitles are hard to click".
    */
   onEditSubtitlesAt(timeMs: number): void
+  /** Whether drags land on nearby landmarks. Off is a real working mode — a
+   *  line placed deliberately a few frames off an edge cannot be nudged there
+   *  while every drag keeps pulling it back. */
+  snapEnabled: boolean
 }
 
 /**
@@ -228,7 +246,8 @@ export default function Timeline({
   onTrimUtterances,
   onTogglePlay,
   onDropAsset,
-  onEditSubtitlesAt
+  onEditSubtitlesAt,
+  snapEnabled
 }: TimelineProps): JSX.Element {
   const [dropTarget, setDropTarget] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -236,6 +255,9 @@ export default function Timeline({
    *  time↔pixel conversion is against this, never the whole container. */
   const contentRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
+  /** Where the playhead is, in timeline ms. A ref, not state: it changes every
+   *  animation frame during playback and must not re-render anything. */
+  const playheadMsRef = useRef(0)
   /**
    * What the drag that is running means. Fixed at pointerdown by where the
    * press landed, and never reconsidered: a gesture that changed meaning
@@ -336,6 +358,9 @@ export default function Timeline({
   // Written straight to the DOM: this runs every animation frame during
   // playback and must not re-render the tree.
   const movePlayhead = useCallback((timeMs: number) => {
+    // Recorded on the way past because snapping needs to know where the
+    // playhead is, and the position itself only exists as a CSS transform.
+    playheadMsRef.current = timeMs
     const playhead = playheadRef.current
     const view = viewRef.current
     if (!playhead || !(view.durationMs > 0)) return
@@ -392,6 +417,16 @@ export default function Timeline({
     () => subtitleBlocks(shown, scale, offsetPx, offsetPx + width),
     [shown, scale, offsetPx, width]
   )
+
+  /**
+   * How far from a landmark a drag still lands on it, converted from a fixed
+   * pixel distance at the current zoom.
+   *
+   * Pixels rather than a fixed duration because that is what the gesture is:
+   * "near enough on screen". A tolerance in milliseconds would be unusably
+   * wide zoomed in — covering whole words — and imperceptible zoomed out.
+   */
+  const snapToleranceMs = (): number => (snapEnabled && scale > 0 ? SNAP_PX / scale : 0)
 
   const timeAtClientX = (clientX: number): number => {
     const content = contentRef.current
@@ -514,6 +549,25 @@ export default function Timeline({
     clientX: number
   ): number => {
     let delta = timeAtClientX(clientX) - current.originMs
+
+    // Snap the edge itself, not the pointer: the two differ by wherever inside
+    // the handle the press landed, and it is the edge that has to line up.
+    // With several lines dragging together the first one leads and the rest
+    // keep their spacing, so the group never comes apart.
+    const lead = utterances.find((utterance) => utterance.id === current.ids[0])
+    if (lead) {
+      const target = lead[current.edge] + delta
+      const snapped = snapTime(
+        target,
+        // The playhead first: "line this up with where I am" is the reason to
+        // reach for the handle, and it outranks a neighbouring line when both
+        // are equally near.
+        [playheadMsRef.current, ...utteranceEdges(utterances, current.ids)],
+        snapToleranceMs()
+      )
+      delta += snapped - target
+    }
+
     for (const id of current.ids) {
       const line = utterances.find((utterance) => utterance.id === id)
       if (!line) continue
@@ -619,7 +673,9 @@ export default function Timeline({
 
     // Dragging never snaps: scrubbing has to follow the pointer exactly.
     if (dragRef.current === 'scrub') {
-      seekTo(timeAtClientX(event.clientX))
+      // The other direction: the playhead lands on a subtitle's edge. Every
+      // line is a candidate — none of them is moving.
+      seekTo(snapTime(timeAtClientX(event.clientX), utteranceEdges(utterances), snapToleranceMs()))
       return
     }
     if (dragRef.current !== 'marquee') return

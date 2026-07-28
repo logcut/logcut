@@ -46,6 +46,8 @@ export type { SegmentOptions } from './segment.ts'
 
 export { parseVolcanoResponse } from './volcano.ts'
 
+export { snapTime, utteranceEdges } from './snap.ts'
+
 export { formatSrtTimestamp, toSrt } from './srt.ts'
 
 export { formatTimecode, formatTimecodeFull, parseTimecode } from './timecode.ts'

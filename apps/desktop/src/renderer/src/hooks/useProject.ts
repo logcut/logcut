@@ -336,6 +336,14 @@ export function useProject(projectId: string): UseProjectResult {
     // would say why.
     (styles: CaptionStyles, options: { record?: boolean } = {}) => {
       if (options.record !== false) record()
+      // On screen first, disk second. The caption is dragged on the picture,
+      // and waiting for a round trip to the main process before showing the
+      // result would flash the old position for a frame on release. Main
+      // normalizes what it stores and returns it, so the value below is
+      // replaced by the authoritative one a moment later — the two agree
+      // unless something was out of range, in which case the clamped value
+      // wins, which is also the right answer.
+      setProject((current) => (current ? { ...current, captionStyles: styles } : current))
       return guard(() => window.logcut.setCaptionStyles(projectId, styles))
     },
     [guard, projectId, record]

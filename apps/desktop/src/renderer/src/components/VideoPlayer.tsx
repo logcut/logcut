@@ -30,10 +30,11 @@ interface VideoPlayerProps {
    * Position, size and rotation dragged on the picture. Goes to whichever
    * scope the style panel has selected — this component does not know which.
    *
-   * `continuing` marks every frame of a drag after the first, so one gesture
-   * lands as one entry in the undo history rather than a hundred.
+   * Called **once per gesture, on release**, not on every frame: the caption
+   * follows the pointer from this component's own state, and the document
+   * hears the result. One call is also one entry in the undo history.
    */
-  onCaptionStyleChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
+  onCaptionStyleChange(patch: Partial<CaptionStyle>): void
   /** CSS font-family for the caption; resolved by the caller. */
   captionFontStack: string
   /** Everything else about the caption's appearance, already resolved. */
@@ -93,9 +94,6 @@ interface Drag {
   /** Distance and angle to the pointer at the start, for scale and rotate. */
   radius: number
   angle: number
-  /** False until the first frame that actually writes, which is the one the
-   *  history records. A press that never moves records nothing. */
-  moved: boolean
   style: { x: number; y: number; rotation: number; fontSizePct: number }
 }
 
@@ -134,26 +132,46 @@ export default function VideoPlayer({
    *  pointer is, and it should not survive a reload or reach the file. */
   const [selected, setSelected] = useState(false)
   const dragRef = useRef<Drag | null>(null)
+  /**
+   * What the gesture has changed so far, not yet committed.
+   *
+   * A drag used to write to the document on every frame. That is one state
+   * update per frame in the page above, and it re-renders everything the
+   * editor is showing — the subtitle list and the whole style panel — when the
+   * only thing that has to move is this one block. Measured on a packaged
+   * build, a four-second drag spent ~660ms in React, a third of it inside the
+   * panel's own controls.
+   *
+   * So the gesture keeps its result here and the document hears about it once,
+   * on release. Held twice over: the ref is what the release reads (state set
+   * during a gesture is not visible to the handler that ends it), the state is
+   * what makes the caption follow the pointer.
+   */
+  const pendingRef = useRef<Partial<CaptionStyle> | null>(null)
+  const [pending, setPending] = useState<Partial<CaptionStyle> | null>(null)
+
+  /** What to draw: the document, with an unfinished gesture laid over it. */
+  const style = pending === null ? captionStyle : { ...captionStyle, ...pending }
 
   /** The caption's size in this pane's pixels. Every other length below is
    *  derived from it or scaled the same way, so it is computed once. */
-  const fontSizePx = (frame.height * captionStyle.fontSizePct) / 100
+  const fontSizePx = (frame.height * style.fontSizePct) / 100
 
   /** Shared by the caption and the box that replaces it, so editing does not
    *  reflow the very text being edited. */
   const captionCss = {
     fontFamily: captionFontStack,
     fontSize: fontSizePx,
-    fontWeight: captionStyle.bold ? 700 : 400,
-    fontStyle: captionStyle.italic ? 'italic' : 'normal',
-    textDecoration: captionStyle.underline ? 'underline' : 'none',
-    color: captionStyle.color,
+    fontWeight: style.bold ? 700 : 400,
+    fontStyle: style.italic ? 'italic' : 'normal',
+    textDecoration: style.underline ? 'underline' : 'none',
+    color: style.color,
     // Both spacings are stored against the reference frame, so they scale with
     // the picture exactly as the size does — otherwise tightening the letters
     // in the preview would leave them untouched at export.
-    letterSpacing: captionLengthFor(captionStyle.letterSpacing, frame.height),
-    lineHeight: `${fontSizePx * DEFAULT_LINE_RATIO + captionLengthFor(captionStyle.lineSpacing, frame.height)}px`,
-    textAlign: captionStyle.align
+    letterSpacing: captionLengthFor(style.letterSpacing, frame.height),
+    lineHeight: `${fontSizePx * DEFAULT_LINE_RATIO + captionLengthFor(style.lineSpacing, frame.height)}px`,
+    textAlign: style.align
   } as const
 
   /**
@@ -179,34 +197,30 @@ export default function VideoPlayer({
       from: { x: event.clientX, y: event.clientY },
       radius: Math.hypot(dx, dy),
       angle: angleAt(centre, event.clientX, event.clientY),
-      moved: false,
-      style: {
-        x: captionStyle.x,
-        y: captionStyle.y,
-        rotation: captionStyle.rotation,
-        fontSizePct: captionStyle.fontSizePct
-      }
+      // Read through `style`, so a gesture begun before the previous one has
+      // been written back still starts from what is on screen.
+      style: { x: style.x, y: style.y, rotation: style.rotation, fontSizePct: style.fontSizePct }
     }
     event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  /** Keep a frame's result on screen without telling the document about it. */
+  const preview = (patch: Partial<CaptionStyle>): void => {
+    pendingRef.current = { ...pendingRef.current, ...patch }
+    setPending(pendingRef.current)
   }
 
   const onDragMove = (event: ReactPointerEvent<HTMLElement>): void => {
     const drag = dragRef.current
     if (!drag || drag.pointerId !== event.pointerId || frame.width === 0) return
 
-    const options = { continuing: drag.moved }
-    drag.moved = true
-
     if (drag.mode === 'move') {
       // The picture's own size is the unit: dragging a third of the way across
       // moves the caption a third of the way, whatever the pane's zoom.
-      onCaptionStyleChange(
-        {
-          x: clamp01(drag.style.x + (event.clientX - drag.from.x) / frame.width),
-          y: clamp01(drag.style.y + (event.clientY - drag.from.y) / frame.height)
-        },
-        options
-      )
+      preview({
+        x: clamp01(drag.style.x + (event.clientX - drag.from.x) / frame.width),
+        y: clamp01(drag.style.y + (event.clientY - drag.from.y) / frame.height)
+      })
       return
     }
 
@@ -214,7 +228,7 @@ export default function VideoPlayer({
       if (drag.radius === 0) return
       const ratio =
         Math.hypot(event.clientX - drag.centre.x, event.clientY - drag.centre.y) / drag.radius
-      onCaptionStyleChange({ fontSizePct: clampSize(drag.style.fontSizePct * ratio) }, options)
+      preview({ fontSizePct: clampSize(drag.style.fontSizePct * ratio) })
       return
     }
 
@@ -222,11 +236,26 @@ export default function VideoPlayer({
     // Wrapped into (-180, 180] so dragging past the top does not jump by a
     // full turn, and so the stored value stays in the range the core allows.
     const rotation = (((drag.style.rotation + turned + 180) % 360) + 360) % 360
-    onCaptionStyleChange({ rotation: Math.round(rotation) - 180 }, options)
+    preview({ rotation: Math.round(rotation) - 180 })
   }
 
+  /**
+   * The gesture is over: hand the result to the document, once.
+   *
+   * The overlay is dropped in the same breath. It does not flash back to the
+   * old value in between — the page applies the change to its own state before
+   * it goes to disk, so the next render already carries it.
+   *
+   * A press that never moved leaves `pendingRef` null and commits nothing,
+   * which is what keeps a click that only selects out of the undo history.
+   */
   const endDrag = (event: ReactPointerEvent<HTMLElement>): void => {
-    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null
+    if (dragRef.current?.pointerId !== event.pointerId) return
+    dragRef.current = null
+    const patch = pendingRef.current
+    pendingRef.current = null
+    setPending(null)
+    if (patch) onCaptionStyleChange(patch)
   }
 
   /**
@@ -360,9 +389,9 @@ export default function VideoPlayer({
                 data-caption-block
                 className="absolute"
                 style={{
-                  left: `${captionStyle.x * 100}%`,
-                  top: `${captionStyle.y * 100}%`,
-                  transform: `translate(-50%, -50%) rotate(${captionStyle.rotation}deg)`,
+                  left: `${style.x * 100}%`,
+                  top: `${style.y * 100}%`,
+                  transform: `translate(-50%, -50%) rotate(${style.rotation}deg)`,
                   maxWidth: frame.width
                 }}
                 onPointerMove={onDragMove}
@@ -441,7 +470,7 @@ export default function VideoPlayer({
                         key={corner.name}
                         role="slider"
                         aria-label={`Resize from ${corner.name}`}
-                        aria-valuenow={Math.round(captionStyle.fontSizePct * 10) / 10}
+                        aria-valuenow={Math.round(style.fontSizePct * 10) / 10}
                         tabIndex={-1}
                         className={`pointer-events-auto absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary bg-background ${corner.cursor}`}
                         style={{ left: corner.x, top: corner.y }}
@@ -461,7 +490,7 @@ export default function VideoPlayer({
                     <span
                       role="slider"
                       aria-label="Rotate"
-                      aria-valuenow={Math.round(captionStyle.rotation)}
+                      aria-valuenow={Math.round(style.rotation)}
                       tabIndex={-1}
                       className="pointer-events-auto absolute left-1/2 size-3 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border border-primary bg-background"
                       style={{ top: `-${ROTATE_STALK}px` }}

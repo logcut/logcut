@@ -94,7 +94,8 @@ interface SubtitleRowProps {
   timeDraft: string
   speakerIds: string[]
   nextSpeakerId: string
-  /** Attached only while this row is the active one, for scrollIntoView. */
+  /** Attached only while this row is the active one, so the follow below can
+   *  measure where it currently sits. */
   activeRef: RefObject<HTMLDivElement | null>
   handlers: RowHandlers
 }
@@ -370,7 +371,6 @@ export default function SubtitleList({
   nextSpeakerId,
   onSpeakerSave
 }: SubtitleListProps): JSX.Element {
-  const activeRef = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -400,12 +400,30 @@ export default function SubtitleList({
     moved: boolean
   } | null>(null)
 
+  /**
+   * Only the rows on screen are rendered.
+   *
+   * `memo` on a row stops it re-rendering, but it cannot stop the row's element
+   * being *created* — that happens in the map below, before React has anything
+   * to compare. So the whole list used to be rebuilt on every frame of a
+   * timeline drag, for the sake of moving one highlight. This makes the cost
+   * proportional to the height of the window instead of to the length of the
+   * transcript.
+   *
+   * `estimateSize` is only the first guess; every row is measured for real once
+   * it mounts (see `measureElement`), because a line's height depends on how
+   * far its text wraps and on whether it is being edited.
+   *
+   * `overscan` keeps a few rows beyond each edge alive so a fast scroll does
+   * not expose blank space before the next render lands.
+   */
   // `utterances` through a ref as well: the handlers below read it, and
   // depending on it directly would rebuild the whole bundle — and with it
   // re-render every row — on any edit at all.
   const utterancesRef = useRef(utterances)
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
+  const activeRef = useRef<HTMLDivElement>(null)
   /**
    * When the follow is allowed to resume. An action whose result is already
    * where the user is looking pushes this out, and the follow ignores every

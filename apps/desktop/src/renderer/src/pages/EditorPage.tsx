@@ -136,6 +136,9 @@ export default function EditorPage({
   /** Where the playhead is, on the timeline's clock. Held here because the
    *  toolbar acts on it and a ref would not re-enable its buttons. */
   const [playheadMs, setPlayheadMs] = useState(0)
+  /** Snapping is on by default: lining edges up is the common intent, and the
+   *  toolbar says plainly that it can be turned off. */
+  const [snapEnabled, setSnapEnabled] = useState(true)
   /** The left-hand column. */
   const [chatOpen, setChatOpen] = useState(true)
   /**
@@ -342,7 +345,22 @@ export default function EditorPage({
    * would land somewhere invisible.
    */
   const captionScope = liveScope(storedScope, speakerIds, selectedLine !== null)
-  const scopedStyle = styleForScope(captionStyles, captionScope, selectedLine)
+
+  /**
+   * The selected line, but only when the panel is actually scoped to it.
+   *
+   * `selectedLine` follows the playhead, so it changes on every frame of a
+   * timeline drag. Feeding it to the two memos below unconditionally would
+   * rebuild them at that rate — and with them the whole style panel, whose
+   * Radix controls are not cheap to re-render — even though at any other scope
+   * the value is not read at all. Held to null there, the memos hold still.
+   */
+  const scopeLine = captionScope.kind === 'line' ? selectedLine : null
+
+  const scopedStyle = useMemo(
+    () => styleForScope(captionStyles, captionScope, scopeLine),
+    [captionStyles, captionScope, scopeLine]
+  )
 
   /**
    * Where a style edit goes. The two project-level scopes are one write to the
@@ -350,47 +368,52 @@ export default function EditorPage({
    * a command like every other edit to a transcript — and joins the undo
    * history, which project settings deliberately do not.
    */
-  const applyStylePatch = (
-    patch: Partial<CaptionStyle>,
-    // Set while a gesture is in flight. Both paths below write on every frame
-    // of a drag, so only its first frame is a step the history should hold.
-    options: { continuing?: boolean } = {}
-  ): void => {
-    const record = !options.continuing
-    if (captionScope.kind === 'line') {
-      if (!selectedLine) return
-      dispatch(
-        [
+  const applyStylePatch = useCallback(
+    (
+      patch: Partial<CaptionStyle>,
+      // Set while a control is being dragged. The panel's sliders still write
+      // on every frame, so only the first of them is a step worth going back
+      // to. The picture's own gestures do not need this: they commit once, on
+      // release (see components/VideoPlayer.tsx).
+      options: { continuing?: boolean } = {}
+    ): void => {
+      const record = !options.continuing
+      if (captionScope.kind === 'line') {
+        if (!scopeLine) return
+        dispatch(
+          [
+            {
+              kind: 'subtitle.setStyle',
+              assetId: scopeLine.assetId,
+              id: scopeLine.sourceId,
+              style: patch
+            }
+          ],
+          { record }
+        )
+        return
+      }
+      if (captionScope.kind === 'speaker') {
+        const { speakerId } = captionScope
+        void setCaptionStyles(
           {
-            kind: 'subtitle.setStyle',
-            assetId: selectedLine.assetId,
-            id: selectedLine.sourceId,
-            style: patch
-          }
-        ],
-        { record }
-      )
-      return
-    }
-    if (captionScope.kind === 'speaker') {
-      const { speakerId } = captionScope
+            ...captionStyles,
+            bySpeaker: {
+              ...captionStyles.bySpeaker,
+              [speakerId]: { ...captionStyles.bySpeaker[speakerId], ...patch }
+            }
+          },
+          { record }
+        )
+        return
+      }
       void setCaptionStyles(
-        {
-          ...captionStyles,
-          bySpeaker: {
-            ...captionStyles.bySpeaker,
-            [speakerId]: { ...captionStyles.bySpeaker[speakerId], ...patch }
-          }
-        },
+        { ...captionStyles, base: { ...captionStyles.base, ...patch } },
         { record }
       )
-      return
-    }
-    void setCaptionStyles(
-      { ...captionStyles, base: { ...captionStyles.base, ...patch } },
-      { record }
-    )
-  }
+    },
+    [captionScope, captionStyles, dispatch, scopeLine, setCaptionStyles]
+  )
   const captionFontStack = captionFontStackFor(captionStyle.fontFamily, captionFonts)
 
   const captionText =
@@ -453,6 +476,38 @@ export default function EditorPage({
     },
     [utterances]
   )
+
+  /**
+   * The scrubbing path into `applyTime`, collapsed to one call per frame.
+   *
+   * A pointer reports faster than the screen refreshes — on a 120Hz trackpad,
+   * several `pointermove` events can land between two frames — and each one
+   * arrives as its own event, so React batches within one but never across
+   * two. That means two or three full renders per frame for a picture that can
+   * only be painted once.
+   *
+   * Only the last position in a frame is worth anything, so the rest are
+   * dropped. This wraps the scrub path alone: `timeupdate` is ~4Hz and needs no
+   * help, and the callers that seek then immediately re-derive the highlight
+   * (see `openSubtitlesAt`) need it to happen now, not next frame.
+   */
+  const scrubFrameRef = useRef(0)
+  const scrubTimeRef = useRef(0)
+  const scrubTime = useCallback(
+    (timeMs: number): void => {
+      scrubTimeRef.current = timeMs
+      if (scrubFrameRef.current !== 0) return
+      scrubFrameRef.current = requestAnimationFrame(() => {
+        scrubFrameRef.current = 0
+        applyTime(scrubTimeRef.current)
+      })
+    },
+    [applyTime]
+  )
+
+  // A drag can end with the window closing under it; a pending frame would then
+  // run against an unmounted tree.
+  useEffect(() => () => cancelAnimationFrame(scrubFrameRef.current), [])
 
   // Pulled out so the dependency is the function and not `playback`: the hook
   // returns a fresh object every render, and taking the whole thing would make
@@ -861,7 +916,12 @@ export default function EditorPage({
           <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
 
           <Panel className="flex shrink-0 flex-col" style={{ height: timelineHeight }}>
-            <TimelineToolbar canSplit={splitTarget !== null} onSplit={handleSplit} />
+            <TimelineToolbar
+              canSplit={splitTarget !== null}
+              onSplit={handleSplit}
+              snapEnabled={snapEnabled}
+              onToggleSnap={() => setSnapEnabled((on) => !on)}
+            />
             <Timeline
               durationMs={playback.durationMs}
               clips={clipViews}
@@ -876,11 +936,12 @@ export default function EditorPage({
               onRemoveUtterances={handleRemoveUtterances}
               onRemoveClips={(clipIds) => void removeClips(clipIds)}
               onSeek={playback.seek}
-              onScrub={applyTime}
+              onScrub={scrubTime}
               onDropAsset={(assetId) => void addClip(assetId)}
               onTrimUtterances={handleTrimUtterances}
               onTogglePlay={togglePlay}
               onEditSubtitlesAt={openSubtitlesAt}
+              snapEnabled={snapEnabled}
             />
           </Panel>
         </div>

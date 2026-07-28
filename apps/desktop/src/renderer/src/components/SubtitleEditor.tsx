@@ -17,7 +17,7 @@ import {
   Undo2,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
@@ -141,6 +141,238 @@ function NumberField({
   )
 }
 
+/**
+ * The style panel.
+ *
+ * **Memoized, and that is the point.** It is a stack of Radix controls — a
+ * select, two toggle groups, three number fields, a slider — and every one of
+ * them is layers of forwardRef and context. On a packaged build they accounted
+ * for a third of the React time spent during a drag, purely from being
+ * re-rendered alongside everything else.
+ *
+ * The list above re-renders at pointer rate whenever the playhead moves. None
+ * of that concerns these controls, so long as their props hold still — which
+ * is what `scopedStyle` and `onChange` being memoized upstream buys (see
+ * pages/EditorPage.tsx). A single inline arrow passed in here undoes all of it,
+ * silently.
+ */
+const CaptionStylePanel = memo(function CaptionStylePanel({
+  style,
+  onChange,
+  scope,
+  onScopeChange,
+  speakerIds,
+  hasSelection
+}: {
+  style: CaptionStyle
+  onChange(patch: Partial<CaptionStyle>): void
+  scope: CaptionScope
+  onScopeChange(scope: CaptionScope): void
+  speakerIds: string[]
+  hasSelection: boolean
+}): JSX.Element {
+  const fonts = useCaptionFonts()
+  // The scope is a tagged union in the model and a flat string in the control;
+  // this is the one place the two meet.
+  const scopeValue = scope.kind === 'speaker' ? `speaker:${scope.speakerId}` : scope.kind
+  const onScopeSelect = (value: string): void => {
+    if (value === 'all' || value === 'line') onScopeChange({ kind: value })
+    else onScopeChange({ kind: 'speaker', speakerId: value.slice('speaker:'.length) })
+  }
+
+  // The slider's own bounds, in the pixels both it and the box speak.
+  const sizeRange = {
+    min: captionSizePx(CAPTION_STYLE_LIMITS.fontSizePct.min),
+    max: captionSizePx(CAPTION_STYLE_LIMITS.fontSizePct.max)
+  }
+
+  return (
+    <section className="h-[40%] shrink-0 overflow-y-auto border-b border-border p-component">
+      {/* What the controls below write to. It sits in the heading rather than
+              in a row of its own because it is not a setting — it is the question
+              "which subtitles are we talking about", and every row under it
+              inherits the answer.
+
+              The values shown are always the *resolved* ones for that scope, so a
+              speaker that overrides nothing still reads as what it will look
+              like; changing a control then writes only into the chosen layer. */}
+      <div className="mb-component flex items-center gap-component">
+        <h2 className="m-0 flex-1 text-caption font-medium text-foreground">Style</h2>
+        <Select value={scopeValue} onValueChange={onScopeSelect}>
+          <SelectTrigger size="sm" className="w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All subtitles</SelectItem>
+            {/* Only offerable with a line in hand; without one there is
+                    nothing for "this line" to mean. */}
+            {hasSelection && <SelectItem value="line">This line</SelectItem>}
+            {speakerIds.map((speakerId) => (
+              <SelectItem key={speakerId} value={`speaker:${speakerId}`}>
+                Speaker {speakerId}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex flex-col gap-component">
+        <StyleRow label="Font">
+          <Select
+            value={style.fontFamily}
+            onValueChange={(value) => onChange({ fontFamily: value })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            {/* Hundreds of rows once the machine's own fonts are in, so the
+                    list scrolls rather than growing to the height of the window. */}
+            <SelectContent className="max-h-72">
+              {fonts.map((font) => (
+                // Each row set in the font it offers: the names alone say
+                // nothing about what the caption will look like.
+                <SelectItem key={font.value} value={font.value} style={{ fontFamily: font.stack }}>
+                  {font.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </StyleRow>
+
+        {/* Shown and typed in pixels, stored as a share of the picture
+                height (see CaptionStyle). The pixels are quoted at a fixed
+                1080-high frame, not at the preview's own height — otherwise the
+                number would change as the window is dragged, while the caption
+                itself did not. */}
+        <StyleRow
+          label="Size"
+          readout={
+            <NumberField
+              value={captionSizePx(style.fontSizePct)}
+              min={sizeRange.min}
+              max={sizeRange.max}
+              label="Caption size in pixels"
+              title={REFERENCE_HINT}
+              onCommit={(px) => onChange({ fontSizePct: captionSizePct(px) })}
+            />
+          }
+        >
+          <Slider
+            value={[captionSizePx(style.fontSizePct)]}
+            min={sizeRange.min}
+            max={sizeRange.max}
+            step={1}
+            onValueChange={([next]) => onChange({ fontSizePct: captionSizePct(next) })}
+          />
+        </StyleRow>
+
+        <StyleRow label="Style">
+          <ToggleGroup
+            type="multiple"
+            variant="outline"
+            value={[
+              ...(style.bold ? ['bold'] : []),
+              ...(style.underline ? ['underline'] : []),
+              ...(style.italic ? ['italic'] : [])
+            ]}
+            onValueChange={(values) =>
+              onChange({
+                bold: values.includes('bold'),
+                underline: values.includes('underline'),
+                italic: values.includes('italic')
+              })
+            }
+          >
+            <ToggleGroupItem value="bold" aria-label="Bold">
+              <Bold />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="underline" aria-label="Underline">
+              <Underline />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="italic" aria-label="Italic">
+              <Italic />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </StyleRow>
+
+        {/* The platform's own colour picker. Nothing hand-rolled comes close
+                to it — eyedropper, recent colours, every model the OS offers —
+                and a caption colour is picked against the frame behind it, which
+                a swatch grid cannot help with. */}
+        <StyleRow label="Colour">
+          <label className="flex h-control-md cursor-pointer items-center gap-component rounded-md border border-input px-compact">
+            <span
+              className="size-icon-sm rounded-sm border border-border"
+              style={{ backgroundColor: style.color }}
+            />
+            <span className="timecode text-foreground uppercase">{style.color}</span>
+            <input
+              type="color"
+              value={style.color}
+              className="sr-only"
+              onChange={(event) => onChange({ color: event.target.value })}
+            />
+          </label>
+        </StyleRow>
+
+        {/* Both on one row, typed rather than dragged: they are adjustments
+                of a few pixels around a default that is already right, and a
+                slider spanning the whole useful range cannot resolve one of them.
+                Both read 0 at the default — extra spacing, not absolute spacing,
+                which is why 0 leading is not what 0 means here. */}
+        <StyleRow label="Spacing" wide>
+          <div className="flex flex-1 items-center gap-component">
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Letter</span>
+            <NumberField
+              value={style.letterSpacing}
+              min={CAPTION_STYLE_LIMITS.letterSpacing.min}
+              max={CAPTION_STYLE_LIMITS.letterSpacing.max}
+              label="Extra space between characters"
+              title={REFERENCE_HINT}
+              onCommit={(next) => onChange({ letterSpacing: next })}
+            />
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Line</span>
+            <NumberField
+              value={style.lineSpacing}
+              min={CAPTION_STYLE_LIMITS.lineSpacing.min}
+              max={CAPTION_STYLE_LIMITS.lineSpacing.max}
+              label="Extra space between lines"
+              title={REFERENCE_HINT}
+              onCommit={(next) => onChange({ lineSpacing: next })}
+            />
+          </div>
+        </StyleRow>
+
+        {/* Horizontal only. Vertical writing is a typesetting mode rather
+                than an alignment — it changes how lines wrap and how the block is
+                measured — so it belongs with its own work, not in this row. */}
+        <StyleRow label="Align">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={style.align}
+            // Radix reports '' when the pressed item is pressed again; an
+            // alignment always has a value, so that clears nothing.
+            onValueChange={(value) => {
+              if (value !== '') onChange({ align: value as CaptionAlign })
+            }}
+          >
+            <ToggleGroupItem value="left" aria-label="Align left">
+              <AlignLeft />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="center" aria-label="Align centre">
+              <AlignCenter />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="right" aria-label="Align right">
+              <AlignRight />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </StyleRow>
+      </div>
+    </section>
+  )
+})
+
 interface SubtitleEditorProps {
   utterances: Utterance[]
   activeId: string | null
@@ -201,25 +433,10 @@ export default function SubtitleEditor({
   onScopeChange,
   hasSelection
 }: SubtitleEditorProps): JSX.Element {
-  const fonts = useCaptionFonts()
-  // The scope is a tagged union in the model and a flat string in the control;
-  // this is the one place the two meet.
-  const scopeValue = scope.kind === 'speaker' ? `speaker:${scope.speakerId}` : scope.kind
-  const onScopeSelect = (value: string): void => {
-    if (value === 'all' || value === 'line') onScopeChange({ kind: value })
-    else onScopeChange({ kind: 'speaker', speakerId: value.slice('speaker:'.length) })
-  }
-
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
   const [message, setMessage] = useState('')
-
-  // The slider's own bounds, in the pixels both it and the box speak.
-  const sizeRange = {
-    min: captionSizePx(CAPTION_STYLE_LIMITS.fontSizePct.min),
-    max: captionSizePx(CAPTION_STYLE_LIMITS.fontSizePct.max)
-  }
 
   const replaceAll = (): void => {
     const count = onReplaceAll(findText, replaceText)
@@ -292,195 +509,14 @@ export default function SubtitleEditor({
           bare percentage: no spacing token could express it, and the timeline
           split above uses the same 40% for the same kind of reason. It scrolls,
           so the controls are reachable before the section is tall enough. */}
-      <section className="h-[40%] shrink-0 overflow-y-auto border-b border-border p-component">
-        {/* What the controls below write to. It sits in the heading rather than
-            in a row of its own because it is not a setting — it is the question
-            "which subtitles are we talking about", and every row under it
-            inherits the answer.
-
-            The values shown are always the *resolved* ones for that scope, so a
-            speaker that overrides nothing still reads as what it will look
-            like; changing a control then writes only into the chosen layer. */}
-        <div className="mb-component flex items-center gap-component">
-          <h2 className="m-0 flex-1 text-caption font-medium text-foreground">Style</h2>
-          <Select value={scopeValue} onValueChange={onScopeSelect}>
-            <SelectTrigger size="sm" className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All subtitles</SelectItem>
-              {/* Only offerable with a line in hand; without one there is
-                  nothing for "this line" to mean. */}
-              {hasSelection && <SelectItem value="line">This line</SelectItem>}
-              {speakerIds.map((speakerId) => (
-                <SelectItem key={speakerId} value={`speaker:${speakerId}`}>
-                  Speaker {speakerId}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex flex-col gap-component">
-          <StyleRow label="Font">
-            <Select
-              value={style.fontFamily}
-              onValueChange={(value) => onChange({ fontFamily: value })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              {/* Hundreds of rows once the machine's own fonts are in, so the
-                  list scrolls rather than growing to the height of the window. */}
-              <SelectContent className="max-h-72">
-                {fonts.map((font) => (
-                  // Each row set in the font it offers: the names alone say
-                  // nothing about what the caption will look like.
-                  <SelectItem
-                    key={font.value}
-                    value={font.value}
-                    style={{ fontFamily: font.stack }}
-                  >
-                    {font.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </StyleRow>
-
-          {/* Shown and typed in pixels, stored as a share of the picture
-              height (see CaptionStyle). The pixels are quoted at a fixed
-              1080-high frame, not at the preview's own height — otherwise the
-              number would change as the window is dragged, while the caption
-              itself did not. */}
-          <StyleRow
-            label="Size"
-            readout={
-              <NumberField
-                value={captionSizePx(style.fontSizePct)}
-                min={sizeRange.min}
-                max={sizeRange.max}
-                label="Caption size in pixels"
-                title={REFERENCE_HINT}
-                onCommit={(px) => onChange({ fontSizePct: captionSizePct(px) })}
-              />
-            }
-          >
-            <Slider
-              value={[captionSizePx(style.fontSizePct)]}
-              min={sizeRange.min}
-              max={sizeRange.max}
-              step={1}
-              onValueChange={([next]) => onChange({ fontSizePct: captionSizePct(next) })}
-            />
-          </StyleRow>
-
-          <StyleRow label="Style">
-            <ToggleGroup
-              type="multiple"
-              variant="outline"
-              value={[
-                ...(style.bold ? ['bold'] : []),
-                ...(style.underline ? ['underline'] : []),
-                ...(style.italic ? ['italic'] : [])
-              ]}
-              onValueChange={(values) =>
-                onChange({
-                  bold: values.includes('bold'),
-                  underline: values.includes('underline'),
-                  italic: values.includes('italic')
-                })
-              }
-            >
-              <ToggleGroupItem value="bold" aria-label="Bold">
-                <Bold />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="underline" aria-label="Underline">
-                <Underline />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="italic" aria-label="Italic">
-                <Italic />
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </StyleRow>
-
-          {/* The platform's own colour picker. Nothing hand-rolled comes close
-              to it — eyedropper, recent colours, every model the OS offers —
-              and a caption colour is picked against the frame behind it, which
-              a swatch grid cannot help with. */}
-          <StyleRow label="Colour">
-            <label className="flex h-control-md cursor-pointer items-center gap-component rounded-md border border-input px-compact">
-              <span
-                className="size-icon-sm rounded-sm border border-border"
-                style={{ backgroundColor: style.color }}
-              />
-              <span className="timecode text-foreground uppercase">{style.color}</span>
-              <input
-                type="color"
-                value={style.color}
-                className="sr-only"
-                onChange={(event) => onChange({ color: event.target.value })}
-              />
-            </label>
-          </StyleRow>
-
-          {/* Both on one row, typed rather than dragged: they are adjustments
-              of a few pixels around a default that is already right, and a
-              slider spanning the whole useful range cannot resolve one of them.
-              Both read 0 at the default — extra spacing, not absolute spacing,
-              which is why 0 leading is not what 0 means here. */}
-          <StyleRow label="Spacing" wide>
-            <div className="flex flex-1 items-center gap-component">
-              <span className="shrink-0 text-caption font-normal text-muted-foreground">
-                Letter
-              </span>
-              <NumberField
-                value={style.letterSpacing}
-                min={CAPTION_STYLE_LIMITS.letterSpacing.min}
-                max={CAPTION_STYLE_LIMITS.letterSpacing.max}
-                label="Extra space between characters"
-                title={REFERENCE_HINT}
-                onCommit={(next) => onChange({ letterSpacing: next })}
-              />
-              <span className="shrink-0 text-caption font-normal text-muted-foreground">Line</span>
-              <NumberField
-                value={style.lineSpacing}
-                min={CAPTION_STYLE_LIMITS.lineSpacing.min}
-                max={CAPTION_STYLE_LIMITS.lineSpacing.max}
-                label="Extra space between lines"
-                title={REFERENCE_HINT}
-                onCommit={(next) => onChange({ lineSpacing: next })}
-              />
-            </div>
-          </StyleRow>
-
-          {/* Horizontal only. Vertical writing is a typesetting mode rather
-              than an alignment — it changes how lines wrap and how the block is
-              measured — so it belongs with its own work, not in this row. */}
-          <StyleRow label="Align">
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              value={style.align}
-              // Radix reports '' when the pressed item is pressed again; an
-              // alignment always has a value, so that clears nothing.
-              onValueChange={(value) => {
-                if (value !== '') onChange({ align: value as CaptionAlign })
-              }}
-            >
-              <ToggleGroupItem value="left" aria-label="Align left">
-                <AlignLeft />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="center" aria-label="Align centre">
-                <AlignCenter />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="right" aria-label="Align right">
-                <AlignRight />
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </StyleRow>
-        </div>
-      </section>
+      <CaptionStylePanel
+        style={style}
+        onChange={onChange}
+        scope={scope}
+        onScopeChange={onScopeChange}
+        speakerIds={speakerIds}
+        hasSelection={hasSelection}
+      />
 
       <SubtitleList
         utterances={utterances}

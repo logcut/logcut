@@ -1,4 +1,4 @@
-import { SquareSplitHorizontal } from 'lucide-react'
+import { Magnet, SquareSplitHorizontal } from 'lucide-react'
 import type { JSX } from 'react'
 import { Button } from '@/components/ui/button'
 
@@ -7,6 +7,8 @@ interface TimelineToolbarProps {
    *  its words — there is nothing to cut in either case. */
   canSplit: boolean
   onSplit(): void
+  snapEnabled: boolean
+  onToggleSnap(): void
 }
 
 /**
@@ -18,7 +20,12 @@ interface TimelineToolbarProps {
  * contents would change how much timeline is showing every time an action is
  * added to it.
  */
-export default function TimelineToolbar({ canSplit, onSplit }: TimelineToolbarProps): JSX.Element {
+export default function TimelineToolbar({
+  canSplit,
+  onSplit,
+  snapEnabled,
+  onToggleSnap
+}: TimelineToolbarProps): JSX.Element {
   return (
     <div className="flex h-[var(--timeline-toolbar-height)] shrink-0 items-center gap-inline border-b border-border px-component">
       <Button
@@ -31,6 +38,18 @@ export default function TimelineToolbar({ canSplit, onSplit }: TimelineToolbarPr
         onClick={onSplit}
       >
         <SquareSplitHorizontal />
+      </Button>
+
+      {/* A mode, not an action, so it stays lit while it is on — `quiet` gives
+          that for free through aria-pressed (see components/ui/button.tsx). */}
+      <Button
+        variant="quiet"
+        size="icon-sm"
+        aria-pressed={snapEnabled}
+        title={snapEnabled ? 'Turn off snapping' : 'Turn on snapping'}
+        onClick={onToggleSnap}
+      >
+        <Magnet />
       </Button>
     </div>
   )
