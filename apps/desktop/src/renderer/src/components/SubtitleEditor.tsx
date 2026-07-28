@@ -115,6 +115,21 @@ export default function SubtitleEditor({
         </p>
       )}
 
+      {/* Style settings — the appearance of the captions burned into the
+          picture, which is a property of the whole track rather than of any one
+          line. None of it is built yet, so this is a place, not yet a
+          component: the height is whatever its contents come to, so the
+          controls can arrive without a number here having to be revised.
+
+          It sits above the list because a setting that governs every line
+          should not be reached by scrolling past the lines it governs. */}
+      <section className="shrink-0 border-b border-border p-component">
+        <h2 className="m-0 mb-inline text-caption font-medium text-foreground">Style</h2>
+        <p className="m-0 text-caption font-normal text-muted-foreground">
+          Font, size, colour and position — not built yet.
+        </p>
+      </section>
+
       <SubtitleList
         utterances={utterances}
         activeId={activeId}
