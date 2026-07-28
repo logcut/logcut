@@ -40,10 +40,10 @@ const TOP_BAR_HEIGHT = 36
 
 const MIN_TABS_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
-const MIN_SIDEBAR_WIDTH = 280
-const DEFAULT_SIDEBAR_WIDTH = 340
 const MIN_CHAT_WIDTH = 280
 const DEFAULT_CHAT_WIDTH = 340
+const MIN_SUBTITLES_WIDTH = 280
+const DEFAULT_SUBTITLES_WIDTH = 340
 /**
  * The two gaps, mirrored from CSS because the split maths needs the numbers.
  * `--space-component` around the outside of the panels, `--space-compact`
@@ -131,18 +131,18 @@ export default function EditorPage({
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
+  /** The left-hand column. */
+  const [chatOpen, setChatOpen] = useState(true)
   /**
-   * The left-hand column. Closed on open: reading and correcting subtitles is
+   * The right-hand column. Closed on open: reading and correcting subtitles is
    * something the user goes to, so clicking a line on the timeline is what
    * brings the column in. Closing it again is always deliberate — nothing takes
    * it away on its own.
    */
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
-  /** The right-hand column. */
-  const [chatOpen, setChatOpen] = useState(true)
   const [tabsWidth, setTabsWidth] = useState(defaultTabsWidth)
-  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
+  const [subtitlesWidth, setSubtitlesWidth] = useState(DEFAULT_SUBTITLES_WIDTH)
   const [timelineHeight, setTimelineHeight] = useState(() =>
     Math.max(
       MIN_TIMELINE_HEIGHT,
@@ -193,8 +193,8 @@ export default function EditorPage({
 
   /** Each side column's slice of the row — nothing while it is hidden. Both are
    *  optional, so no bound below may assume either one is there. */
-  const sidebarSlice = (): number => (subtitlesOpen ? sidebarWidth : 0)
   const chatSlice = (): number => (chatOpen ? chatWidth : 0)
+  const subtitlesSlice = (): number => (subtitlesOpen ? subtitlesWidth : 0)
 
   /** What is left for the flexible columns once the chat column has taken its
    *  fixed slice — the window itself while it is hidden. */
@@ -210,9 +210,9 @@ export default function EditorPage({
    * a column, and its own slice has to count as present before the state that
    * says so has been committed.
    */
-  const fitTabs = (sidebar: number, chat: number): void => {
+  const fitTabs = (chat: number, subtitles: number): void => {
     setTabsWidth((current) =>
-      clamp(current, MIN_TABS_WIDTH, window.innerWidth - sidebar - chat - MIN_PLAYER_WIDTH)
+      clamp(current, MIN_TABS_WIDTH, window.innerWidth - chat - subtitles - MIN_PLAYER_WIDTH)
     )
   }
 
@@ -221,28 +221,30 @@ export default function EditorPage({
   // height; past that the size is whatever the user dragged it to.
   const resizeTabs = (delta: number): void => {
     setTabsWidth((current) =>
-      clamp(current + delta, MIN_TABS_WIDTH, availableWidth() - sidebarSlice() - MIN_PLAYER_WIDTH)
+      clamp(current + delta, MIN_TABS_WIDTH, availableWidth() - subtitlesSlice() - MIN_PLAYER_WIDTH)
     )
   }
 
-  // The sidebar is the first column now, so its handle is on its right edge:
+  // The chat column is the first one, so its handle is on its right edge:
   // dragging away from the panel widens it, which is the opposite sign from a
   // handle that sits to a panel's left.
-  const resizeSidebar = (delta: number): void => {
-    setSidebarWidth((current) =>
-      clamp(current + delta, MIN_SIDEBAR_WIDTH, availableWidth() - tabsWidth - MIN_PLAYER_WIDTH)
-    )
-  }
-
-  // The chat column is the last one, so its handle is on its left edge and the
-  // sign flips: dragging left widens it.
+  // Each column's own bound subtracts the *other* one, never itself: the width
+  // being dragged is the one under negotiation.
   const resizeChat = (delta: number): void => {
     setChatWidth((current) =>
       clamp(
-        current - delta,
+        current + delta,
         MIN_CHAT_WIDTH,
-        window.innerWidth - sidebarSlice() - tabsWidth - MIN_PLAYER_WIDTH
+        window.innerWidth - subtitlesSlice() - tabsWidth - MIN_PLAYER_WIDTH
       )
+    )
+  }
+
+  // The subtitle editor is the last column, so its handle is on its left edge
+  // and the sign flips: dragging left widens it.
+  const resizeSubtitles = (delta: number): void => {
+    setSubtitlesWidth((current) =>
+      clamp(current - delta, MIN_SUBTITLES_WIDTH, availableWidth() - tabsWidth - MIN_PLAYER_WIDTH)
     )
   }
 
@@ -253,7 +255,7 @@ export default function EditorPage({
    * than at any one of the three.
    */
   const openSubtitles = (): void => {
-    if (!subtitlesOpen) fitTabs(sidebarWidth, chatSlice())
+    if (!subtitlesOpen) fitTabs(chatSlice(), subtitlesWidth)
     setSubtitlesOpen(true)
   }
 
@@ -265,7 +267,7 @@ export default function EditorPage({
 
   const toggleChat = (): void => {
     setChatOpen((open) => {
-      if (!open) fitTabs(sidebarSlice(), chatWidth)
+      if (!open) fitTabs(chatWidth, subtitlesSlice())
       return !open
     })
   }
@@ -570,60 +572,36 @@ export default function EditorPage({
     <div className="flex h-screen min-h-[650px] min-w-[1180px] flex-col overflow-hidden bg-background">
       <EditorTopBar
         name={project?.name ?? 'Loading…'}
-        subtitlesOpen={subtitlesOpen}
         chatOpen={chatOpen}
+        subtitlesOpen={subtitlesOpen}
         onBack={onBack}
         onRename={(name) => void rename(name)}
-        onToggleSubtitles={toggleSubtitles}
         onToggleChat={toggleChat}
+        onToggleSubtitles={toggleSubtitles}
       />
 
-      {/* Full-height columns: the subtitle editor, the picture with its
-          timeline, and the AI chat on the far right — each side column only
-          while it is showing. Neither side column is a pane in the top row —
-          each holds a column of text, and that wants the window's whole
-          height, which is the height the timeline gives up by not spanning
-          the window. */}
+      {/* Full-height columns: the AI chat, the picture with its timeline, and
+          the subtitle editor on the far right — each side column only while it
+          is showing. Neither side column is a pane in the top row — each holds
+          a column of text, and that wants the window's whole height, which is
+          the height the timeline gives up by not spanning the window. */}
       <div className="flex min-h-0 flex-1 px-component pb-component">
-        {/* The subtitle editor column. Arrives by clicking a line on the
-            timeline, from SubtitleTab, or from the title bar; leaves only when
-            asked. The handle comes with it, so closing the column also takes
-            back its gap.
-
-            The empty state is for the title-bar route: opening the column on a
-            clip that has no transcript yet has to say why it is bare, whereas
-            the double-click route can only ever land on a line that exists. */}
-        {subtitlesOpen && (
+        {/* The AI chat column, holding its place until the feature is built.
+            Deliberately still a placeholder rather than a component: a file of
+            its own would need a spec, and there is nothing to specify until it
+            holds something. The handle comes with it, so closing the column
+            also takes back its gap. */}
+        {chatOpen && (
           <>
-            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: sidebarWidth }}>
-              {subtitleTranscript ? (
-                <SubtitleEditor
-                  utterances={subtitleTranscript.utterances}
-                  activeId={activeSourceId}
-                  canUndo={canUndo}
-                  onClose={() => setSubtitlesOpen(false)}
-                  onSeek={seekToUtterance}
-                  onEditSave={handleEditSave}
-                  onTimeSave={handleTimeSave}
-                  onAdd={handleAdd}
-                  onMerge={handleMerge}
-                  speakerIds={speakerIds}
-                  nextSpeakerId={newSpeakerId}
-                  onSpeakerSave={handleSpeakerSave}
-                  onUndo={undo}
-                  onResegment={handleResegment}
-                  onReplaceAll={handleReplaceAll}
-                />
-              ) : (
-                <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
-                  <p className="m-0 text-center text-caption font-normal text-muted-foreground">
-                    No subtitles yet — recognize this clip first.
-                  </p>
-                </div>
-              )}
+            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: chatWidth }}>
+              <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+                <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                  AI chat — not built yet.
+                </p>
+              </div>
             </Panel>
 
-            <ResizeHandle orientation="vertical" onResize={resizeSidebar} />
+            <ResizeHandle orientation="vertical" onResize={resizeChat} />
           </>
         )}
 
@@ -738,21 +716,44 @@ export default function EditorPage({
           </Panel>
         </div>
 
-        {/* The AI chat column, holding its place until the feature is built.
-            Deliberately still a placeholder rather than a component: a file of
-            its own would need a spec, and there is nothing to specify until it
-            holds something. The handle comes with it, so closing the column
-            also takes back its gap. */}
-        {chatOpen && (
-          <>
-            <ResizeHandle orientation="vertical" onResize={resizeChat} />
+        {/* The subtitle editor column. Arrives by clicking a line on the
+            timeline, from SubtitleTab, or from the title bar; leaves only when
+            asked. The handle comes with it, so closing the column also takes
+            back its gap.
 
-            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: chatWidth }}>
-              <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
-                <p className="m-0 text-center text-caption font-normal text-muted-foreground">
-                  AI chat — not built yet.
-                </p>
-              </div>
+            The empty state is for the title-bar route: opening the column on a
+            clip that has no transcript yet has to say why it is bare, whereas
+            the double-click route can only ever land on a line that exists. */}
+        {subtitlesOpen && (
+          <>
+            <ResizeHandle orientation="vertical" onResize={resizeSubtitles} />
+
+            <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: subtitlesWidth }}>
+              {subtitleTranscript ? (
+                <SubtitleEditor
+                  utterances={subtitleTranscript.utterances}
+                  activeId={activeSourceId}
+                  canUndo={canUndo}
+                  onClose={() => setSubtitlesOpen(false)}
+                  onSeek={seekToUtterance}
+                  onEditSave={handleEditSave}
+                  onTimeSave={handleTimeSave}
+                  onAdd={handleAdd}
+                  onMerge={handleMerge}
+                  speakerIds={speakerIds}
+                  nextSpeakerId={newSpeakerId}
+                  onSpeakerSave={handleSpeakerSave}
+                  onUndo={undo}
+                  onResegment={handleResegment}
+                  onReplaceAll={handleReplaceAll}
+                />
+              ) : (
+                <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
+                  <p className="m-0 text-center text-caption font-normal text-muted-foreground">
+                    No subtitles yet — recognize this clip first.
+                  </p>
+                </div>
+              )}
             </Panel>
           </>
         )}

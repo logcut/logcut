@@ -7,12 +7,12 @@ import { Input } from '@/components/ui/input'
 
 interface EditorTopBarProps {
   name: string
-  subtitlesOpen: boolean
   chatOpen: boolean
+  subtitlesOpen: boolean
   onBack(): void
   onRename(name: string): void
-  onToggleSubtitles(): void
   onToggleChat(): void
+  onToggleSubtitles(): void
 }
 
 /**
@@ -25,12 +25,12 @@ interface EditorTopBarProps {
  */
 export default function EditorTopBar({
   name,
-  subtitlesOpen,
   chatOpen,
+  subtitlesOpen,
   onBack,
   onRename,
-  onToggleSubtitles,
-  onToggleChat
+  onToggleChat,
+  onToggleSubtitles
 }: EditorTopBarProps): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -99,10 +99,10 @@ export default function EditorTopBar({
         <Button
           variant="quiet"
           size="icon-lg"
-          title={subtitlesOpen ? 'Hide subtitle editor' : 'Show subtitle editor'}
-          aria-pressed={subtitlesOpen}
+          title={chatOpen ? 'Hide AI chat' : 'Show AI chat'}
+          aria-pressed={chatOpen}
           className="[-webkit-app-region:no-drag]"
-          onClick={onToggleSubtitles}
+          onClick={onToggleChat}
         >
           <PanelLeft />
         </Button>
@@ -110,10 +110,10 @@ export default function EditorTopBar({
         <Button
           variant="quiet"
           size="icon-lg"
-          title={chatOpen ? 'Hide AI chat' : 'Show AI chat'}
-          aria-pressed={chatOpen}
+          title={subtitlesOpen ? 'Hide subtitle editor' : 'Show subtitle editor'}
+          aria-pressed={subtitlesOpen}
           className="[-webkit-app-region:no-drag]"
-          onClick={onToggleChat}
+          onClick={onToggleSubtitles}
         >
           <PanelRight />
         </Button>
