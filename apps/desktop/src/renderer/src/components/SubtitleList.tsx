@@ -21,35 +21,21 @@ import type { Utterance } from '@logcut/core'
 
 type TimeEdge = 'start' | 'end'
 
-/**
- * How far a timecode moves per pixel dragged, and how far the pointer has to
- * travel before a press counts as a drag at all.
- *
- * 10ms is the grid the field displays anyway (see core/timecode.md), so a drag
- * cannot produce a value the label could not show. The threshold is what keeps
- * click-to-type working: a click always jitters a pixel or two.
- */
+/** Drag sensitivity, and the slop before a press counts as a drag rather than
+ *  a click — see SubtitleList.md. */
 const MS_PER_PIXEL = 10
 const DRAG_THRESHOLD_PX = 3
 
-/** How much of the remaining distance the list closes each frame while
- *  chasing the active line. ~0.15 arrives smoothly in about 200ms. */
+/** Fraction of the remaining distance the list closes each frame while chasing
+ *  the active line — see SubtitleList.md. */
 const FOLLOW_EASE = 0.15
 
 /** How long the follow stays quiet after an action that anchored the view
- *  itself — long enough for a seek to make its way back through the
- *  element's events. */
+ *  itself — see SubtitleList.md. */
 const FOLLOW_QUIET_MS = 400
 
-/**
- * Everything a row can do, in one object with a stable identity.
- *
- * One bundle rather than a dozen callback props: the row is memoized and this
- * list re-renders at pointer rate, so every extra prop is another value the
- * shallow compare walks each time.
- *
- * The edit state machine stays in the list. Rows only report events.
- */
+/** Everything a row can do, in one object with a stable identity. Why it is one
+ *  bundle, and why the edit state machine stays in the list: SubtitleList.md. */
 interface RowHandlers {
   onTextPress(event: ReactMouseEvent<HTMLDivElement>, utterance: Utterance): void
   onDraftChange(value: string): void
@@ -75,13 +61,14 @@ interface RowHandlers {
 
 interface SubtitleRowProps {
   utterance: Utterance
-  /** The line above, or undefined for the first — nothing borders it there. */
+  /** The line above, or undefined for the first. */
   previous: Utterance | undefined
   index: number
   active: boolean
   selected: boolean
   editing: boolean
-  /** Only ever the editing row's draft; every other row is handed ''. */
+  /** Only ever the editing row's draft; every other row is handed '' — handing
+   *  it to all of them puts each keystroke through the whole list. */
   draft: string
   /** Which of this row's timecodes is open for typing, if either. */
   timeEditEdge: TimeEdge | null
@@ -97,14 +84,10 @@ interface SubtitleRowProps {
 /**
  * One line.
  *
- * **Memoized, and every prop above is either a primitive or something the
- * list pins.** Scrubbing drags the highlight along at pointer rate; unmemoized
- * that re-rendered the whole list — twenty-odd elements and a Radix dropdown
- * per row — hundreds of times a second.
- *
  * **One prop rebuilt on each of the list's renders — a fresh array, an inline
  * arrow — defeats the shallow compare completely, and silently.** If this ever
  * feels slow again, look at what is passed in before changing anything here.
+ * Why the memo is mandatory: SubtitleList.md.
  */
 const SubtitleRow = memo(function SubtitleRow({
   utterance,
@@ -122,11 +105,8 @@ const SubtitleRow = memo(function SubtitleRow({
   handlers
 }: SubtitleRowProps): JSX.Element {
   /**
-   * Whether this row's speaker menu exists yet. Until it is pressed the row
-   * renders a plain button and no Radix at all — the whole list mounts at once
-   * (no virtualisation, on purpose — see SubtitleList.md), so a dropdown per row
-   * would mean several hundred Radix roots in the one render that opens the
-   * panel.
+   * Whether this row's speaker menu exists yet; until pressed the row renders a
+   * plain button and no Radix at all (why: SubtitleList.md).
    *
    * **It never goes back to false.** Tearing a menu down takes its trigger with
    * it, and Radix returns focus to the trigger on close — to a node that no
@@ -134,8 +114,6 @@ const SubtitleRow = memo(function SubtitleRow({
    */
   const [menuMounted, setMenuMounted] = useState(false)
 
-  /** The same button either way: as the menu's trigger once there is a menu,
-   *  and as the thing that brings one into being before that. */
   const speakerButton = (onClick?: () => void): JSX.Element => (
     <button
       type="button"
@@ -179,10 +157,6 @@ const SubtitleRow = memo(function SubtitleRow({
 
   return (
     <div
-      // A rule between lines, and only between them: `previous` is what marks
-      // a boundary that has a line on both sides. On the first row it would
-      // land against the section above and read as a double border.
-      //
       // **No `relative` here.** The row must carry no positioned descendant,
       // or `content-visibility` cannot go on it — see SubtitleList.md. The
       // controls that sit on this edge live in one shared GapOverlay instead.
@@ -200,48 +174,28 @@ const SubtitleRow = memo(function SubtitleRow({
           selected || active ? 'border-l-primary bg-muted/60' : 'border-l-transparent'
         }`}
       >
-        {/* A two-row grid, not two stacked columns: the pairs have to
-                  line up — start beside the speaker, end beside the text —
-                  and two independent flex columns only line up by accident,
-                  which is exactly how they drifted apart.
-                  All four cells carry the same `py-inline`, which is what
-                  actually does the aligning. Padding only the one cell that
-                  sat beside the taller text lined the words up but left the
-                  two timecode boxes 16px apart — and they are the same
-                  control, so they have to be the same size.
-                  The first column is `auto`, and the width lives on the cells
-                  themselves. `ch` is resolved against the element it is
-                  written on: in `grid-cols` that is the row — sans, 16px —
-                  which asked for 134px to hold 92px of monospace and left a
-                  42px hole between the time and the speaker.
+        {/* All four cells carry the same `py-inline`, and that is what does the
+            aligning — padding only the cell beside the taller text lines the
+            words up but leaves the two timecode boxes 16px apart.
 
-                  14ch rather than the 11 characters of HH:MM:SS.mm because
-                  `ch` is the advance of "0" alone, while .timecode adds
-                  0.08em of tracking to every one of them, and each box
-                  carries a border and horizontal padding. */}
+            The width lives on the cells themselves, never in `grid-cols`: `ch`
+            is resolved against the element it is written on, and in
+            `grid-cols` that is the row — sans, 16px — which reserved 134px to
+            hold 92px of monospace. See SubtitleList.md. */}
         {timecodeCell('start', 'text-muted-foreground')}
 
-        {/* The rule that closes the two timecodes into one cell, so the pair
-            reads as one line's start and end rather than as two entries.
-            **A grid item spanning both rows, not a border on the timecode
-            cells.** Two borders would break at the row gap — a gap that falls
-            exactly between the two halves of one line, which is the boundary
-            this rule exists to deny. Spanning the rows covers the gap too.
-            It cannot live on the timecode controls for a second reason: their
-            own border already means something (transparent at rest, visible on
-            hover, brand while typing), so it changes colour under the pointer.
-            `-my-inline` cancels this element's share of the row's own padding,
-            which is what carries the rule out to the row's top and bottom edges
-            so it meets the rule in the row above and below. Stretched without
-            it, every line's rule stops 4px short at each end and the column
-            reads as a dashed one. It reaches the edge and no further, so paint
-            containment on the row has nothing to clip. */}
+        {/* **A grid item spanning both rows, not a border on the timecode
+            cells.** Two borders would break at the row gap, which falls exactly
+            between the two halves of one line — the boundary this rule exists
+            to deny. Nor can it live on the timecode controls: their own border
+            already changes colour under the pointer. `-my-inline` carries the
+            rule out to the row's edges so it meets the one above and below, and
+            must stay equal to the row's padding — beyond that, paint
+            containment on the row clips it. See SubtitleList.md. */}
         <div className="col-start-2 row-span-2 row-start-1 -my-inline self-stretch border-r border-border" />
 
-        {/* Always present, even on a line the ASR left unattributed:
-                  it is the only place a speaker can be assigned, so hiding it
-                  would make those lines the ones you cannot fix.
-                  The menu behind it is not — see `menuMounted`. */}
+        {/* Rendered even on a line the ASR left unattributed; the menu behind
+            it is not — see `menuMounted`. */}
         {menuMounted ? (
           <DropdownMenu defaultOpen>
             <DropdownMenuTrigger asChild>{speakerButton()}</DropdownMenuTrigger>
@@ -283,10 +237,6 @@ const SubtitleRow = memo(function SubtitleRow({
             onBlur={handlers.onEditBlur}
           />
         ) : (
-          // Transparent at rest, a box under the pointer: nothing else
-          // on the row says the text is editable, and a permanent
-          // outline on every line would read as a form of a hundred
-          // inputs.
           <div
             className="min-w-0 cursor-text rounded border border-transparent px-component py-inline text-body leading-[1.6] break-words whitespace-pre-wrap transition-colors hover:border-input"
             onMouseDown={(event) => handlers.onTextPress(event, utterance)}
@@ -304,16 +254,12 @@ const SubtitleRow = memo(function SubtitleRow({
 })
 
 /**
- * Half the hover band around a boundary: 2px of rule with 6px of slack either
- * side, so 7px above and below the edge itself.
+ * Half the hover band around a boundary: 7px above and below the edge.
  *
- * Not a spacing token — this is a hit target, sized from what it has to catch.
- * The rows' 4px of padding leaves only 8px of dead space between two lines, so
- * the outer 3px at each end laps onto the row beyond: the very top of the
- * timecode button below, the bottom of the text above. Those bands are border
- * and half-leading rather than glyph, so nothing legible is covered — but the
- * timecode *is* draggable, and a press within 3px of a row's top edge is
- * caught here instead.
+ * **Not a spacing token** — this is a hit target, sized from what it has to
+ * catch, and the 3px it laps onto each neighbouring row is deliberate. One
+ * consequence to know about: a press within 3px of a row's top edge is caught
+ * here rather than by the timecode below it. See SubtitleList.md.
  */
 const GAP_HIT_PX = 7
 
@@ -327,21 +273,12 @@ interface GapPosition {
 /**
  * The Add / Merge controls, on whichever boundary the pointer is near.
  *
- * **One of these for the whole list, not one per row.** Per row it was two
- * positioned elements each — the row itself and the strip — so several hundred
- * lines meant several hundred paint layers to organise and property nodes to
- * walk every time the column was shown, for controls nobody was pointing at.
- * It also forced `content-visibility` down onto the row's inner grid, because
- * that property implies `contain: paint` and the strip deliberately hangs half
- * outside the row's box.
- *
  * **The state lives here rather than in the list.** A `setState` in the list
  * would re-run `utterances.map` and rebuild every element — `memo` stops rows
  * re-rendering but cannot stop them being created — so the pointer crossing the
  * list would cost more than opening it ever did. Here it re-renders one node.
  *
- * And it only sets state when the boundary actually *changes*: moving within
- * one band returns the same object and React bails out.
+ * Why one strip for the whole list rather than one per row: SubtitleList.md.
  */
 function GapOverlay({
   scroller,
@@ -370,23 +307,13 @@ function GapOverlay({
       // the overlay is absolute *inside* the scrolled content, so it travels
       // with the rows and needs no scroll listener of its own.
       //
-      // Rounded so the strip's 2px rules land on whole pixels and stay crisp.
-      // Row boundaries never are: body text is 13px at 1.6 leading, so every
-      // line box is 20.8px and the error accumulates down the list.
-      //
-      // **This is not what stops the strip twitching as it fades in** — that
-      // is the layer the strip holds for itself, see `transform-gpu` below.
-      // Horizontally it lands on fractions no matter what, and there is no
-      // value here to round to fix it. Removing this rounding would not bring
-      // the twitch back, only the blur.
-      //
-      // The hit test works off the row rects, not this value, so snapping
-      // costs nothing.
+      // Rounded so the strip's rules land on whole pixels and stay crisp: row
+      // boundaries never do, since body text is 13px at 1.6 leading and every
+      // line box is therefore 20.8px. The hit test works off the row rects,
+      // not this value, so snapping costs nothing.
       const box = element.getBoundingClientRect()
       const toContent = (viewportY: number): number =>
         Math.round(viewportY - box.top + element.scrollTop)
-      // The first line has no boundary above it and the last none below —
-      // there has to be a line on both sides for Add or Merge to mean anything.
       if (event.clientY - rect.top <= GAP_HIT_PX && index > 0) {
         return { index: index - 1, top: toContent(rect.top) }
       }
@@ -421,31 +348,22 @@ function GapOverlay({
   const above = utterances[gap.index]
   const below = utterances[gap.index + 1]
   if (above === undefined || below === undefined) return null
-  // Merging is always meaningful between two lines; filling needs a silence to
-  // fill. So only Add turns itself off.
   const canAdd = below.start > above.end
 
   return (
     <div
       data-gap
-      // **`transform-gpu` is load-bearing, not a performance hint.** The strip
-      // never lands on whole pixels horizontally: the two rules are `flex-1`
-      // and split whatever the buttons leave over, and button width comes from
-      // text metrics, so the icons sit at x.xx regardless of how wide the panel
-      // is. That is fine on its own — until the entrance animation ends. The
-      // `enter` keyframes write `transform`, which puts the strip on its own
-      // compositing layer for those 150ms; with nothing holding a transform
-      // afterwards the layer is thrown away, the fraction gets resolved a
-      // different way, and the whole strip twitches as the fade lands. The
-      // icons show it worst, being 1px strokes. Holding a transform of our own
-      // means there is one layer throughout and nothing to switch between.
-      className="absolute inset-x-0 z-10 flex h-[14px] -translate-y-1/2 transform-gpu animate-in items-center gap-component fade-in-0"
+      // **No entrance animation, and adding one brings back a visible bug.**
+      // The strip never lands on whole pixels horizontally — the two rules are
+      // `flex-1` and split what the buttons leave over, and button width comes
+      // from text metrics. An animation would give it a compositing layer for
+      // as long as it runs and take it away at the end, and that fraction
+      // resolves differently on either side of the switch: the whole strip
+      // twitches as the animation lands, worst on the 1px icon strokes.
+      className="absolute inset-x-0 z-10 flex h-[14px] -translate-y-1/2 items-center gap-component"
       style={{ top: gap.top }}
     >
       <span className="h-adjust flex-1 rounded-full bg-primary" />
-      {/* Left in place rather than hidden when there is no gap: the two kinds
-          of boundary then look identical, nothing jumps as the pointer runs
-          down the list, and the title says why it is off. */}
       <button
         type="button"
         disabled={!canAdd}
@@ -479,11 +397,7 @@ function GapOverlay({
 interface SubtitleListProps {
   utterances: Utterance[]
   activeId: string | null
-  /**
-   * Text click: jump there but stay paused. The same click opens the editor, and
-   * a video playing on under the caret drags the highlight off the line being
-   * typed into.
-   */
+  /** Text click: jump there but stay paused — see SubtitleList.md. */
   onSeek(utterance: Utterance): void
   /** A timecode was retyped. Bounds are core's problem, not this component's. */
   onTimeSave(id: string, edge: TimeEdge, timeMs: number): void
@@ -502,12 +416,9 @@ interface SubtitleListProps {
 /**
  * The lines themselves.
  *
- * **Memoized for the same reason the rows are**, one level up: a style edit
- * re-renders the editor around this list on every frame it is dragged, and
- * without this the `utterances.map` below rebuilds several hundred elements
- * each time — `memo` on the row stops them re-rendering but cannot stop them
- * being created. Every prop it takes is already stable upstream (see
- * pages/EditorPage.tsx); passing an inline arrow undoes all of it, silently.
+ * **Memoized for the same reason the rows are**, one level up. Every prop it
+ * takes is already pinned upstream (see pages/EditorPage.tsx); passing an
+ * inline arrow undoes all of it, silently. Why: SubtitleList.md.
  */
 const SubtitleList = memo(function SubtitleList({
   utterances,
@@ -537,9 +448,7 @@ const SubtitleList = memo(function SubtitleList({
   const timeEditRef = useRef<{ id: string; edge: TimeEdge } | null>(null)
   const timeDraftRef = useRef('')
   // A drag in progress. Entirely in a ref, and the preview is written straight
-  // to the element's text: this fires per pointermove, and re-rendering a list
-  // of a thousand rows at that rate is exactly the kind of thing the playhead
-  // avoids the same way.
+  // to the element's text — see SubtitleList.md.
   const scrubRef = useRef<{
     id: string
     edge: TimeEdge
@@ -550,23 +459,19 @@ const SubtitleList = memo(function SubtitleList({
     moved: boolean
   } | null>(null)
 
-  // `utterances` through a ref as well: the handlers below read it, and
-  // depending on it directly would rebuild the whole bundle — and with it
-  // re-render every row — on any edit at all.
+  // `utterances` through a ref as well: depending on it directly would rebuild
+  // the whole handlers bundle — and re-render every row — on any edit at all.
   const utterancesRef = useRef(utterances)
   utterancesRef.current = utterances
   const listRef = useRef<HTMLDivElement>(null)
   const activeRef = useRef<HTMLDivElement>(null)
   /**
-   * When the follow may resume. An action whose result is already where the user
-   * is looking pushes this out.
+   * When the follow may resume.
    *
    * **A window, not a one-shot flag**: one action changes `activeId` more than
-   * once — adding a line writes the transcript *and* seeks, and the seek reports
-   * back later, against a transcript that by then resolves differently. A flag
-   * cleared by the first change let the second one recentre.
-   *
+   * once, and a flag cleared by the first change let the second one recentre.
    * Set where the action happens, never inferred from what `activeId` did.
+   * Which actions push it out: SubtitleList.md.
    */
   const followQuietUntilRef = useRef(0)
   const holdFollow = useCallback((): void => {
@@ -574,29 +479,19 @@ const SubtitleList = memo(function SubtitleList({
   }, [])
 
   /**
-   * Glide the active line to the middle using spring physics.
+   * Glide the active line to the middle. Why not `scrollIntoView`, and the three
+   * cases that must not recentre: SubtitleList.md.
    *
-   * **Not `scrollIntoView`.** Plain, it teleports. Smooth is worse: dragging the
-   * timeline re-targets it every frame and each call restarts the browser's
-   * ~300ms animation, so the list never arrives anywhere. A spring converges
-   * however often the target moves, and feels more natural than linear easing.
-   *
-   * Measured with rects, not `offsetTop`: nothing between the rows and the
-   * scroller is positioned, so offsets would be relative to something further up
-   * the tree entirely.
+   * Measured with rects rather than `offsetTop` — see SubtitleList.md.
    *
    * **The frame handle is a local, and the cleanup is this effect's own.** Held
    * in a ref, guarded by `if (ref.current === 0)` and cancelled from a
    * mount-only effect that never reset it, StrictMode's remount left a stale
    * handle and the guard refused to schedule anything ever again — dead in
    * development from the first render, and nothing about it looked broken.
-   *
-   * Not while a row is being edited: the list must not move under the caret.
    */
   useEffect(() => {
     if (editingId !== null) return
-    // An action just put the active line where the user is already looking;
-    // centring it now would shift everything around it instead.
     if (performance.now() < followQuietUntilRef.current) return
 
     let frame = 0
@@ -613,11 +508,8 @@ const SubtitleList = memo(function SubtitleList({
 
       const listBox = list.getBoundingClientRect()
       const rowBox = row.getBoundingClientRect()
-      // How far the row's centre is from the list's centre. Positive means
-      // the row is below where it should be.
       const delta = rowBox.top + rowBox.height / 2 - (listBox.top + listBox.height / 2)
 
-      // Close enough: stop chasing.
       if (Math.abs(delta) < 0.5) return
 
       const before = list.scrollTop
@@ -641,11 +533,8 @@ const SubtitleList = memo(function SubtitleList({
   }, [])
 
   const endEdit = useCallback((): void => {
-    // Leaving an edit is the other action whose result is already where the
-    // user is looking. `editingId` going back to null restarts the follow, and
-    // it would pull the line just typed into towards the middle — the list
-    // jumping the instant Enter is pressed. Covers Escape and blur too, both
-    // of which come through here.
+    // The common exit for commit, Escape and blur, which is why the follow is
+    // held here and nowhere else — see SubtitleList.md.
     holdFollow()
     editingIdRef.current = null
     draftRef.current = ''
@@ -658,14 +547,12 @@ const SubtitleList = memo(function SubtitleList({
     if (id === null) return
     const text = draftRef.current.trim()
     endEdit()
-    // Empty text cancels; unchanged text saves nothing.
     if (text === '' || text === utterancesRef.current.find((u) => u.id === id)?.text) return
     onEditSave(id, text)
   }, [endEdit, onEditSave])
 
-  // Both trigger paths (timestamp and text) converge here so at most one row
-  // is ever selected, and switching rows commits the previous row's edit in
-  // the same render — no intermediate highlight frame.
+  // Both trigger paths converge here, so switching rows commits the previous
+  // row's edit in the same render — no intermediate highlight frame.
   const selectRow = useCallback(
     (utterance: Utterance): void => {
       if (editingIdRef.current !== null && editingIdRef.current !== utterance.id) commitEdit()
@@ -785,7 +672,6 @@ const SubtitleList = memo(function SubtitleList({
         }
         if (scrub === null) return
 
-        // Never moved: it was a click, so open the field instead.
         if (!scrub.moved) {
           beginTimeEdit(utterance, scrub.edge)
           return
@@ -854,9 +740,6 @@ const SubtitleList = memo(function SubtitleList({
               active={utterance.id === activeId}
               selected={utterance.id === selectedId}
               editing={editing}
-              // Handed only to the row it belongs to. Giving the live draft to
-              // every row would put each keystroke through the whole list,
-              // which is the cost this memoization exists to remove.
               draft={editing ? draft : ''}
               timeEditEdge={timeEditEdge}
               timeDraft={timeEditEdge === null ? '' : timeDraft}
