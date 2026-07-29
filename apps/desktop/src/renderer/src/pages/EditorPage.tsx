@@ -35,12 +35,10 @@ import { liveScope, styleForScope, type CaptionScope } from '@/lib/caption-scope
 import { layUtterances } from '@/lib/timeline'
 import type { EditorLayout, MediaAssetSummary } from '../../../shared/ipc'
 
-/** The editor opens split 60/40 between the panes and the timeline, with the
- *  tab panel and the player equal. */
+/** See EditorPage.md for what each of these divides. */
 const DEFAULT_TIMELINE_RATIO = 0.4
 const DEFAULT_TABS_RATIO = 0.5
-/** The share the caption style panel opens on. It was once a fixed 40% of the
- *  column; the reason it had to become draggable is in SubtitleEditor.md. */
+/** Why this one had to become draggable: SubtitleEditor.md. */
 const DEFAULT_CAPTION_STYLE_RATIO = 0.4
 const MIN_TIMELINE_HEIGHT = 96
 /** Enough of the style panel to show a heading and a row under it, and enough
@@ -55,12 +53,12 @@ const MIN_CHAT_WIDTH = 280
 const DEFAULT_CHAT_WIDTH = 340
 const MIN_SUBTITLES_WIDTH = 280
 const DEFAULT_SUBTITLES_WIDTH = 340
-/** Mirrors `--space-compact`, the handle's own width: it sits between the two
- *  shares and takes no part in the split. */
+/** Mirrors `--space-compact` — JS cannot read a CSS variable, so changing that
+ *  token means changing this too. */
 const PANE_GAP = 6
 
-/** What "Reset layout" restores, and what the editor opens on the very first
- *  time. One source, so the two can never drift apart. */
+/** What "Reset layout" restores *and* what the editor opens on the very first
+ *  time — one source, so the two cannot drift apart. */
 function defaultLayout(): EditorLayout {
   return {
     chatWidth: DEFAULT_CHAT_WIDTH,
@@ -79,8 +77,8 @@ function ratioOrDefault(value: number, fallback: number): number {
   return Number.isFinite(value) && value > 0 && value < 1 ? value : fallback
 }
 
-/** How long the arrangement has to sit still before it is written. A drag
- *  changes it on every frame; without this each one would be a disk write. */
+/** How long the arrangement has to sit still before it is written — see
+ *  EditorPage.md. */
 const LAYOUT_SAVE_DELAY_MS = 500
 
 function clamp(value: number, min: number, max: number): number {
@@ -131,30 +129,17 @@ export default function EditorPage({
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
   /** Timeline utterance ids the band took — the composite ones, not source. */
   const [selectedUtteranceIds, setSelectedUtteranceIds] = useState<string[]>([])
-  /**
-   * Whose subtitles the editor is showing. Deliberately not selectedClipIds:
-   * selection is a timeline gesture that arms Delete, while opening the editor
-   * is a subtitle gesture. Sharing one state made double-clicking to edit put
-   * a selection border on the clip, which reads as "this is about to be
-   * deleted" when nothing of the sort is happening.
-   */
+  /** Whose subtitles the editor is showing. **Deliberately not
+   *  `selectedClipIds`**: selection arms Delete, and sharing one state put a
+   *  "about to be deleted" border on the clip merely for editing it. */
   const [subtitleClipId, setSubtitleClipId] = useState<string | null>(null)
   /** The line the user is pointed at: nearest, so a gap still has an answer. */
   const [activeUtteranceId, setActiveUtteranceId] = useState<string | null>(null)
   /** The line actually playing: strict, so silence shows no caption. */
   const [captionUtteranceId, setCaptionUtteranceId] = useState<string | null>(null)
-  /**
-   * Where the playhead is, on the timeline's clock.
-   *
-   * A ref, not state. It changes on every frame of a drag, so as state it
-   * forced a re-render of this page every frame — defeating the bail-outs on
-   * the two ids below, which exist precisely so that moving *within* one line
-   * costs nothing. One per-frame state is enough to cancel every bail-out on
-   * the same tree.
-   *
-   * Nothing renders it. Its only reader is the split action, which runs on a
-   * click or a keystroke and reads the current value then.
-   */
+  /** Where the playhead is, on the timeline's clock. **A ref, not state** —
+   *  one per-frame state cancels every bail-out on the same tree, and nothing
+   *  renders this. See EditorPage.md. */
   const playheadRef = useRef(0)
   const [snapEnabled, setSnapEnabled] = useState(true)
   /** The same guard as `layoutLoaded` below, for the same reason: the default
@@ -195,14 +180,9 @@ export default function EditorPage({
   const assetOf = (assetId: string): MediaAssetSummary | null =>
     assets.find((asset) => asset.id === assetId) ?? null
 
-  /**
-   * Each asset's audio envelope, fetched once and kept.
-   *
-   * Not carried on the asset summary: it is two orders of magnitude larger than
-   * everything else there, and that shape is re-sent on every project update.
-   * The envelope never changes once built, so one fetch per asset is all there
-   * ever is.
-   */
+  /** Each asset's audio envelope, fetched once and kept. Deliberately not on
+   *  the asset summary — it is orders of magnitude larger than everything else
+   *  there, and that shape is re-sent on every project update. */
   const [peaks, setPeaks] = useState<Record<string, Uint8Array>>({})
   const peaksAsked = useRef(new Set<string>())
 
@@ -252,13 +232,9 @@ export default function EditorPage({
 
   const timelineDurationMs = clips.reduce((total, clip) => total + clip.durationMs, 0)
 
-  /**
-   * Export is unavailable for two reasons and says which.
-   *
-   * The encoder check only bites when there is something to burn: a timeline
-   * with no captions is copied through rather than rendered, which a build with
-   * no encoder can still do (see main/export.md).
-   */
+  /** The encoder check only bites when there is something to burn — a timeline
+   *  with no captions is copied through rather than rendered, which a build
+   *  with no encoder can still do (see main/export.md). */
   const exportBlockedReason =
     clips.length === 0
       ? 'Add a clip to the timeline first'
@@ -279,31 +255,21 @@ export default function EditorPage({
   const subtitleAssetId = subtitleClip?.assetId ?? null
   const subtitleTranscript = subtitleAssetId ? (transcripts[subtitleAssetId] ?? null) : null
 
-  /** Each side column's slice of the row — nothing while it is hidden. Both are
-   *  optional, so no bound below may assume either one is there. */
+  /** Each side column's slice of the row — **0 while hidden, and no bound below
+   *  may assume either column is there** (see EditorPage.md). */
   const chatSlice = (): number => (chatOpen ? chatWidth : 0)
   const subtitlesSlice = (): number => (subtitlesOpen ? subtitlesWidth : 0)
 
-  /** What is left for the flexible columns once the chat column has taken its
-   *  fixed slice — the window itself while it is hidden. */
   const availableWidth = (): number => window.innerWidth - chatSlice()
 
-  /** The two rows a ratio divides. Pixels are needed only while the pointer is
-   *  moving, so they are measured then rather than tracked — which is exactly
-   *  what keeps a window resize from touching either split. */
+  /** The two rows a ratio divides. **Measured per drag and never cached** —
+   *  that is what keeps a window resize away from either split. */
   const topRowRef = useRef<HTMLDivElement>(null)
   const midColumnRef = useRef<HTMLDivElement>(null)
 
-  /**
-   * Both bounds are stated as fractions of the room there is *right now*.
-   *
-   * A ratio has no opinion about pixels and the minimum sizes have nothing
-   * else, so the two only meet against a measurement — and the measurement is
-   * taken per drag, never cached, or a resized window leaves a stale bound
-   * behind. What the ratio may not do is drift while the pointer is held past
-   * the end: the panel stops at its minimum but the number would carry on, and
-   * the next widening would pay it all back at once.
-   */
+  /** Bounds as fractions of the room there is right now, and clamped: past the
+   *  end the panel stops but an unclamped ratio would carry on, and the next
+   *  widening would pay it all back at once. See EditorPage.md. */
   const resizeTabs = (delta: number): void => {
     const room = (topRowRef.current?.clientWidth ?? 0) - PANE_GAP
     if (room <= 0) return
@@ -312,14 +278,9 @@ export default function EditorPage({
     )
   }
 
-  // The chat column is the first one, so its handle is on its right edge:
-  // dragging away from the panel widens it, which is the opposite sign from a
-  // handle that sits to a panel's left.
-  // Each column's own bound subtracts the *other* one, never itself: the width
-  // being dragged is the one under negotiation.
-  // What the flexible pair is subtracted at is their *minimum*, not the width
-  // they happen to be drawn at: they give way in proportion as this column
-  // grows, so anything above the minimum is still theirs to hand over.
+  // Handle on the right edge, so the delta is added. **Each column's bound
+  // subtracts the *other* column, never itself** — see EditorPage.md, which
+  // also covers why the flexible pair is subtracted at its minimum.
   const resizeChat = (delta: number): void => {
     setChatWidth((current) =>
       clamp(
@@ -330,8 +291,7 @@ export default function EditorPage({
     )
   }
 
-  // The subtitle editor is the last column, so its handle is on its left edge
-  // and the sign flips: dragging left widens it.
+  // Last column, so its handle is on the left edge and the sign flips.
   const resizeSubtitles = (delta: number): void => {
     setSubtitlesWidth((current) =>
       clamp(
@@ -350,23 +310,10 @@ export default function EditorPage({
 
   const toggleChat = (): void => setChatOpen((open) => !open)
 
-  /**
-   * Put an arrangement on screen.
-   *
-   * The two side widths are clamped **here**, unlike the two ratios: a pixel
-   * width came off disk and may have been saved on a different display, and
-   * these two are what the other columns are measured against — a chat column
-   * wider than the window leaves the panel and the player nothing to divide.
-   * Each cap is what is left once every other column has its minimum. The
-   * subtitle column's minimum is subtracted from the chat cap whether or not it
-   * is open, because it can be opened a moment later and the arithmetic must
-   * already hold.
-   *
-   * The ratios need none of that — a fraction means the same thing on every
-   * display, which is half of why they are stored as fractions. They are only
-   * checked for *being* fractions, because a layout saved before this file
-   * stored ratios has pixels in those fields.
-   */
+  /** Put an arrangement on screen. **The two pixel widths are clamped here and
+   *  the three ratios are not** — a fraction means the same thing on every
+   *  display. The subtitle column's minimum comes off the chat cap whether or
+   *  not it is open, since it can be opened a moment later. See EditorPage.md. */
   const applyLayout = useCallback((layout: EditorLayout): void => {
     setChatWidth(
       clamp(
@@ -403,13 +350,7 @@ export default function EditorPage({
     }
   }, [applyLayout])
 
-  /**
-   * Write it back, once it has stopped moving.
-   *
-   * The debounce is what makes this affordable: every one of these values
-   * changes on every frame of a drag, and the timer restarts each time, so a
-   * drag costs one write at the end rather than sixty a second.
-   */
+  // Write it back, once it has stopped moving — see EditorPage.md.
   useEffect(() => {
     if (!layoutLoaded) return undefined
     const id = setTimeout(() => {
@@ -471,15 +412,10 @@ export default function EditorPage({
     )
   }
 
-  /**
-   * The split inside the subtitle column. The height comes from there rather
-   * than from a ref here, because that column is the only thing that knows how
-   * much of itself the toolbar has already taken.
-   *
-   * Memoized, and it has to be: `SubtitleEditor` holds a memoized panel and a
-   * memoized list, and a fresh callback here would re-render both on every
-   * frame the playhead moves.
-   */
+  /** The split inside the subtitle column; the height is reported by that
+   *  column because only it knows what its toolbar already took. **Memoized,
+   *  and it has to be** — it crosses two memoized children (see
+   *  EditorPage.md). */
   const resizeCaptionStyle = useCallback((delta: number, room: number): void => {
     const available = room - PANE_GAP
     if (available <= 0) return
@@ -497,9 +433,8 @@ export default function EditorPage({
   const activeSourceId =
     utterances.find((utterance) => utterance.id === activeUtteranceId)?.sourceId ?? null
 
-  // Memoized, like every other prop that reaches a subtitle row: those rows are
-  // memoized components and a fresh array here would defeat all of it, silently
-  // (see components/SubtitleList.tsx).
+  // Memoized like every other prop that reaches a subtitle row — a fresh array
+  // here defeats all of it, silently (see components/SubtitleList.tsx).
   const speakerIds = useMemo(
     () => (subtitleTranscript ? speakerIdsOf(subtitleTranscript) : []),
     [subtitleTranscript]
@@ -520,10 +455,7 @@ export default function EditorPage({
     captionLine ? { speakerId: captionLine.speakerId, style: captionLine.style } : undefined
   )
 
-  /**
-   * The line the style panel calls "this line": the one being pointed at,
-   * which is also the one the picture is showing while playback is stopped.
-   */
+  /** The line the style panel calls "this line". */
   const selectedLine = utterances.find((utterance) => utterance.id === activeUtteranceId) ?? null
 
   /** A scope can stop existing while selected (the line is deselected, a
@@ -531,13 +463,10 @@ export default function EditorPage({
    *  watched for, so no edit can land somewhere invisible. */
   const captionScope = liveScope(storedScope, speakerIds, selectedLine !== null)
 
-  /**
-   * The selected line, but only when the panel is actually scoped to it.
-   *
-   * `selectedLine` follows the playhead and so changes every frame of a drag.
-   * At any other scope it is not read at all, so pinning it to null there is
-   * what keeps the memos below — and the whole style panel — still.
-   */
+  /** The selected line, but only when the panel is actually scoped to it.
+   *  `selectedLine` follows the playhead and changes every frame of a drag, so
+   *  pinning this to null at every other scope is what keeps the memos below —
+   *  and the whole style panel — still. */
   const scopeLine = captionScope.kind === 'line' ? selectedLine : null
 
   const scopedStyle = useMemo(
@@ -545,12 +474,8 @@ export default function EditorPage({
     [captionStyles, captionScope, scopeLine]
   )
 
-  /**
-   * Where a style edit goes. The two project-level scopes are one write to the
-   * project file; a line's own styling lives on the utterance, so it travels as
-   * a command like every other edit to a transcript — and joins the undo
-   * history, which project settings deliberately do not.
-   */
+  /** Where a style edit goes: the project-level scopes write the project file,
+   *  a line's own styling travels as a command — see EditorPage.md. */
   const applyStylePatch = useCallback(
     (
       patch: Partial<CaptionStyle>,
@@ -602,14 +527,8 @@ export default function EditorPage({
   const captionText =
     utterances.find((utterance) => utterance.id === captionUtteranceId)?.text ?? null
 
-  /**
-   * Cut the line under the playhead in two.
-   *
-   * Declining here — rather than in a disabled button — is what lets the
-   * toolbar and the shortcut share one implementation (see TimelineToolbar.md).
-   * The subtraction puts the time on the transcript's own clock, which is not
-   * the timeline's.
-   */
+  /** Declining here rather than in a disabled button is what lets the toolbar
+   *  and the shortcut share one implementation (see TimelineToolbar.md). */
   const handleSplit = useCallback((): void => {
     const timeMs = playheadRef.current
     const index = findUtteranceIndexAt(utterances, timeMs)
@@ -632,24 +551,10 @@ export default function EditorPage({
 
   const toggleSnap = useCallback((): void => setSnapEnabled((on) => !on), [])
 
-  /**
-   * The single place a time becomes "which line", called both by the player's
-   * timeupdate and — while scrubbing — by the timeline, which reports the
-   * pointer directly because timeupdate is far too coarse to follow a drag.
-   *
-   * It answers twice on purpose:
-   *  - the caption burned on the video is a strict containment test, because
-   *    silence between two lines genuinely means no caption;
-   *  - the highlighted line is the *nearest* one, because "which subtitle am I
-   *    looking at" still has an answer in a gap.
-   *
-   * Using the strict test for both is what made the highlight blink off in the
-   * middle of a drag: the playhead followed the pointer, then the seek landed
-   * in a gap and cleared everything.
-   *
-   * Both setters bail out on an unchanged id — timeupdate alone is ~4Hz, and
-   * this subtree carries every subtitle on screen.
-   */
+  /** The single place a time becomes "which line", and it answers twice on
+   *  purpose. **Using the strict test for both is what made the highlight
+   *  blink off mid-drag.** Both setters bail out on an unchanged id. See
+   *  EditorPage.md. */
   const applyTime = useCallback(
     (timeMs: number): void => {
       playheadRef.current = timeMs
@@ -664,34 +569,17 @@ export default function EditorPage({
     [utterances]
   )
 
-  /**
-   * Re-resolve both ids whenever the lines change, not only when the time does.
-   *
-   * They are ids, and **an id does not survive an edit of the line it names**.
-   * Splitting replaces one line with two new ones, deleting takes one away,
-   * merging consumes the second — after any of those the id held here points at
-   * nothing, `find` returns null, and the caption vanishes from the picture
-   * while the playhead has not moved at all. It came back on the next
-   * `timeupdate`, which is what made it look like a flicker rather than a bug.
-   *
-   * `applyTime` is a pure re-resolution and its identity already tracks
-   * `utterances`, so running it again on the same instant is exactly the
-   * question that needs re-asking. Edits that leave ids alone — text, style,
-   * speaker — still land on the bail-outs above and cost no render.
-   */
+  // Re-resolve both ids whenever the lines change, not only when the time does:
+  // **an id does not survive an edit of the line it names** (see
+  // EditorPage.md). `applyTime`'s identity already tracks `utterances`, so
+  // depending on it is exactly the question that needs re-asking.
   useEffect(() => {
     applyTime(playheadRef.current)
   }, [applyTime])
 
-  /**
-   * The scrubbing path into `applyTime`, collapsed to one call per frame — a
-   * pointer outruns the screen, and React batches within an event but never
-   * across two (see EditorPage.md).
-   *
-   * **The scrub path only.** `timeupdate` is ~4Hz and needs no help, and the
-   * callers that seek and then immediately re-derive the highlight (see
-   * `openSubtitlesAt`) need it to happen now, not next frame.
-   */
+  /** The scrub path into `applyTime`, collapsed to one call per frame. **The
+   *  scrub path only** — callers that seek and then immediately re-derive the
+   *  highlight need it to happen now, not next frame. See EditorPage.md. */
   const scrubFrameRef = useRef(0)
   const scrubTimeRef = useRef(0)
   const scrubTime = useCallback(
@@ -710,10 +598,10 @@ export default function EditorPage({
   // run against an unmounted tree.
   useEffect(() => () => cancelAnimationFrame(scrubFrameRef.current), [])
 
-  // Pulled out so the dependency is the function and not `playback`: the hook
-  // returns a fresh object every render, and taking the whole thing would make
-  // this — and through it every handler a subtitle row holds — change on each
-  // render, undoing the row memoization entirely.
+  // **Depend on the function, never on `playback`**: the hook returns a fresh
+  // object every render, and taking the whole thing would make this — and
+  // through it every handler a subtitle row holds — change on each render,
+  // undoing the row memoization entirely.
   const seekPlayback = playback.seek
   const seekTo = useCallback(
     (timeMs: number): void => {
@@ -723,17 +611,9 @@ export default function EditorPage({
     [applyTime, seekPlayback]
   )
 
-  /**
-   * Show a line in the editor. **Does not seek**: the press that got here has
-   * already put the playhead where it was aimed, and jumping on to the line's
-   * start would overrule that. Going to a line's beginning is what clicking
-   * its timecode in the list is for.
-   *
-   * `activeUtteranceId` is pointed at the line here rather than left to the
-   * playhead: without a seek nothing else would move it, and it is what the
-   * editor scrolls to. The burned caption keeps following the playhead — that
-   * is `captionUtteranceId`, and the two answer different questions.
-   */
+  /** Show a line in the editor. **Does not seek** — so `activeUtteranceId` has
+   *  to be pointed at the line here, since nothing else would move it. See
+   *  Timeline.md. */
   const openSubtitlesAt = (timeMs: number): void => {
     const index = findNearestUtteranceIndex(utterances, timeMs)
     const line = utterances[index]
@@ -746,15 +626,8 @@ export default function EditorPage({
     openSubtitles()
   }
 
-  /**
-   * Put the last line a batch touched in view.
-   *
-   * Offered, never applied on its own: whether an edit moves the playhead
-   * depends on who asked for it, so each caller decides (see EditorPage.md).
-   *
-   * The core reports on the transcript's own clock, so the clip's offset goes
-   * back on here.
-   */
+  /** Put the last line a batch touched in view. **Offered, never applied on its
+   *  own** — each caller decides (see EditorPage.md). */
   const followFocus = useCallback(
     (result: CommandResult): void => {
       const focus = [...result.outcomes].reverse().find((outcome) => outcome.focus)?.focus
@@ -773,12 +646,9 @@ export default function EditorPage({
     [dispatch, subtitleAssetId]
   )
 
-  /**
-   * An edit typed on the picture. The player knows what the caption says; only
-   * this page knows which line that is — and it is a *timeline* line, so both
-   * its asset and the transcript's own id for it have to be recovered before a
-   * command can name it (the same crossing `activeSourceId` makes).
-   */
+  /** An edit typed on the picture. It is a *timeline* line, so both its asset
+   *  and the transcript's own id have to be recovered before a command can
+   *  name it — the same crossing `activeSourceId` makes. */
   const handleCaptionEdit = useCallback(
     (text: string): void => {
       const line = utterances.find((utterance) => utterance.id === captionUtteranceId)
@@ -857,13 +727,8 @@ export default function EditorPage({
     }
   })
 
-  /**
-   * The band hands back timeline ids; a transcript only knows its own. So the
-   * lines are grouped by the asset they came from, one command each.
-   *
-   * The whole deletion is one batch and therefore one history entry: the band
-   * took them in a single gesture and undo should give them back the same way.
-   */
+  /** Grouped by asset because a transcript only knows its own ids, and kept in
+   *  one batch so undo gives them back the way the band took them. */
   const handleRemoveUtterances = (timelineIds: string[]): void => {
     const byAsset = new Map<string, string[]>()
     for (const id of timelineIds) {
@@ -877,15 +742,9 @@ export default function EditorPage({
     setSelectedUtteranceIds([])
   }
 
-  /**
-   * Every window-level shortcut, in one listener so a new key cannot quietly
-   * shadow an existing one (see EditorPage.md).
-   *
-   * The typing guard covers all of them. For a bare letter it is the whole
-   * premise — `n` in a subtitle is the letter n. For Cmd+Z it is subtler: an
-   * input has its own undo stack for the characters just typed, and taking
-   * that over would undo the previous *edit* instead.
-   */
+  /** Every window-level shortcut, in one listener so a new key cannot quietly
+   *  shadow an existing one. The typing guard covers all of them — including
+   *  Cmd+Z, where an input has its own undo stack. See EditorPage.md. */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       const target = event.target
@@ -908,8 +767,6 @@ export default function EditorPage({
         else undo()
         return
       }
-      // Split declines on its own when the playhead is not inside a line, the
-      // same way the toolbar button does — see TimelineToolbar.
       if (accel && key === 'b') {
         event.preventDefault()
         handleSplit()
@@ -927,18 +784,13 @@ export default function EditorPage({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [undo, redo, handleSplit, toggleSnap])
 
-  /**
-   * An edge dragged on the timeline. The timeline speaks its own clock and its
-   * own ids, so both are translated back before the transcript sees them —
-   * the same crossing `activeSourceId` makes in the other direction.
-   */
+  /** An edge dragged on the timeline: both its clock and its ids are translated
+   *  back before the transcript sees them. One command per line but a single
+   *  batch, so a drag across several clips stays one undo step. */
   const handleTrimUtterances = (
     edge: 'start' | 'end',
     changes: { id: string; timeMs: number }[]
   ): void => {
-    // One command per line, all in one batch: a drag over lines from several
-    // clips is one gesture and one undo step. Two edits to the same transcript
-    // chain inside the batch rather than each starting from the pre-edit copy.
     dispatch(
       changes.flatMap((change) => {
         const line = utterances.find((utterance) => utterance.id === change.id)
@@ -964,14 +816,8 @@ export default function EditorPage({
     else video.pause()
   }
 
-  /**
-   * The editor speaks the transcript's own clock; the timeline speaks its own,
-   * so a line's start has to be offset by its clip before anything can seek.
-   *
-   * `applyTime` runs immediately rather than waiting for the player's
-   * timeupdate: that arrives ~4Hz and only once the seek has completed, which
-   * is long enough for the highlight to visibly lag the click.
-   */
+  /** `applyTime` runs immediately rather than waiting for `timeupdate`, which
+   *  is long enough for the highlight to visibly lag the click. */
   const seekToUtterance = useCallback(
     (utterance: Utterance): void => {
       const start = subtitleClip ? subtitleClip.startMs + utterance.start : utterance.start
@@ -1027,11 +873,9 @@ export default function EditorPage({
       {/* Full-height columns, each side one rendered only while it shows —
           not panes in the top row (see EditorPage.md). */}
       <div className="flex min-h-0 flex-1 px-component pb-component">
-        {/* The AI chat column, holding its place until the feature is built.
-            Deliberately still a placeholder rather than a component: a file of
-            its own would need a spec, and there is nothing to specify until it
-            holds something. The handle comes with it, so closing the column
-            also takes back its gap. */}
+        {/* Deliberately a placeholder rather than a component of its own — see
+            EditorPage.md. The handle comes with it, so closing the column also
+            takes back its gap. */}
         {chatOpen && (
           <>
             <Panel className="flex min-h-0 shrink-0 flex-col" style={{ width: chatWidth }}>
@@ -1184,25 +1028,11 @@ export default function EditorPage({
           </Panel>
         </div>
 
-        {/*
-          Built once, then shown and hidden — not mounted and unmounted.
-
-          Rebuilding it was the whole cost of opening this column: several
-          hundred rows of fiber and DOM, thrown away on close and built again
-          identically on the next open. `Activity` keeps the DOM and the state
-          while `hidden` (React clears the effects, so nothing is left running
-          behind it), and renders it at low priority — the work lands in idle
-          time after the editor loads rather than under the click. Opening is
-          then a `display` change.
-
-          This is why `subtitleClip` falls back to `clips[0]` above: with no
-          fallback the transcript would not exist until the first click, and
-          there would be nothing for this to have built in advance.
-
-          The handle is inside it, so closing takes the gap back too. The empty
-          state exists for the title-bar route alone: the other two entrances
-          start from a line that already exists.
-        */}
+        {/* Built once, then shown and hidden — **not `{subtitlesOpen && …}`**
+            (see EditorPage.md). **This is why `subtitleClip` falls back to
+            `clips[0]` above**: with no fallback there is no transcript to build
+            in advance and the whole thing is wasted. The handle is inside it,
+            so closing takes the gap back too. */}
         <Activity mode={subtitlesOpen ? 'visible' : 'hidden'}>
           <ResizeHandle orientation="vertical" onResize={resizeSubtitles} />
 

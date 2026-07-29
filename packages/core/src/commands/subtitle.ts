@@ -14,16 +14,10 @@ import {
 import type { CaptionStyle } from '../caption-style.ts'
 import type { EditFocus, Transcript, Utterance } from '../types.ts'
 
-/**
- * Every edit that changes a transcript, as data (see commands/index.md).
- *
- * **`kind` carries its scope as a prefix rather than sitting beside a separate
- * `scope` field**, which keeps this a one-level discriminated union — a nested
- * one needs nested switches, and a missing branch stops being a type error.
- *
- * `assetId` travels in the command because one batch may touch several assets:
- * a rubber-band delete across clips already does.
- */
+/** Every edit that changes a transcript, as data (see commands/index.md).
+ *  **`kind` carries its scope as a prefix rather than sitting beside a separate
+ *  `scope` field**, which keeps this a one-level union — a nested one needs
+ *  nested switches, and a missing branch stops being a type error. */
 export type SubtitleCommand =
   | { kind: 'subtitle.setText'; assetId: string; id: string; text: string }
   | { kind: 'subtitle.setSpeaker'; assetId: string; id: string; speakerId: string }
@@ -53,18 +47,10 @@ export type SubtitleCommand =
   | { kind: 'subtitle.remove'; assetId: string; ids: string[] }
   | { kind: 'subtitle.replaceAll'; assetId: string; find: string; replace: string }
 
-/**
- * What one command did.
- *
- * **`changed: false` is an ordinary answer, not a failure** — asking for text a
- * line already has is a no-op the caller should see rather than a reason to
- * throw, and it is what keeps a pointless click out of the undo history.
- *
- * `lines` reports the affected lines as they now stand, so a caller holding no
- * copy of the document need not re-fetch. Two commands report none, for
- * opposite reasons: `remove` names what is gone, `replaceAll` may touch
- * hundreds and so reports only how many.
- */
+/** What one command did. **`changed: false` is an ordinary answer, not a
+ *  failure** — it is what keeps a pointless click out of the undo history.
+ *  Two commands report no `lines`, for opposite reasons: `remove` names what is
+ *  gone, `replaceAll` may touch hundreds. */
 interface OutcomeBase {
   changed: boolean
   focus: EditFocus | null
@@ -116,11 +102,10 @@ function viewOf(assetId: string, utterance: Utterance | undefined): UtteranceVie
  *
  * Ids arrive from two kinds of caller: the editor passes the full id it is
  * already holding, an assistant passes whatever it was shown, which may have
- * been shortened (see short-id.ts). Both are accepted here so neither caller
- * needs to know about the other's habits. An exact match short-circuits, so the
+ * been shortened (see short-id.ts). An exact match short-circuits, so the
  * editor's path costs one comparison.
  *
- * An ambiguous prefix resolves to nothing rather than to the first candidate:
+ * **An ambiguous prefix resolves to nothing, never to the first candidate**:
  * editing an arbitrary line and reporting success is worse than doing nothing.
  */
 function find(transcript: Transcript, idOrPrefix: string): Utterance | undefined {

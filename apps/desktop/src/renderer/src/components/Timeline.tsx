@@ -23,22 +23,14 @@ import { MEDIA_ASSET_DRAG } from '@/lib/drag'
 import { pickTickInterval, pxPerMs, subtitleBlocks, tickTimes } from '@/lib/timeline'
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
-/**
- * Below this a block has no room for a word, and a couple of clipped glyphs
- * read as damage rather than as a label.
- *
- * **A threshold for showing the text, not a floor on the block.** Blocks are
- * never widened to stay legible — see `subtitleBlocks` for why widening was
- * given up. Reading this as a minimum width is what puts short lines back on
- * top of their neighbours.
- */
+/** Width below which a block does not get its text (see Timeline.md).
+ *  **A threshold for showing the text, not a floor on the block** — read as a
+ *  minimum width it puts short lines back on top of their neighbours. */
 const MIN_CAPTION_PX = 28
 
-/**
- * The white bar drawn at a selected line's edge, and the wider strip that
- * actually takes the drag. A 3px bar is all the look needs; a 3px target is
- * not something anyone can hit, so the two are separate.
- */
+/** The white bar at a selected line's edge, and the wider strip that actually
+ *  takes the drag — a 3px target is not something anyone can hit, which is why
+ *  the two are separate. See Timeline.md. */
 const TRIM_BAR_PX = 3
 const TRIM_HIT_PX = 8
 
@@ -55,22 +47,12 @@ const CLICK_SLOP_PX = 3
 /** A thumb narrower than this is not worth aiming at, however deep the zoom. */
 const MIN_THUMB_PX = 24
 
-/**
- * Zooming out past fit-to-width, to where the media occupies a quarter of the
- * track. Stopping at fit-to-width means a clip can never be seen as short:
- * whatever its length it fills the strip, so there is no sense of how much
- * room is left beside it.
- */
+/** Zooming out past fit-to-width, to a quarter of the track — see Timeline.md. */
 const MIN_ZOOM = 0.25
 
-/**
- * Where each frame of the filmstrip band comes from, laid left to right (see
- * Timeline.md).
- *
- * **Frames keep their own aspect ratio and repeat.** Scaling the sheet to the
- * clip's width is what squashed every face: the sheet is FILMSTRIP_FRAMES wide
- * however many pixels the clip occupies, so the two agree only by accident.
- */
+/** Where each frame of the filmstrip band comes from, laid left to right.
+ *  **Frames keep their own aspect ratio and repeat**, rather than the sheet
+ *  being scaled to the clip's width — see Timeline.md. */
 function filmstripTiles(
   clipWidthPx: number,
   aspect: number,
@@ -79,8 +61,8 @@ function filmstripTiles(
 ): { frameWidth: number; first: number; sources: number[] } {
   const frameWidth = Math.max(1, Math.round(STRIP_BAND_HEIGHT * aspect))
   const count = Math.max(1, Math.ceil(clipWidthPx / frameWidth))
-  // Only the tiles inside the window are built. Zoomed all the way in a clip
-  // is hundreds of thousands of pixels wide, and every tile is a DOM node.
+  // Only the tiles inside the window are built — one of the three things that
+  // must be culled to the viewport (see Timeline.md).
   const first = Math.max(0, Math.floor(visibleFromPx / frameWidth))
   const last = Math.min(count - 1, Math.ceil(visibleToPx / frameWidth))
   const sources: number[] = []
@@ -101,7 +83,6 @@ export interface TimelineClipView {
   /** Row of frames for the clip's body; null until generated. */
   filmstripUrl: string | null
   /** White-on-transparent envelope, tinted here; null until generated. */
-  /** The audio envelope, or null while it is being built or absent. */
   peaks: Uint8Array | null
   /** Frame width over height, for laying the filmstrip out undistorted. */
   aspect: number
@@ -121,10 +102,8 @@ interface TimelineProps {
   onRemoveClips(clipIds: string[]): void
   onSelectUtterances(ids: string[]): void
   onRemoveUtterances(ids: string[]): void
-  /**
-   * The time the playhead was just moved to by a click or drag, reported the
-   * moment it happens rather than when the element catches up.
-   */
+  /** The time the playhead was just moved to, reported the moment it happens
+   *  rather than when the element catches up — see Timeline.md. */
   onScrub(timeMs: number): void
   /** Move playback to this timeline position; the clip switch is not ours. */
   onSeek(timelineMs: number): void
@@ -134,10 +113,8 @@ interface TimelineProps {
    * the playhead would jump back to the left at each boundary.
    */
   clipOffsetMs: number
-  /**
-   * Whether a `<video>` is on screen. The playhead listens to that element, and
-   * it does not exist until the timeline has a playable clip.
-   */
+  /** Whether a `<video>` is on screen; the playhead listens to that element —
+   *  see hooks/usePlaybackClock.md. */
   hasPlayer: boolean
   /** Subtitle edges were dragged to new times, on the timeline's clock. */
   onTrimUtterances(edge: 'start' | 'end', changes: { id: string; timeMs: number }[]): void
@@ -154,12 +131,8 @@ interface TimelineProps {
   snapEnabled: boolean
 }
 
-/**
- * One lane: a fixed head, and the content area the clips are positioned in.
- *
- * **The head sits inside the scale-free region deliberately.** It must not
- * move when the content is scaled or scrolled.
- */
+/** One lane: a fixed head, and the content area the clips are positioned in.
+ *  The head sits outside everything the scale touches — see Timeline.md. */
 function TimelineTrack({
   icon,
   label,
@@ -197,9 +170,8 @@ function TimelineTrack({
       >
         {icon}
       </div>
-      {/* Two layers: a fixed window, and the full-width strip sliding inside
-          it. Clips position themselves in percentages of the strip, so they
-          need no knowledge of the zoom or the scroll at all. */}
+      {/* A fixed window with the full-width strip sliding inside it — see
+          Timeline.md. */}
       <div ref={contentRef} className="relative min-w-0 flex-1 overflow-hidden">
         <div className="absolute inset-y-0" style={{ left: -offsetPx, width: contentWidth }}>
           {children}
@@ -232,8 +204,8 @@ export default function Timeline({
 }: TimelineProps): JSX.Element {
   const [dropTarget, setDropTarget] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
-  /** The area clips occupy, i.e. everything right of the track heads. All
-   *  time↔pixel conversion is against this, never the whole container. */
+  /** The window, i.e. everything right of the track heads. **All time↔pixel
+   *  conversion is against this, never the whole container.** */
   const contentRef = useRef<HTMLDivElement>(null)
   const playheadRef = useRef<HTMLDivElement>(null)
   /** Where the playhead is, in timeline ms. A ref, not state: it changes every
@@ -242,13 +214,9 @@ export default function Timeline({
   /** What the running drag means. Fixed at pointerdown by where the press
    *  landed, and **never reconsidered** on move (see Timeline.md). */
   const dragRef = useRef<'scrub' | 'marquee' | 'trim' | 'none'>('none')
-  /**
-   * The edge being dragged, everything it moves, and how far — a shift, not a
-   * destination (see Timeline.md).
-   *
-   * Held here rather than pushed out on every move: the transcript is rewritten
-   * once, on release, so a drag is one undo step and not one per pixel.
-   */
+  /** The edge being dragged, everything it moves, and how far — a shift, not a
+   *  destination, and held here until release so a drag is one undo step
+   *  (see Timeline.md). */
   const [trim, setTrim] = useState<{
     edge: 'start' | 'end'
     ids: string[]
@@ -277,11 +245,9 @@ export default function Timeline({
   const pendingSeekRef = useRef<number | null>(null)
   const seekFrameRef = useRef(0)
   const [width, setWidth] = useState(0)
-  /**
-   * The window width the scale is fitted to, which is not the window's current
-   * width (see Timeline.md). Every px ↔ ms conversion goes through this one;
-   * folding it back into `width` is what makes a resize rescale the strip.
-   */
+  /** The window width the scale is fitted to, which is **not** the window's
+   *  current width: folding this back into `width` is what makes a resize
+   *  rescale the strip (see Timeline.md). */
   const [baseWidth, setBaseWidth] = useState(0)
   /** 1 is the whole media across `baseWidth`; above that the strip is longer. */
   const [zoom, setZoom] = useState(1)
@@ -292,11 +258,7 @@ export default function Timeline({
   const contentWidth = baseWidth * zoom
   const maxOffset = Math.max(0, contentWidth - width)
 
-  /**
-   * Enough that a pixel is a millisecond, which is finer than anything the
-   * timeline can express. Capped as well, because a short clip would otherwise
-   * allow a zoom so deep that the strip is megapixels wide.
-   */
+  /** A pixel per millisecond, with a multiplier cap on top — see Timeline.md. */
   const maxZoom =
     baseWidth > 0 && durationMs > 0 ? Math.max(1, Math.min(500, durationMs / baseWidth)) : 1
 
@@ -305,8 +267,9 @@ export default function Timeline({
   const viewRef = useRef({ width, baseWidth, contentWidth, offsetPx, zoom, durationMs, maxZoom })
   viewRef.current = { width, baseWidth, contentWidth, offsetPx, zoom, durationMs, maxZoom }
 
-  /** The span `baseWidth` was fitted to, which tells a resize apart from a
-   *  change of content — the first must not refit, the second must. */
+  /** The span `baseWidth` was fitted to. Stored as the span rather than as
+   *  "is `baseWidth` still 0", which cannot tell "never fitted" apart from
+   *  "fitted while the width was 0". */
   const fittedDurationRef = useRef(-1)
 
   // Fitting happens once per span, never on resize (see Timeline.md).
@@ -330,9 +293,9 @@ export default function Timeline({
     }
   }, [])
 
-  // Depends on hasMedia because the ruler that carries contentRef is not in
-  // the tree until something is laid down; a mount-only effect would observe
-  // nothing and leave the scale at zero forever.
+  // **Must depend on `hasMedia`**: the ruler that carries contentRef is not in
+  // the tree until something is laid down, and a mount-only effect would leave
+  // the scale at zero forever (see Timeline.md).
   useEffect(() => {
     const content = contentRef.current
     if (!content) return
@@ -352,7 +315,6 @@ export default function Timeline({
    */
   const pendingOffsetRef = useRef<number | null>(null)
 
-  // Clear the pending marker once React has applied the update.
   useEffect(() => {
     pendingOffsetRef.current = null
   }, [offsetPx])
@@ -368,8 +330,6 @@ export default function Timeline({
     if (!playhead || !(view.durationMs > 0)) return
     const ratio = Math.max(0, Math.min(1, timeMs / view.durationMs))
     const playheadPx = ratio * view.contentWidth
-    // Use the pending offset if we just requested one but React hasn't
-    // rendered yet.
     const effectiveOffset = pendingOffsetRef.current ?? view.offsetPx
     const playheadInViewPx = playheadPx - effectiveOffset
 
@@ -398,29 +358,22 @@ export default function Timeline({
   // Re-attaches when the player appears; see usePlaybackClock.
   usePlaybackClock(videoRef, onTick, hasPlayer)
 
-  // Zooming and scrolling move where a given instant sits without the element
-  // reporting anything, and the playhead is written imperatively — it is only
-  // repainted by playback events. Without this it keeps the position it was
-  // given under the previous geometry and drifts away from the ruler.
+  // The playhead is only repainted by playback events, so every quantity that
+  // moves where an instant sits has to redraw it by hand — see Timeline.md.
   useEffect(() => {
     const video = videoRef.current
     movePlayhead(clipOffsetRef.current + (video ? video.currentTime * 1000 : 0), false)
   }, [contentWidth, offsetPx, movePlayhead, videoRef])
 
-  // Only the window's own span: zoomed in, the strip holds thousands of
-  // labels and all but a screenful are off-screen; zoomed out below
-  // fit-to-width, the window runs past the media and the ruler carries on.
+  // Only the window's own span — see Timeline.md.
   const ticks = useMemo(() => {
     if (scale <= 0) return []
     return tickTimes(offsetPx / scale, (offsetPx + width) / scale, pickTickInterval(scale))
   }, [scale, offsetPx, width])
 
-  // Culled to the window like the ticks and the filmstrip frames: without
-  // merging, the node count is the line count, and only a screenful of them
-  // can be seen at once anyway.
-  // The drag is previewed by rewriting the line it moves, so every consumer of
-  // the list — the blocks, the clamping, the neighbours — sees one consistent
-  // picture without a second "but while dragging" path.
+  // The drag is previewed by rewriting the lines it moves, so the blocks, the
+  // clamping and the neighbours all see one consistent picture and no consumer
+  // needs a second "but while dragging" path.
   const shown = useMemo(
     () =>
       trim
@@ -455,14 +408,8 @@ export default function Timeline({
     return Math.max(0, Math.min(1, ratio)) * durationMs
   }
 
-  /**
-   * Everything visible moves now; only the element's own seek waits.
-   *
-   * The playhead and the highlight are driven from the pointer because
-   * `timeupdate` is ~4Hz and only fires once a seek completes. The `currentTime`
-   * write is coalesced to one per frame — asking a multi-gigabyte file to seek on
-   * every pointermove is what makes the drag itself stutter.
-   */
+  /** Everything visible moves now; only the element's own seek waits a frame.
+   *  The order of the three steps below is load-bearing — see Timeline.md. */
   const seekTo = (timeMs: number): void => {
     movePlayhead(timeMs, false)
     onScrub(timeMs)
@@ -513,11 +460,8 @@ export default function Timeline({
     return { from: Math.min(a, b), to: Math.max(a, b) }
   }
 
-  /**
-   * What the band covers, resolved per row: horizontal overlap plus a vertical
-   * hit on that row. A band drawn entirely in the empty space above the tracks
-   * takes nothing, which is why the vertical test cannot be skipped.
-   */
+  /** What the band covers, resolved per row: horizontal overlap plus a vertical
+   *  hit on that row — the vertical test cannot be skipped, see Timeline.md. */
   const clipsWithin = (
     fromClientX: number,
     toClientX: number,
@@ -549,19 +493,9 @@ export default function Timeline({
       .map((utterance) => utterance.id)
   }
 
-  /**
-   * The largest shift the pointer is asking for that **no** line in the
-   * selection has to be clamped out of.
-   *
-   * Each line is clamped on its own by core's `clampUtteranceTime` — the same
-   * function the inspector's time fields use, so a dragged edge and a typed
-   * one cannot disagree about where the limit is — and the most restrictive
-   * answer wins. Letting each line clamp itself instead would break the group
-   * apart the moment one of them hit its neighbour.
-   *
-   * Clamped against the pristine list, not the preview: only this one edge is
-   * moving, so every bound in play belongs to an edge that is standing still.
-   */
+  /** The largest shift the pointer is asking for that **no** line in the
+   *  selection has to be clamped out of, measured against the pristine list
+   *  rather than the preview — see Timeline.md. */
   const allowedTrimDelta = (
     current: { edge: 'start' | 'end'; ids: string[]; originMs: number },
     clientX: number
@@ -606,10 +540,9 @@ export default function Timeline({
 
     const target = event.target
 
-    // An edge handle takes the gesture outright, and it is settled **before
-    // anything touches the selection**: it drags the whole selection, so
-    // narrowing that down to the pressed line first would throw away the
-    // other lines the drag is meant to move.
+    // An edge handle takes the gesture outright, and **before anything touches
+    // the selection** — it drags the whole selection, so narrowing that down to
+    // the pressed line first would throw the rest away (see Timeline.md).
     const handle = target instanceof Element ? target.closest('[data-trim-edge]') : null
     if (handle) {
       const id = handle.getAttribute('data-trim-id')
@@ -626,8 +559,6 @@ export default function Timeline({
       }
     }
 
-    // Pressing anywhere else in the strip settles what is selected: a clip if
-    // the press landed on one, nothing if it landed on empty track.
     const element = target instanceof Element ? target.closest('[data-clip-id]') : null
     const clipId = element?.getAttribute('data-clip-id') ?? null
     onSelectClips(clipId === null ? [] : [clipId])
@@ -635,17 +566,10 @@ export default function Timeline({
     const blockIds = block?.getAttribute('data-subtitle-ids')
     onSelectUtterances(blockIds ? blockIds.split(' ') : [])
 
-    // What the drag will mean, decided here and only here. Only the ruler
-    // drags the playhead: dragging a scrub out of the tracks would fight the
-    // rubber band for the same gesture, and the ruler is where a desktop
-    // editor puts it anyway. On a clip the press has already selected it and
-    // there is nothing to drag, since clips cannot be moved.
+    // What the drag will mean, decided here and only here — see Timeline.md.
     const rulerBottom = content?.getBoundingClientRect().bottom ?? 0
     dragRef.current = event.clientY <= rulerBottom ? 'scrub' : clipId === null ? 'marquee' : 'none'
 
-    // Exactly where the pointer is, on a subtitle as anywhere else. Pressing
-    // a line used to snap the playhead to that line's start; going to a
-    // line's beginning is what its timecode in the list is for.
     const timeMs = timeAtClientX(event.clientX)
     if (dragRef.current === 'scrub') {
       // The ruler is unambiguous, so it moves at once and stays under the
@@ -689,10 +613,9 @@ export default function Timeline({
       return
     }
 
-    // Dragging never snaps: scrubbing has to follow the pointer exactly.
     if (dragRef.current === 'scrub') {
-      // The other direction: the playhead lands on a subtitle's edge. Every
-      // line is a candidate — none of them is moving.
+      // Snapping in the other direction from a trim: the playhead lands on a
+      // subtitle's edge, and every line is a candidate — none is moving.
       seekTo(
         snapToNearest(timeAtClientX(event.clientX), utteranceEdges(utterances), snapToleranceMs())
       )
@@ -702,7 +625,6 @@ export default function Timeline({
 
     const point = localPointOf(event)
     setMarquee((current) => (current ? { ...current, x1: point.x, y1: point.y } : current))
-    // Live rather than on release, so the band shows what it is about to take.
     setMarqueeSelection(event)
   }
 
@@ -730,9 +652,8 @@ export default function Timeline({
     // Still pending means the press never became a drag, so it was a click.
     const pending = pendingClickRef.current
     if (pending) {
-      // Clicking a subtitle is aimed at the subtitle, not at the instant
-      // underneath it: it selects the line and opens the editor on it, and
-      // leaves the playhead where the user last put it.
+      // A subtitle click is aimed at the line, not at the instant underneath
+      // it, so it leaves the playhead alone — see Timeline.md.
       if (pending.subtitle) onEditSubtitlesAt(pending.timeMs)
       else seekTo(pending.timeMs)
     }
@@ -755,8 +676,6 @@ export default function Timeline({
     setDropTarget(true)
   }
 
-  // The strip takes focus on press (tabIndex), which is what makes Delete
-  // reach here at all rather than the document.
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     // Space is the one shortcut that needs nothing selected: the strip having
     // focus is enough. preventDefault, or the page scrolls with it.
@@ -768,7 +687,6 @@ export default function Timeline({
     if (event.key !== 'Delete' && event.key !== 'Backspace') return
     if (selectedClipIds.length === 0 && selectedUtteranceIds.length === 0) return
     event.preventDefault()
-    // A band can cover both rows, so one press clears whatever it took.
     if (selectedUtteranceIds.length > 0) onRemoveUtterances(selectedUtteranceIds)
     if (selectedClipIds.length > 0) onRemoveClips(selectedClipIds)
   }
@@ -804,8 +722,7 @@ export default function Timeline({
 
       const content = contentRef.current
       if (!content) return
-      // Zoom around the pointer: the instant under it must not move, or
-      // zooming in on something walks it off the screen.
+      // Zoom around the pointer: the instant under it must not move.
       const anchorPx = event.clientX - content.getBoundingClientRect().left
       const anchorRatio = (anchorPx + view.offsetPx) / view.contentWidth
       const next = Math.max(
@@ -888,28 +805,24 @@ export default function Timeline({
       {/* Ruler, tracks and playhead share one box so the playhead spans them
           and stops short of the scrollbar. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {/* One continuous rule between the heads and the tracks. Per-row
-            borders leave it broken wherever a row is missing — and the rows
-            are centred, so most of that column has no row in it at all. */}
+        {/* One continuous rule between the heads and the tracks, never a border
+            per row — see Timeline.md. */}
         {hasMedia && (
           <div
             className="pointer-events-none absolute top-0 bottom-0 w-px bg-border"
             style={{ left: 'calc(var(--timeline-head-width) - 1px)' }}
           />
         )}
-        {/* Ruler. Its left spacer keeps the scale aligned with the tracks below.
-          An empty timeline has no scale to show, so it has no ruler either —
-          and it must be removed from the tree, not `hidden`: Tailwind's
-          Preflight writes that rule through :where(), so any display utility
-          on the element outranks it. */}
+        {/* Ruler. **Removed from the tree, never `hidden`**: Tailwind's
+            Preflight writes that rule through `:where()`, so any display
+            utility on the element outranks it. See Timeline.md. */}
         {hasMedia && (
           <div
             className="flex border-b border-border"
             style={{ height: 'var(--timeline-ruler-height)' }}
           >
             <div className="shrink-0" style={{ width: 'var(--timeline-head-width)' }} />
-            {/* contentRef is the window, not the strip: it is what the pointer
-              is measured against and what ResizeObserver watches. */}
+            {/* contentRef is the window, not the strip. */}
             <div ref={contentRef} className="relative min-w-0 flex-1 overflow-hidden">
               <div className="absolute inset-y-0" style={{ left: -offsetPx, width: contentWidth }}>
                 {ticks.map((time) => (
@@ -926,13 +839,10 @@ export default function Timeline({
           </div>
         )}
 
-        {/* Tracks sit centred in whatever height is left, so growing the panel
-          pads above and below rather than leaving them stranded at the top. */}
         <div className="flex min-h-0 flex-1 flex-col justify-center">
           {/* Nothing laid down yet. The placeholder is shaped like the track it
-            is about to become — same height, same offset past the heads — so
-            dropping does not make the strip jump. It is also the only place
-            that says how to start, since importing no longer does it. */}
+              is about to become, so dropping does not make the strip jump —
+              see Timeline.md. */}
           {!hasMedia && (
             <div className="flex" style={{ height: 'var(--timeline-media-height)' }}>
               <div className="shrink-0" style={{ width: 'var(--timeline-head-width)' }} />
@@ -949,10 +859,8 @@ export default function Timeline({
             </div>
           )}
 
-          {/* Secondary track: subtitles. One block per line, adjacent ones merged.
-            It only exists once there are subtitles — an empty lane with a head
-            on it reads as a feature that is broken rather than one not used
-            yet. */}
+          {/* Subtitles. The lane only exists once there are any — see
+              Timeline.md. */}
           <TimelineTrack
             icon={<Type size={13} />}
             label="Subtitles"
@@ -964,13 +872,9 @@ export default function Timeline({
             {blocks.map((block) => {
               const selected = selectedUtteranceIds.includes(block.id)
               // Never wider than half the block, so the two ends cannot overlap
-              // however narrow it gets. There is no width below which the ends
-              // stop being draggable: selecting happens before any handle
-              // exists, and once a block is selected its middle does nothing —
-              // a subtitle block cannot be dragged along the track.
+              // however narrow it gets. There is deliberately no width below
+              // which the ends stop existing — see Timeline.md.
               const hitPx = Math.min(TRIM_HIT_PX, block.widthPx / 2)
-              // The outset shrinks with it, so a narrow block's handles stay
-              // mostly on the block rather than floating off both sides of it.
               const outsetPx = Math.min(TRIM_BAR_PX, hitPx / 2)
               return (
                 <div
@@ -978,21 +882,14 @@ export default function Timeline({
                   data-subtitle-block
                   data-subtitle-ids={block.id}
                   // Lifted while selected: the plate reaches past both ends,
-                  // and a line that starts where this one finishes is a later
-                  // sibling, so it would paint straight over that edge.
+                  // and a line starting where this one finishes is a later
+                  // sibling that would paint straight over that edge.
                   className={`absolute inset-y-adjust ${selected ? 'z-10' : ''}`}
                   style={{ left: block.leftPx, width: block.widthPx }}
                 >
-                  {/* Selection is one plate behind the line, wider than it by
-                      the bar and taller by a hair, so the white that shows is
-                      the part the body does not cover: thick at the two ends,
-                      a hairline along the top and bottom.
-
-                      One shape rather than an outline plus two bars. Those
-                      were three rectangles meeting at the corners, and no
-                      radius makes three separate rectangles meet cleanly —
-                      the seams read as notches at the top and bottom of each
-                      end. Here there is nothing to meet. */}
+                  {/* **One plate behind the line, not an outline plus two
+                      bars** — three rectangles cannot be made to meet cleanly
+                      at the corners. See Timeline.md. */}
                   {selected && (
                     <div
                       className="pointer-events-none absolute rounded-sm bg-foreground"
@@ -1007,28 +904,20 @@ export default function Timeline({
 
                   <div
                     className="absolute inset-0 flex items-center rounded-xs"
-                    // --editor-waveform is 55% opaque, so the selection plate
-                    // behind would show through and wash the colour out. The
-                    // panel surface goes underneath it here, compositing to
-                    // exactly what an unselected line already looks like while
-                    // leaving the body opaque.
+                    // The body has to be opaque or the white plate behind it
+                    // washes the colour out: --editor-waveform is only 55%
+                    // opaque, so the panel surface is laid under it here. Not a
+                    // stacking problem — see Timeline.md.
                     style={{
                       backgroundColor: 'var(--card)',
                       backgroundImage:
                         'linear-gradient(var(--editor-waveform), var(--editor-waveform))'
                     }}
                   >
-                    {/* The line itself, once the block is wide enough to hold
-                        any of it.
-
-                        `min-w-0` is what gives truncation an edge to work at:
-                        a flex item will not shrink below its content, so
-                        without it the text overflows the block whole and is
-                        simply cut off rather than ellipsised.
-
-                        Nothing here reacts to selection — the plate is behind
-                        and outside, so the text never shifts under the
-                        pointer. */}
+                    {/* `min-w-0` is what gives truncation an edge to work at: a
+                        flex item will not shrink below its content, so without
+                        it the text overflows the block whole and is cut off
+                        rather than ellipsised. */}
                     {block.text !== '' && block.widthPx >= MIN_CAPTION_PX && (
                       <span className="pointer-events-none min-w-0 flex-1 truncate px-inline text-caption leading-[var(--timeline-subtitle-height)] text-white">
                         {block.text}
@@ -1036,11 +925,8 @@ export default function Timeline({
                     )}
                   </div>
 
-                  {/* The drag targets. They draw nothing: the plate already
-                      shows where the ends are. A cursor that only appears on
-                      hover is not an affordance — nobody sweeps a track
-                      looking for one, which is why the ends are only shown,
-                      and only draggable, once the line is selected. */}
+                  {/* The drag targets. They draw nothing — the plate already
+                      shows where the ends are (see Timeline.md). */}
                   {selected &&
                     (['start', 'end'] as const).map((edge) => (
                       <div
@@ -1061,10 +947,8 @@ export default function Timeline({
             })}
           </TimelineTrack>
 
-          {/* Main track: a caption bar, the filmstrip, then the audio envelope.
-            The three band heights are tokens and sum to the track height, so
-            the clip has no internal flex — each band is exactly its own
-            height whatever the panel is doing. */}
+          {/* Main track: three bands of fixed token height, so the clip needs
+              no internal flex — see Timeline.md. */}
           <TimelineTrack
             icon={<Film size={13} />}
             label="Video"
@@ -1136,9 +1020,7 @@ export default function Timeline({
                 >
                   {clip.peaks !== null &&
                     (() => {
-                      // The same visible-span arithmetic as the filmstrip above:
-                      // where this clip starts in the strip, how wide it is now,
-                      // and which part of it the viewport is over.
+                      // The same visible-span arithmetic as the filmstrip above.
                       const clipLeftPx = contentWidth * (clip.startMs / durationMs)
                       return (
                         <Waveform
@@ -1151,16 +1033,9 @@ export default function Timeline({
                     })()}
                 </div>
 
-                {/* Selection is its own layer, stacked over the bands, rather
-                    than a border or outline on the clip itself.
-
-                    Both of those are drawn by the clip and covered by its own
-                    children: an inset ring is a box-shadow, which paints
-                    under them outright, and an outline — which the spec does
-                    paint last — still loses to positioned descendants on their
-                    own paint layers, which the filmstrip tiles are. A sibling
-                    with a z-index is the only version that does not depend on
-                    reading paint order correctly. */}
+                {/* **A sibling layer with a z-index, not a border or an outline
+                    on the clip.** Both of those lose to the clip's own
+                    positioned children — see Timeline.md. */}
                 {selectedClipIds.includes(clip.id) && (
                   <div className="pointer-events-none absolute inset-0 z-10 rounded-xs border border-foreground" />
                 )}
@@ -1169,8 +1044,6 @@ export default function Timeline({
           </TimelineTrack>
         </div>
 
-        {/* The rubber band. Drawn over the tracks deliberately: covering what it
-          is about to take is exactly how it says what it covers. */}
         {marquee && (
           <div
             className="pointer-events-none absolute border border-primary bg-primary/20"
@@ -1183,9 +1056,9 @@ export default function Timeline({
           />
         )}
 
-        {/* Playhead spans every track, offset past the heads. Its window clips
-          it: once the view is scrolled, the marker's own translate goes
-          negative and it would otherwise be drawn across the track heads. */}
+        {/* Playhead spans every track, offset past the heads. **It needs a
+            window of its own**: once the view is scrolled its translate goes
+            negative and it would be drawn across the track heads. */}
         {durationMs > 0 && (
           <div
             className="pointer-events-none absolute top-0 right-0 bottom-0 overflow-hidden"
@@ -1196,14 +1069,9 @@ export default function Timeline({
               className="absolute top-0 bottom-0 w-px"
               style={{ background: 'var(--editor-playhead)' }}
             >
-              {/* A grip at the top, sitting in the ruler. A bare hairline is
-                  hard to pick out among the ticks and gives no hint that the
-                  marker is the thing you drag.
-                  A bar tapering to a point, so the grip names the exact
-                  instant the way a plain block cannot. The shoulder is the bar
-                  token rather than a percentage, so changing either height
-                  leaves the other alone. Centred on the line by half its
-                  width, so the tokens can change freely. */}
+              {/* The grip in the ruler (see Timeline.md). The clip-path
+                  shoulder is the bar token rather than a percentage, so
+                  changing either height leaves the other alone. */}
               <div
                 className="absolute top-0 -translate-x-1/2"
                 style={{
@@ -1220,10 +1088,10 @@ export default function Timeline({
         )}
       </div>
 
-      {/* Horizontal scrollbar. Drawn rather than delegated to overflow-x
-          because the strip is moved by transform, not by a scroll container —
-          and a mouse has no deltaX, so wheel panning alone leaves the zoomed
-          timeline unreachable. */}
+      {/* Horizontal scrollbar, drawn rather than delegated to `overflow-x`.
+          Its look is the template every scrollbar in the app follows, so
+          changing the colours here means changing the global rule too — see
+          Timeline.md and styles.md. */}
       {hasMedia && (
         <div
           className="relative shrink-0"

@@ -21,14 +21,10 @@ const DEFAULTS: Required<SegmentOptions> = {
   hardMaxChars: 40
 }
 
-/**
- * The floor that goes with a given ceiling, when the caller sets only the
- * ceiling. `minChars` gates the comma and pause rules, so it has to stay below
- * `maxChars` — at or above it, both rules can never fire and line length is
- * left to the full-stop and the hard cap alone. Deriving it means the one
- * setting a user is given cannot be turned into that contradiction: 20 keeps
- * the tuned 6, and a ceiling of 8 brings the floor down to 2 with it.
- */
+/** The floor that goes with a given ceiling. **`minChars` has to stay below
+ *  `maxChars`** — at or above it the comma and pause rules can never fire —
+ *  so deriving it keeps the one setting a user is given from producing that
+ *  contradiction (see segment.md). */
 export function minCharsFor(maxChars: number): number {
   // Clamped below the ceiling rather than merely scaled: at a ceiling of 2 the
   // proportion alone would land on the ceiling itself and reintroduce exactly

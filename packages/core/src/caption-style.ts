@@ -1,191 +1,92 @@
-/**
- * How captions look burned into the picture. Three scopes — `base` complete,
- * `bySpeaker` and `utterance` partial — of which only `base` is settable today
- * (see caption-style.md).
- *
- * **The overrides are partial on purpose.** A complete style per speaker would
- * freeze whatever the base was when that speaker was first touched, and later
- * changes to the base would silently stop reaching them.
- */
 export type CaptionAlign = 'left' | 'center' | 'right'
 
+/** How captions look burned into the picture — every field's rationale, and the
+ *  four layers they group into, are in caption-style.md. */
 export interface CaptionStyle {
-  /**
-   * A family name for CSS and, later, for the burn-in filter. The sentinel
-   * `SYSTEM_FONT` means the platform's own UI font — the only choice certain to
-   * have glyphs for whatever language the transcript is in.
-   */
+  /** A family name, or the `SYSTEM_FONT` sentinel for the platform's own. */
   fontFamily: string
-  /**
-   * Cap height as a percentage of the *picture's* height, not a pixel size.
-   *
-   * A caption has to look the same in a 400px preview pane and in a 4K export,
-   * and only a proportion of the frame can promise that. Storing pixels would
-   * mean a caption sized against the preview turning microscopic on export —
-   * and there is no correction to apply later, because nothing records which
-   * size the number was chosen against.
-   */
+  /** Cap height as a percentage of the **picture's** height, never a pixel
+   *  size. */
   fontSizePct: number
-  /**
-   * How much this caption is blown up from the size chosen above, as a
-   * percentage. 100 is the size as authored.
-   *
-   * A second number for what looks like one quantity, because they answer
-   * different questions: `fontSizePct` is the type the project is set in, and
-   * this is how big this caption was dragged. Folding the drag into the type
-   * size would mean the panel's size readout changed every time a corner
-   * moved, and there would be nothing left to state the project's own size.
-   *
-   * It multiplies the font size and nothing else — the two spacings and the
-   * backing plate keep their own definitions, which are already relative to
-   * the picture.
-   */
+  /** Percentage on top of `fontSizePct`; 100 is the size as authored. **It
+   *  multiplies the font size and nothing else** — the spacings and the plate
+   *  keep their own definitions. */
   scalePct: number
   bold: boolean
   italic: boolean
   underline: boolean
   /** CSS colour, `#rrggbb`. */
   color: string
-  /**
-   * How solid the letterforms are. 0 is invisible, 100 is opaque.
-   *
-   * There is no switch beside it, unlike every other layer here: turning the
-   * fill off is the same act as taking it to 0, and a caption whose text can be
-   * made to vanish twice over has one way too many.
-   */
+  /** 0 is invisible, 100 is opaque. No switch beside it, unlike the other
+   *  three layers. */
   fillOpacityPct: number
-  /**
-   * Whether the type is stroked.
-   *
-   * A switch rather than "width 0 means off", so that turning it off and on
-   * again finds the width that was set. The three fields below keep their
-   * values while it is off — that is the whole difference between a toggle and
-   * a zero.
-   */
+  /** Whether the type is stroked. The three fields below keep their values
+   *  while it is off — that is the whole point of a toggle over a zero. */
   outline: boolean
   /** CSS colour, `#rrggbb`. */
   outlineColor: string
   /** 0 is invisible, 100 is solid. */
   outlineOpacityPct: number
-  /**
-   * How far the stroke stands out from the glyph, in pixels at
-   * `CAPTION_REFERENCE_HEIGHT` — the same unit as the two spacings.
-   *
-   * **Outward from the edge, not centred on it.** Both renderers are made to
-   * agree on that: ASS's `\bord` grows outward already, while a CSS text
-   * stroke is centred and eats half the letterform, so the preview doubles
-   * this and paints the stroke under the fill.
-   */
+  /** **Outward from the glyph's edge, not centred on it**, in pixels at
+   *  `CAPTION_REFERENCE_HEIGHT`. The preview has to double it to match. */
   outlineWidth: number
-  /**
-   * Whether the type casts a shadow. A switch for the same reason `outline` is
-   * one: the four fields below survive it being turned off.
-   */
+  /** Whether the type casts a shadow; the four fields below survive it being
+   *  turned off. */
   shadow: boolean
   /** CSS colour, `#rrggbb`. */
   shadowColor: string
   /** 0 is invisible, 100 is solid. */
   shadowOpacityPct: number
-  /**
-   * How soft the shadow's edge is, in pixels at `CAPTION_REFERENCE_HEIGHT`. 0
-   * is a hard copy of the letterforms.
-   *
-   * **This is the one blur in the model, and it is here because it is the only
-   * one both renderers can produce.** A blur on the fill or on the stroke would
-   * have to be a blur of the whole caption in either engine — CSS filters the
-   * element, plate included, and libass's `\blur` takes the glyphs, the border
-   * and the shadow together. The shadow is separable because it is already its
-   * own thing on both sides: a `text-shadow` in the preview, its own event in
-   * the burn.
-   */
+  /** Pixels at `CAPTION_REFERENCE_HEIGHT`; 0 is a hard copy of the
+   *  letterforms. **The only blur in the model** — see caption-style.md. */
   shadowBlur: number
-  /**
-   * How far the shadow falls from the type, in pixels at
-   * `CAPTION_REFERENCE_HEIGHT`. A true distance along `shadowAngle`, not a
-   * per-axis offset.
-   */
+  /** Pixels at `CAPTION_REFERENCE_HEIGHT`. A true distance along
+   *  `shadowAngle`, not a per-axis offset. */
   shadowDistance: number
-  /** Which way the shadow falls: degrees clockwise from due right, so 45 is
-   *  down and to the right. */
+  /** Degrees clockwise from due right, so 45 is down and to the right. */
   shadowAngle: number
-  /**
-   * Whether the caption sits on a plate.
-   *
-   * **On by default**, and at the black the plate has always been — every
-   * caption this build has ever burned had one, and a default of off would
-   * change the look of projects nobody touched.
-   */
+  /** Whether the caption sits on a plate. **On by default** — every caption
+   *  this build has ever burned had one. */
   background: boolean
   /** CSS colour, `#rrggbb`. */
   backgroundColor: string
   /** 0 is invisible, 100 is solid. */
   backgroundOpacityPct: number
-  /**
-   * How far the plate stands out past the text, in pixels at
-   * `CAPTION_REFERENCE_HEIGHT`.
-   *
-   * Two numbers rather than one, because the plate the project started with was
-   * never square — 12 against 4 — and folding them into a single spread would
-   * restyle every existing caption on the way past.
-   */
+  /** How far the plate stands out past the text, in pixels at
+   *  `CAPTION_REFERENCE_HEIGHT`. Two numbers, never one. */
   backgroundPadX: number
   backgroundPadY: number
-  /**
-   * The plate's corner radius, in pixels at `CAPTION_REFERENCE_HEIGHT`.
-   *
-   * **Preview only.** ASS's opaque box is square and has no radius to set, so a
-   * value here rounds the corners on screen and not in the export (see ass.md).
-   */
+  /** Pixels at `CAPTION_REFERENCE_HEIGHT`. **Preview only** — ASS's opaque box
+   *  is square (see ass.md). */
   backgroundRadius: number
-  /**
-   * Extra space between characters, in pixels at `CAPTION_REFERENCE_HEIGHT`.
-   * 0 is the font's own spacing.
-   */
+  /** Extra space between characters, in pixels at `CAPTION_REFERENCE_HEIGHT`.
+   *  0 is the font's own spacing. */
   letterSpacing: number
-  /**
-   * Extra space between lines, in pixels at `CAPTION_REFERENCE_HEIGHT`. 0 is
-   * the default leading (`DEFAULT_LINE_RATIO`), not zero leading.
-   */
+  /** Extra space between lines, in pixels at `CAPTION_REFERENCE_HEIGHT`. 0 is
+   *  the default leading (`DEFAULT_LINE_RATIO`), not zero leading. */
   lineSpacing: number
   align: CaptionAlign
-  /**
-   * The width the caption's text is laid out in, as a percentage of the
-   * picture's width — which is to say where it wraps. **0 means auto**: the
-   * box is however wide the text is, and only the picture's own width stops
-   * it.
-   *
-   * Auto is a value rather than the absence of one because the two states are
-   * genuinely different objects. Under auto the box has no width of its own to
-   * drag, and `align` has nothing to align within; once a width is set the box
-   * is a fixed frame the text sits inside.
-   */
+  /** Where the text wraps, as a percentage of the picture's width. **0 means
+   *  auto**, which is a different object rather than a narrower one. */
   widthPct: number
-  /**
-   * Centre of the caption block, as a share of the picture's width and height.
-   * 0.5 / 0.88 is centred near the bottom, where a subtitle normally sits.
-   *
-   * A share rather than pixels for the same reason the size is: the position
-   * has to mean the same thing in a preview pane and in an export.
-   */
+  /** **Centre** of the caption block, as a share of the picture's width and
+   *  height — scaling and rotation both happen about this point. */
   x: number
   y: number
   /** Clockwise, in degrees. */
   rotation: number
 }
 
+/** **The overrides are `Partial` on purpose** — a complete style per speaker
+ *  would freeze the base as it stood when that speaker was first touched. */
 export interface CaptionStyles {
   base: CaptionStyle
   /** Keyed by `Utterance.speakerId`. */
   bySpeaker: Record<string, Partial<CaptionStyle>>
 }
 
-/**
- * Stands for "whatever this platform uses", resolved at render time.
- *
- * A word rather than the empty string because the value reaches a `<Select>`,
- * and an empty option value means "nothing is selected" there — the system
- * font would be the one choice that could not be chosen.
- */
+/** "Whatever this platform uses", resolved at render time. A word rather than
+ *  the empty string, which a `<Select>` reads as "nothing is selected". */
 export const SYSTEM_FONT = 'system'
 
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
@@ -200,19 +101,15 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   outline: false,
   outlineColor: '#000000',
   outlineOpacityPct: 100,
-  // About a tenth of the default type size, which is where a stroke reads as
-  // an edge rather than as a second weight of the same letter.
   outlineWidth: 5,
   shadow: false,
   shadowColor: '#000000',
   shadowOpacityPct: 100,
   shadowBlur: 5,
   shadowDistance: 4,
-  // Down and to the right, where a light source above and behind the viewer
-  // puts it — the direction every other shadow on the screen already falls.
   shadowAngle: 45,
-  // The plate every caption in this build has had, stated as data rather than
-  // baked into the two renderers.
+  // **These four must stay exactly what the two renderers used to hard-code**:
+  // changing them restyles every project nobody has touched.
   background: true,
   backgroundColor: '#000000',
   backgroundOpacityPct: 60,
@@ -257,26 +154,16 @@ export function captionLengthFor(referenceLength: number, frameHeight: number): 
   return (referenceLength / CAPTION_REFERENCE_HEIGHT) * frameHeight
 }
 
-/**
- * The share of the picture's height the type actually occupies: the size the
- * project is set in, blown up by what this caption was dragged to.
- *
- * Both the preview and the burn-in go through here. Two multiplications in two
- * files is the drift the correspondence between them cannot survive.
- */
+/** The share of the picture's height the type actually occupies. **Both the
+ *  preview and the burn-in go through here** — the same multiplication written
+ *  in two files is drift the two renderers cannot survive. */
 export function captionFontSizePct(style: Pick<CaptionStyle, 'fontSizePct' | 'scalePct'>): number {
   return (style.fontSizePct * style.scalePct) / 100
 }
 
-/**
- * The width the text lays out in, as a share of the picture's width — where
- * the caption wraps.
- *
- * **Auto is the whole picture**, because that is what libass wraps against: an
- * `\an5`-positioned event still takes its limit from `PlayResX` less the
- * event's margins, whatever `\pos` says. The preview has to agree or the same
- * line breaks in one place on screen and another in the file.
- */
+/** Where the caption wraps, as a share of the picture's width. **Auto is the
+ *  whole picture**, because that is what libass wraps against — see
+ *  caption-style.md. */
 export function captionWrapShare(widthPct: number): number {
   return widthPct === 0 ? 1 : widthPct / 100
 }
@@ -284,11 +171,11 @@ export function captionWrapShare(widthPct: number): number {
 /**
  * Where the shadow falls, in pixels for a picture of the given height.
  *
- * `extraRotation` is whatever the caller's own coordinate frame does not
- * already apply. The preview passes 0 — its shadow lives inside the block, so
- * the block's own transform has already turned it. ASS passes the caption's
- * rotation, because `\pos` is in screen space and nothing there has turned
- * anything. Both are clockwise, and y grows downward in both.
+ * **`extraRotation` is whatever the caller's own frame does not already
+ * apply**: the preview passes 0 (its block is already turned), ASS passes the
+ * caption's rotation (`\pos` is screen space). Both clockwise, y downward.
+ * This is the easiest argument in the model to get backwards — the tests lock
+ * it step by step.
  */
 export function captionShadowOffset(
   style: Pick<CaptionStyle, 'shadowDistance' | 'shadowAngle'>,
@@ -307,22 +194,13 @@ export function captionSizePct(px: number): number {
   return Math.round((px / CAPTION_REFERENCE_HEIGHT) * 1000) / 10
 }
 
-/**
- * Leading at `lineSpacing: 0`, as a multiple of the font size.
- *
- * Zero extra spacing means normal leading rather than none — lines set solid
- * touch, and nobody reaches for a spacing control expecting that.
- */
+/** Leading at `lineSpacing: 0`, as a multiple of the font size. */
 export const DEFAULT_LINE_RATIO = 1.3
 
-/**
- * Bounds for the numeric fields, in the units each is stored in. Exported so
- * the controls and the validation cannot disagree about what is offerable.
- *
- * Every one of these is a length at `CAPTION_REFERENCE_HEIGHT` except
- * `fontSizePct`, which the controls convert (see `captionSizePx`) — so what a
- * user types is one consistent kind of number across the whole panel.
- */
+/** Bounds for the numeric fields, in the units each is stored in. **Exported so
+ *  the controls and the validation cannot disagree.** Every one is a length at
+ *  `CAPTION_REFERENCE_HEIGHT` except `fontSizePct`, which the controls
+ *  convert. */
 export const CAPTION_STYLE_LIMITS = {
   fontSizePct: { min: 1, max: 20 },
   scalePct: { min: 10, max: 500 },
@@ -332,8 +210,8 @@ export const CAPTION_STYLE_LIMITS = {
   shadowOpacityPct: { min: 0, max: 100 },
   shadowBlur: { min: 0, max: 40 },
   shadowDistance: { min: 0, max: 100 },
-  // The same clockwise degrees `rotation` is stated in, and the same range, so
-  // that the two angles in this model cannot be read on different dials.
+  // The same dial as `rotation`, so the model's two angles cannot be read
+  // differently.
   shadowAngle: { min: -180, max: 180 },
   backgroundOpacityPct: { min: 0, max: 100 },
   backgroundPadX: { min: 0, max: 200 },
@@ -341,11 +219,11 @@ export const CAPTION_STYLE_LIMITS = {
   backgroundRadius: { min: 0, max: 100 },
   letterSpacing: { min: -20, max: 100 },
   lineSpacing: { min: -40, max: 200 },
-  // 0 is auto, so the low bound is not a width — every control offering this
-  // range has to say what 0 means rather than showing it as a number.
+  // **0 is auto, so the low bound is not a width** — a control offering this
+  // range has to say what 0 means rather than show it as a number.
   widthPct: { min: 0, max: 100 },
-  // The centre stays on the picture. A caption may hang over an edge, but a
-  // centre outside it is a caption that cannot be grabbed to bring back.
+  // The centre stays on the picture: a caption may hang over an edge, but a
+  // centre outside it cannot be grabbed to bring back.
   x: { min: 0, max: 1 },
   y: { min: 0, max: 1 },
   rotation: { min: -180, max: 180 }
@@ -372,13 +250,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-/**
- * A number the caller has bounds for, clamped into them.
- *
- * **Out of range is clamped, not rejected**: the value is still one somebody
- * meant, just further than this build goes. `NaN` and the infinities are not
- * numbers anyone meant, so they fall back to the default instead.
- */
+/** **Out of range is clamped, not rejected** — it is still a value somebody
+ *  meant. `NaN` and the infinities are not, so those fall back to the
+ *  default. */
 function bounded(key: keyof typeof CAPTION_STYLE_LIMITS) {
   return (value: unknown): number | undefined =>
     typeof value === 'number' && Number.isFinite(value)
@@ -396,13 +270,9 @@ function colour(value: unknown): string | undefined {
   return typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined
 }
 
-/**
- * One reader per field: takes whatever was on disk, returns the field or
- * nothing. A table rather than a chain of ifs because both callers below need
- * the same per-field rule — one to build a complete style, one to build a
- * partial — and two hand-written copies of it would drift the first time a
- * field is added.
- */
+/** One reader per field. **A table rather than a chain of ifs** because both
+ *  callers below need the same per-field rule, and two hand-written copies
+ *  would drift the first time a field is added. */
 const READERS: {
   [K in keyof CaptionStyle]: (value: unknown) => CaptionStyle[K] | undefined
 } = {
@@ -472,15 +342,9 @@ function readPartial(stored: unknown): Partial<CaptionStyle> {
   return style
 }
 
-/**
- * Fill in whatever a stored value is missing, and drop what does not belong.
- *
- * Runs on both sides: a project written before a field existed has to keep
- * opening, and the same guarantee makes a value arriving from the renderer safe
- * to store without a second validator. Numbers are clamped rather than rejected
- * — a value out of range is a value someone meant, just further than this
- * build allows.
- */
+/** Fill in whatever a stored value is missing, and drop what does not belong.
+ *  **Runs on both sides** — reading a project written before a field existed,
+ *  and accepting a value from the renderer without a second validator. */
 export function normalizeCaptionStyles(stored: unknown): CaptionStyles {
   const raw = asRecord(stored)
   return {

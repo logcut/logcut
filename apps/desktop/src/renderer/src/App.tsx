@@ -5,15 +5,9 @@ import { TooltipProvider } from './components/ui/tooltip'
 import EditorPage from './pages/EditorPage'
 import HomePage from './pages/HomePage'
 
-/**
- * Routing, and the settings dialog. Settings is a dialog rather than a route,
- * so opening it never unmounts the editor.
- *
- * It is held here rather than by each page because its entry point is the
- * application menu (see main/menu.ts), which is not part of any page. The
- * editor still opens it directly — the subtitle tab sends the user here when
- * no API key is configured — so it takes the opener as a prop.
- */
+/** Routing, and the settings dialog — **a dialog rather than a route, so
+ *  opening it never unmounts the editor**. Held here because its entry point is
+ *  the application menu, which belongs to no page (see App.md). */
 type Route = { name: 'home' } | { name: 'editor'; projectId: string }
 
 export default function App(): JSX.Element {

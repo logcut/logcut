@@ -26,11 +26,6 @@ function describePhase(phase: TranscribePhase): string {
   return phase === 'extracting' ? 'Extracting audio…' : 'Transcribing…'
 }
 
-/**
- * One setting per row: name above, control below at full width. The row draws
- * its own separator rather than the list drawing them, so a row that renders
- * conditionally never leaves a stray line behind.
- */
 /** A setting's name, with an optional hint. Shared by the rows in the list and
  *  the ones inside Advanced, which are laid out differently but named alike. */
 function FieldName({ label, hint }: { label: string; hint?: string }): JSX.Element {
@@ -57,6 +52,9 @@ function FieldName({ label, hint }: { label: string; hint?: string }): JSX.Eleme
   )
 }
 
+/** One setting per row: name above, control below at full width. **The row
+ *  draws its own separator**, so a conditionally rendered row never leaves a
+ *  stray line behind. */
 function Field({
   label,
   hint,

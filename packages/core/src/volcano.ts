@@ -57,15 +57,9 @@ function toUtterance(value: unknown): Utterance {
   }
 }
 
-/**
- * Turn a Volcano Engine ASR response into a transcript.
- *
- * **In the core, not beside the HTTP call**, because the second caller is an
- * archived response read back off disk when the line length changes —
- * re-splitting must not need the network.
- *
- * Ids are minted here: the provider has no stable id to carry over.
- */
+/** Turn a Volcano Engine ASR response into a transcript. **In the core, not
+ *  beside the HTTP call** — the second caller reads an archived response off
+ *  disk, and re-splitting must not need the network. Ids are minted here. */
 export function parseVolcanoResponse(response: unknown): Transcript {
   const body = (isObject(response) ? response : {}) as VolcanoResponse
   const utterances = body.result?.utterances

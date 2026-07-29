@@ -17,32 +17,16 @@ import type {
  * stay out of @logcut/core, which must remain platform-neutral.
  */
 
-/**
- * How the editor is arranged, remembered between sessions.
- *
- * Sizes are the pixels the user dragged to, saved as-is and **clamped on read
- * rather than on write** — a layout saved on a wide display has to still open
- * sanely on a narrow one, and the value the user chose is worth keeping for
- * when they are back on the big screen.
- *
- * The two open flags are here because the columns are part of the arrangement:
- * reopening on the same working setup is the point of remembering at all.
- */
+/** How the editor is arranged, remembered between sessions — see ipc.md. */
 export interface EditorLayout {
-  /** Side columns are pixels: a subtitle list wants the same width whatever
-   *  the screen is (see EditorPage.md). */
+  /** Side columns are pixels, **clamped on read rather than on write**. */
   chatWidth: number
   subtitlesWidth: number
-  /**
-   * The two flexible splits, each a fraction of what it divides — **never
-   * pixels** (see EditorPage.md). A pixel value reaching either of these is
-   * read as a ratio, and a panel asking for 649 times the row collapses every
-   * other one to nothing.
-   */
+  /** Each a fraction of what it divides, **never pixels**: a pixel value
+   *  reaching one of these is read as a ratio, and a panel asking for 649
+   *  times the row collapses every other one to nothing. */
   tabsRatio: number
   timelineRatio: number
-  /** The caption style panel's share of the subtitle column, the line list
-   *  taking the rest. A fraction like the two above, and for the same reason. */
   captionStyleRatio: number
   chatOpen: boolean
   subtitlesOpen: boolean
@@ -54,14 +38,9 @@ export interface SettingsStatus {
   apiKeyTail: string
 }
 
-/**
- * Bounds for the subtitle line length (ranges and their reasons: see
- * components/SubtitleTab.md).
- *
- * **Here rather than at either end of the bridge, because both need them and
- * they must agree**: the controls offer these ranges, and main clamps rather
- * than trusting what arrives.
- */
+/** Bounds for the subtitle line length. **Here rather than at either end of the
+ *  bridge, because both need them and they must agree** — the controls offer
+ *  these ranges and main clamps to them (see components/SubtitleTab.md). */
 export const MAX_CHARS_MIN = 8
 export const MAX_CHARS_SLIDER_MAX = 40
 export const MAX_CHARS_MAX = 200
@@ -108,13 +87,10 @@ export interface MediaAssetSummary {
   thumbnailUrl: string | null
   /** Row of frames for the timeline's media track; null until generated. */
   filmstripUrl: string | null
-  /** White-on-transparent audio envelope, coloured by CSS; null until generated. */
-  /**
-   * Whether an envelope exists to ask for. The samples themselves are fetched
-   * once per asset through `getWaveform` rather than ridden along here: they
-   * are two orders of magnitude larger than the rest of a summary, and this
-   * shape is re-sent on every project update.
-   */
+  /** Whether an envelope exists to ask for. **The samples never ride along
+   *  here** — they are fetched once per asset through `getWaveform`, being
+   *  orders of magnitude larger than the rest of a summary, which is re-sent on
+   *  every project update. */
   hasWaveform: boolean
   /** The file is no longer at `path`. */
   missing: boolean
@@ -170,10 +146,8 @@ export interface ImportMediaResult {
   rejected: { path: string; reason: ImportRejectReason }[]
 }
 
-/**
- * Outcome of changing the line length. Carries the re-split transcripts so the
- * renderer replaces them in one go instead of re-fetching each.
- */
+/** Carries the re-split transcripts so the renderer replaces them in one go
+ *  instead of re-fetching each. */
 export interface ResplitResult {
   project: ProjectDetail
   /** Re-split transcripts, keyed by asset id; only the ones that changed. */
@@ -192,47 +166,29 @@ export interface ExportSrtResult {
   savedPath?: string
 }
 
-/**
- * How a video export ended.
- *
- * **Both fields absent means the save dialog was dismissed** — a third outcome
- * distinct from cancelling the render, and the only one with nothing to report:
- * the user never got as far as starting anything.
- */
+/** **Both fields absent means the save dialog was dismissed** — a third outcome,
+ *  distinct from cancelling the render (see ipc.md). */
 export interface ExportVideoResult {
   savedPath?: string
   cancelled?: boolean
 }
 
-/**
- * Addressed by project like `TranscribeProgress`, and for the same reason: a
- * renderer with two projects open must be able to tell whose export this is.
- */
+/** Addressed by project like `TranscribeProgress`, and for the same reason. */
 export interface ExportProgress {
   projectId: string
   /** Monotonic, 0–100. */
   percent: number
 }
 
-/**
- * What this build can actually produce.
- *
- * **A list rather than a boolean**, because the dialog has to offer the codecs
- * that exist and no others. Empty means no hardware encoder at all, which today
- * means Linux — a project with captions cannot be exported there, though one
- * without them still can (see main/export.md).
- */
+/** What this build can produce. **A list rather than a boolean** — empty means
+ *  no hardware encoder at all (see ipc.md and main/export.md). */
 export interface ExportCapabilities {
   codecs: ExportCodec[]
 }
 
-/**
- * What an agent may ask the editor to do.
- *
- * **The one channel that runs main → renderer and back**; everything else on
- * this bridge is the renderer asking main. Payloads are core types unchanged
- * (see ipc.md and packages/core/src/commands/index.md).
- */
+/** **The one channel that runs main → renderer and back**; everything else on
+ *  this bridge is the renderer asking main. Payloads are core types unchanged
+ *  (see ipc.md and core/commands/index.md). */
 export type AgentRequest =
   | { kind: 'session' }
   | { kind: 'query'; query: UtteranceQuery }
@@ -254,18 +210,15 @@ export interface AgentSession {
   clips: AgentClip[]
 }
 
-/** **A result, not a rejection.** "No project open" and "that clip has no
- *  transcript yet" are ordinary states an agent reads and acts on — see
- *  ipc.md. */
-/**
- * What a batch did, without the document it did it to.
- *
- * **Never widen this back to `CommandResult`.** That carries the whole new
- * document — right for the editor, wrong for a wire whose far end is a model's
- * context window, where a thousand-line transcript would cross on every edit.
- */
+/** What a batch did, without the document it did it to. **Never widen this back
+ *  to `CommandResult`**: that carries the whole new document, which is right
+ *  for the editor and wrong for a wire whose far end is a model's context
+ *  window. */
 export type AgentDispatchResult = Omit<CommandResult, 'doc'>
 
+/** **A discriminated union, not exceptions.** "No project open" and "that clip
+ *  has no transcript yet" are ordinary states an agent reads and acts on — see
+ *  ipc.md. */
 export type AgentResponse =
   | { ok: true; kind: 'session'; session: AgentSession }
   | { ok: true; kind: 'query'; result: UtteranceQueryResult }
@@ -277,25 +230,19 @@ export type AgentResponse =
  * The plaintext API key never crosses this boundary.
  */
 export interface LogcutApi {
-  /**
-   * macOS draws its own traffic lights in the renderer, so the window actions
-   * have to come back over IPC. On other platforms the native title bar owns
-   * them and these are never called.
-   */
+  /** macOS draws its own traffic lights in the renderer, so the window actions
+   *  come back over IPC; elsewhere the native title bar owns them and these are
+   *  never called. */
   closeWindow(): Promise<void>
   minimizeWindow(): Promise<void>
   toggleMaximizeWindow(): Promise<void>
 
-  /**
-   * The application menu's Settings item was chosen. The dialog belongs to the
-   * renderer, so the menu can only ask. Returns an unsubscribe function.
-   */
+  /** The menu's Settings item was chosen — a command, not a state push (see
+   *  ipc.md). Returns an unsubscribe function. */
   onOpenSettings(callback: () => void): () => void
 
-  /**
-   * The Developer menu toggled React's owner stacks. Development builds only —
-   * in a packaged app the menu does not exist and this never fires.
-   */
+  /** **Development builds only** — in a packaged app that menu does not exist
+   *  and this never fires. Returns an unsubscribe function. */
   onSetOwnerStacks(callback: (on: boolean) => void): () => void
 
   getSettingsStatus(): Promise<SettingsStatus>
@@ -304,11 +251,8 @@ export interface LogcutApi {
   getSystemLocale(): Promise<string>
   /** The user's last chosen transcription language, or null if never set. */
   getLanguagePreference(): Promise<LanguageOption | null>
-  /**
-   * An asset's audio envelope: one byte per point, `PEAKS_PER_SECOND` of them
-   * per second (see main/ffmpeg.ts). Null when the asset has no audio or the
-   * envelope has not been built yet.
-   */
+  /** One byte per point, `PEAKS_PER_SECOND` of them per second (see
+   *  main/ffmpeg.ts). Null when there is no audio or no envelope yet. */
   getWaveform(projectId: string, assetId: string): Promise<Uint8Array | null>
 
   /** Persist the user's transcription language choice. */
@@ -316,11 +260,9 @@ export interface LogcutApi {
 
   /** The remembered editor arrangement, or null before one has been saved. */
   getEditorLayout(): Promise<EditorLayout | null>
-  /**
-   * Write the arrangement. Resetting is the same call with the defaults in it —
-   * there is no separate clear, because "no saved layout" and "the defaults
-   * saved" are read back identically.
-   */
+  /** **There is no separate reset** — "no saved layout" and "the defaults
+   *  saved" read back identically, so resetting is this call with the defaults
+   *  in it. */
   saveEditorLayout(layout: EditorLayout): Promise<void>
 
   /** Whether snapping is on, or null before the user has ever changed it —
@@ -346,54 +288,40 @@ export interface LogcutApi {
   addClip(projectId: string, assetId: string): Promise<ProjectDetail>
   /** Remove one clip. The asset stays in the library. */
   removeClip(projectId: string, clipId: string): Promise<ProjectDetail>
-  /**
-   * Replace the whole timeline. Undo restores an order, which appending
-   * cannot express.
-   */
+  /** Replace the whole timeline — undo restores an order, which appending
+   *  cannot express. */
   setTimeline(projectId: string, clips: { id: string; assetId: string }[]): Promise<ProjectDetail>
 
   /** null when this asset has never been recognized. */
   getTranscript(projectId: string, assetId: string): Promise<Transcript | null>
   /** Called after every edit; debounced and written atomically in main. */
   saveTranscript(projectId: string, assetId: string, transcript: Transcript): Promise<void>
-  /**
-   * Explicit user action, the only call that spends API credit.
-   * Throws API_KEY_MISSING / API_KEY_INVALID / NETWORK / ASR_FAILED.
-   */
+  /** **The only call that spends API credit.** Throws API_KEY_MISSING /
+   *  API_KEY_INVALID / NETWORK / ASR_FAILED. */
   transcribeAsset(
     projectId: string,
     assetId: string,
     options?: { force?: boolean; config?: TranscribeConfig }
   ): Promise<TranscribeResult>
-  /**
-   * Set the longest subtitle line and re-split every transcript that has an
-   * archived provider response. Local and free — it spends no API credit,
-   * which is the whole reason the response is archived.
-   */
+  /** Re-splits every transcript with an archived provider response. Local and
+   *  free — which is the whole reason the response is archived. */
   setMaxChars(projectId: string, maxChars: number): Promise<ResplitResult>
   /** Set how the captions look. Affects the preview at once; nothing is
    *  re-split and no transcript is touched. */
   setCaptionStyles(projectId: string, styles: CaptionStyles): Promise<ProjectDetail>
   /** Subscribe to transcription progress. Returns an unsubscribe function. */
   onTranscribeProgress(callback: (progress: TranscribeProgress) => void): () => void
-  /**
-   * A project changed behind the renderer's back — posters, filmstrips and
-   * waveforms are generated after the import call has already returned.
-   * Returns an unsubscribe function.
-   */
+  /** A project changed behind the renderer's back — posters, filmstrips and
+   *  waveforms are generated after the import call has returned. Returns an
+   *  unsubscribe function. */
   onProjectUpdated(callback: (projectId: string) => void): () => void
 
   /** Export an asset's transcript as SRT via a save dialog. Empty if cancelled. */
   exportSrt(projectId: string, assetId: string): Promise<ExportSrtResult>
 
-  /**
-   * Render the timeline to a video file, picked through a save dialog.
-   *
-   * Long enough to watch, so progress arrives on `onExportProgress` — but the
-   * outcome is this promise, not a terminal progress event. Throws
-   * TIMELINE_EMPTY / MEDIA_MISSING / NO_ENCODER, and whatever ffmpeg said when
-   * it failed.
-   */
+  /** Render the timeline to a video file. **The outcome is this promise, not a
+   *  terminal progress event** (see ipc.md). Throws TIMELINE_EMPTY /
+   *  MEDIA_MISSING / NO_ENCODER, and whatever ffmpeg said when it failed. */
   exportVideo(projectId: string): Promise<ExportVideoResult>
   /** Stop the export in flight. It resolves as cancelled, not as a failure. */
   cancelExport(): Promise<void>
@@ -417,13 +345,9 @@ export interface LogcutApi {
   /** Subscribe to updater state. Returns an unsubscribe function. */
   onUpdateState(callback: (state: UpdateState) => void): () => void
 
-  /**
-   * Answer agent requests for as long as an editor is on screen. Returns an
-   * unsubscribe function.
-   *
-   * **Registering is also what tells main there is anything to relay to**: with
-   * no handler, an agent's call is answered "no editor open" at once rather than
-   * waiting for a window that may never appear.
-   */
+  /** Answer agent requests for as long as an editor is on screen. **Registering
+   *  is also what tells main there is anything to relay to** — with no handler
+   *  an agent's call is answered "no editor open" at once, rather than waiting
+   *  for a window that may never appear. Returns an unsubscribe function. */
   onAgentRequest(handler: (request: AgentRequest) => AgentResponse): () => void
 }

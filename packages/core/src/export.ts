@@ -22,22 +22,12 @@ export interface ExportInput {
   clips: ExportClip[]
   /** The picture every clip is fitted into, in pixels. */
   frame: { width: number; height: number }
-  /**
-   * The ASS document to burn, as a **bare filename** resolved against the
-   * working directory ffmpeg is spawned in — never a path.
-   *
-   * A filename reaching a filtergraph is read through three levels of quoting,
-   * where `:` and `\` are both syntax; `C:\Users\…` is therefore unspellable
-   * without escaping that differs per level. Handing over a name of known-safe
-   * characters and letting the caller's `cwd` supply the directory removes the
-   * problem rather than solving it (see export.md).
-   */
+  /** **A bare filename, never a path** — resolved against the `cwd` ffmpeg is
+   *  spawned in. A filtergraph reads it through three levels of quoting where
+   *  `:` and `\` are both syntax, so `C:\Users\…` is unspellable (export.md). */
   subtitleFile: string | null
-  /**
-   * Codec arguments, in full (`-c:v h264_videotoolbox -b:v 8000k …`). Which
-   * encoders exist is a fact about the machine doing the export, so the core
-   * takes them as data rather than knowing any encoder's name.
-   */
+  /** Codec arguments in full. **The core knows no encoder's name** — which ones
+   *  exist is a fact about the machine doing the export. */
   videoArgs: string[]
   audioArgs: string[]
   /** Frames per second to normalize every clip to, or 0 to leave them alone. */
@@ -61,12 +51,8 @@ function audioFormat(audio: ExportInput['audio']): string {
   return `aformat=sample_fmts=fltp:sample_rates=${audio.sampleRate}:channel_layouts=${layout}`
 }
 
-/**
- * Every caption on the timeline, on the timeline's clock.
- *
- * An utterance is timed against its own asset; a clip is where that asset was
- * laid down. The offset is the whole of the difference between the two.
- */
+/** Every caption on the timeline, on the timeline's clock — an utterance is
+ *  timed against its own asset, and the clip's offset is the difference. */
 export function captionLinesFor(
   clips: CaptionClip[],
   transcripts: Readonly<Record<string, Transcript>>

@@ -4,16 +4,10 @@ import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import type { AgentDispatchResult, AgentRequest, AgentResponse, AgentSession } from '../shared/ipc'
 
-/**
- * The way in for a caller with no window (see agent-bridge.md).
- *
- * **Main holds no document of its own, deliberately.** The renderer is not a
- * cache of an authoritative copy over here; it *is* the copy, and this module
- * only carries questions to it and answers back. That is what keeps an agent's
- * edits and the user's edits in one undo history with nothing to keep in sync.
- *
- * The cost is that an editor must be on screen.
- */
+/** The way in for a caller with no window. **Main holds no document of its own,
+ *  deliberately** — the renderer *is* the copy, which is what keeps an agent's
+ *  edits and the user's in one undo history. The cost is that an editor must be
+ *  on screen (see agent-bridge.md). */
 
 /**
  * Long enough for a renderer busy with a large transcript, short enough that a

@@ -1,13 +1,7 @@
-/**
- * How near the pointer has to come before a drag is pulled onto a landmark,
- * **in screen pixels**.
- *
- * It is a distance the hand can hold, so it is quoted where the hand is — on
- * screen — and every caller converts it into whatever it is dragging: the
- * timeline divides by its scale to get milliseconds, the caption overlay by
- * the picture's size to get a share of it. One number, because two would drift
- * and a drag would then feel different depending on what was being dragged.
- */
+/** How near the pointer has to come before a drag is pulled onto a landmark,
+ *  **in screen pixels** — a distance the hand can hold, quoted where the hand
+ *  is. **One number for every caller**, or a drag would feel different
+ *  depending on what was being dragged (see snap.md). */
 export const SNAP_TOLERANCE_PX = 8
 
 /**

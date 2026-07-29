@@ -7,15 +7,9 @@ interface TitleBarProps {
   children: ReactNode
 }
 
-/**
- * Every page carries its own title bar, because on macOS the window has none
- * (`titleBarStyle: 'hidden'`). **The strip must stay draggable, or the window
- * cannot be moved at all**, and interactive children must opt out with
- * `no-drag`.
- *
- * Height comes from --titlebar-height. WindowControls renders nothing off
- * macOS.
- */
+/** Every page carries its own title bar, the macOS window having none.
+ *  **The strip must stay draggable, or the window cannot be moved at all** —
+ *  interactive children opt out with `no-drag`. */
 export default function TitleBar({ className, children }: TitleBarProps): JSX.Element {
   return (
     <header

@@ -1,13 +1,8 @@
 import { isSupportedMediaFile } from '../../../shared/media'
 
-/**
- * The drag type that moves an asset from the media library onto the timeline.
- *
- * A custom type rather than 'text/plain' so the timeline can tell an asset
- * apart from any other drag — a file dragged in from Finder, or selected text
- * — with dataTransfer.types alone, which is all the dragover event is allowed
- * to see.
- */
+/** The drag type that moves an asset from the library onto the timeline. **A
+ *  custom type, not 'text/plain'**, so `dragover` can tell it apart from a
+ *  Finder file with `dataTransfer.types` alone — all it is allowed to see. */
 export const MEDIA_ASSET_DRAG = 'application/x-logcut-asset'
 
 /** Either the importable paths, or the reason there are none. */
@@ -16,15 +11,10 @@ export interface FileDrop {
   error: string | null
 }
 
-/**
- * Resolve a drop from Finder into absolute paths, keeping only media files.
- *
- * Lives here rather than in whichever component drew the drop target: the
- * whole media panel accepts files, both as the empty-state import surface and
- * as the populated grid, and the two must reject the same things with the same
- * words. `getPathForFile` is Electron's webUtils — a File has no usable path
- * without it.
- */
+/** Resolve a drop from Finder into absolute paths, keeping only media files.
+ *  Shared so the empty state and the populated grid reject the same things with
+ *  the same words. `getPathForFile` is Electron's webUtils — a File has no
+ *  usable path without it. */
 export function fileDropOf(dataTransfer: DataTransfer): FileDrop {
   const files = [...dataTransfer.files]
   if (files.length === 0) return { paths: [], error: null }

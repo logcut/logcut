@@ -17,16 +17,9 @@ export type AsrState =
   | { kind: 'running'; phase: TranscribePhase }
   | { kind: 'failed'; message: string; apiKeyProblem: boolean }
 
-/**
- * Everything the editor can change, as of one moment.
- *
- * Snapshots rather than inverse operations: transcripts are immutable, so an
- * entry costs a handful of references however long the transcript is, and
- * there is no per-command undo logic to get wrong. Two hundred entries of a
- * thousand-line transcript is still two hundred pointers.
- *
- * Recognition is **not** in here — see `record`.
- */
+/** Everything the editor can change, as of one moment. **Snapshots rather than
+ *  inverse operations** — transcripts are immutable, so an entry costs a
+ *  handful of references however long they are (see useProject.md). */
 interface EditableState {
   transcripts: Record<string, Transcript | null>
   clips: { id: string; assetId: string }[]
@@ -41,14 +34,8 @@ function sameClips(a: EditableState['clips'], b: EditableState['clips']): boolea
   return a.length === b.length && a.every((clip, index) => clip.id === b[index]?.id)
 }
 
-/**
- * Drop the assets that have no transcript yet.
- *
- * On screen "not recognized" and "recognized" share one map, with null for the
- * former, because the editor has to render both. The core takes only the ones
- * that exist: a command naming an absent asset reports no change, which is the
- * same answer without a null to carry through every signature.
- */
+/** Drop the assets that have no transcript yet: the editor needs one map with
+ *  nulls in it, the core takes only what exists. */
 function present(transcripts: Record<string, Transcript | null>): Record<string, Transcript> {
   const kept: Record<string, Transcript> = {}
   for (const [assetId, transcript] of Object.entries(transcripts)) {
@@ -85,15 +72,9 @@ export interface UseProjectResult {
    * the asset ids left alone for want of an archived provider response.
    */
   setMaxChars(maxChars: number): Promise<string[]>
-  /**
-   * Change how the captions look. Joins the undo history, because these are
-   * dragged and rotated on the picture and an object moved on a canvas is
-   * expected to come back with Cmd+Z.
-   *
-   * `record: false` for the middle of a gesture: a drag writes on every frame,
-   * and recording each one would bury the history under a single movement.
-   * The first frame records, the rest do not.
-   */
+  /** Change how the captions look. Joins the undo history — these are dragged
+   *  on the picture. **`record: false` for the middle of a gesture**: the first
+   *  frame records, the rest do not (see useProject.md). */
   setCaptionStyles(styles: CaptionStyles, options?: { record?: boolean }): Promise<void>
   /**
    * The single funnel for every edit: applies a batch, records one history entry,
@@ -103,12 +84,9 @@ export interface UseProjectResult {
    * several commands and must undo as one (see useProject.md).
    */
   dispatch(commands: EditCommand[], options?: { record?: boolean }): CommandResult
-  /**
-   * The document the core sees, for callers that read rather than edit — the
-   * agent bridge queries against exactly what a command would be applied to.
-   * A function rather than a value: it is read at the moment of the question,
-   * not captured when a component last rendered.
-   */
+  /** The document the core sees, for callers that read rather than edit. **A
+   *  function rather than a value**: read at the moment of the question, not
+   *  captured when a component last rendered. */
   doc(): EditDocument
   undo(): void
   redo(): void
@@ -154,13 +132,11 @@ export function useProject(projectId: string): UseProjectResult {
     }
   }, [projectId])
 
-  // One fetch per asset on the timeline, replacing the map wholesale so a clip
-  // that was removed does not leave its transcript behind.
-  //
-  // It deliberately does not clear the history: removing a clip is what makes
-  // this run, and wiping here would take the undo for that very removal with
-  // it. Undo saves to disk before it swaps the timeline, so the refetch this
-  // triggers reads back exactly what was restored.
+  // Replaces the map wholesale so a removed clip leaves no transcript behind.
+  // **It deliberately does not clear the history**: removing a clip is what
+  // makes this run, and wiping here would take the undo for that very removal
+  // with it. Undo saves to disk before it swaps the timeline, so the refetch
+  // this triggers reads back exactly what was restored.
   useEffect(() => {
     let cancelled = false
     const ids = assetKey === '' ? [] : assetKey.split(',')
@@ -297,10 +273,9 @@ export function useProject(projectId: string): UseProjectResult {
       try {
         const result = await window.logcut.transcribeAsset(projectId, assetId, { force, config })
         setTranscripts((current) => ({ ...current, [assetId]: result.transcript }))
-        // Recognition wipes the history rather than joining it. Undoing it
-        // would mean restoring "no transcript at all", which is a file that
-        // has to be deleted rather than written, and every older entry
-        // describes lines this run has just replaced.
+        // **Recognition wipes the history rather than joining it** — undoing it
+        // would mean restoring "no transcript at all", a file that has to be
+        // deleted rather than written (see useProject.md).
         setPast([])
         setFuture([])
         setAsr({ kind: 'idle' })
@@ -331,17 +306,12 @@ export function useProject(projectId: string): UseProjectResult {
       setProject((current) => (current ? { ...current, captionStyles: styles } : current))
       try {
         const detail = await window.logcut.setCaptionStyles(projectId, styles)
-        // **Only the styling comes back out of the reply.** Main returns the
-        // whole project, and adopting it wholesale replaces `timeline` and
-        // `assets` with freshly deserialized arrays — which re-runs
-        // `layUtterances` over every subtitle and re-renders the whole
-        // timeline, once per frame of a colour drag, for a field neither of
-        // them contains.
-        //
-        // Compared rather than assigned for the same reason: main normalizes
-        // what it stores, and an out-of-range value has to come back and win,
-        // but the answer is identical on every frame that was already in
-        // range.
+        // **Only the styling comes back out of the reply**, and compared rather
+        // than assigned. Adopting the whole project replaces `timeline` and
+        // `assets` with freshly deserialized arrays, which re-runs
+        // `layUtterances` over every subtitle once per frame of a colour drag —
+        // for a field neither of them contains. The comparison still lets main's
+        // normalization win when it actually changed something.
         setProject((current) =>
           current && JSON.stringify(current.captionStyles) !== JSON.stringify(detail.captionStyles)
             ? { ...current, captionStyles: detail.captionStyles }
@@ -360,15 +330,9 @@ export function useProject(projectId: string): UseProjectResult {
     [guard, projectId]
   )
 
-  /**
-   * Change the longest subtitle line and re-split what can be re-split.
-   *
-   * **Clears the history rather than joining it**: every older entry describes
-   * lines that no longer exist, and main has already written the new ones.
-   *
-   * Returns the assets left alone for want of an archived provider response, so
-   * the caller can name them instead of letting the user wonder.
-   */
+  /** **Clears the history rather than joining it**: every older entry describes
+   *  lines that no longer exist. Returns the assets left alone for want of an
+   *  archived provider response. */
   const setMaxChars = useCallback(
     async (maxChars: number): Promise<string[]> => {
       const result = await window.logcut.setMaxChars(projectId, maxChars)
@@ -381,13 +345,8 @@ export function useProject(projectId: string): UseProjectResult {
     [projectId]
   )
 
-  /**
-   * Write a state back to disk and to the screen.
-   *
-   * Only what actually differs is persisted: a transcript whose reference is
-   * unchanged was not part of this step, and rewriting it would cost a file
-   * write per undo per asset for nothing.
-   */
+  /** Write a state back to disk and to the screen. **Only what actually differs
+   *  is persisted** — an unchanged reference was not part of this step. */
   const restore = useCallback(
     async (target: EditableState): Promise<void> => {
       const current = stateRef.current

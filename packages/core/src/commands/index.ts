@@ -16,12 +16,12 @@ export type EditCommand = SubtitleCommand
 export type CommandOutcome = SubtitleOutcome
 
 /**
- * Everything a command may read or write, and nothing else.
+ * Everything a command may read or write, and nothing else: the transcripts of
+ * the assets in play, by asset id.
  *
- * The transcripts of the assets currently in play, by asset id. An asset with
- * no transcript is simply absent — commands naming it report no change rather
- * than throwing, because "recognize this clip first" is a normal state of the
- * editor and not an error at this layer.
+ * **An asset with no transcript is simply absent** — commands naming it report
+ * no change rather than throwing, because "recognize this clip first" is a
+ * normal state of the editor and not an error at this layer.
  */
 export interface EditDocument {
   transcripts: Readonly<Record<string, Transcript>>
@@ -31,9 +31,8 @@ export interface CommandResult {
   /** The same object when nothing changed, so callers can compare by identity. */
   doc: EditDocument
   /**
-   * Asset ids whose transcript is a new reference. This is the list to persist:
-   * anything absent from it was not touched, and rewriting it would cost a file
-   * write for nothing.
+   * Asset ids whose transcript is a new reference. **This is the list to
+   * persist** — anything absent from it was not touched.
    */
   changed: string[]
   /** One per command given, in the order they were given. */

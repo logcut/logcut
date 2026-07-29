@@ -2,14 +2,8 @@ import { randomId } from './id.ts'
 import type { CaptionStyle } from './caption-style.ts'
 import type { Transcript, Utterance } from './types.ts'
 
-/**
- * Index of the first utterance still running at `timeMs`, or `length` when the
- * time is past the last one.
- *
- * **Requires utterances sorted by `start` and non-overlapping** — which is how
- * the ASR returns them and how segmentation preserves them. Binary search
- * because the lookups on top of this run on every timeupdate.
- */
+/** Index of the first utterance still running at `timeMs`, or `length` past the
+ *  last one. **Requires utterances sorted by `start` and non-overlapping.** */
 function firstEndingAfter(utterances: Utterance[], timeMs: number): number {
   let low = 0
   let high = utterances.length
@@ -21,14 +15,9 @@ function firstEndingAfter(utterances: Utterance[], timeMs: number): number {
   return low
 }
 
-/**
- * Index of the utterance covering `timeMs`, or -1 in a gap or outside the
- * transcript. **`end` is exclusive**, so the boundary between two adjacent
- * utterances belongs to the later one.
- *
- * "Which line is playing". For resolving a click use
- * `findNearestUtteranceIndex` — the split is deliberate, see transcript.md.
- */
+/** "Which line is playing", or -1 in a gap. **`end` is exclusive**, so a shared
+ *  boundary belongs to the later line. For resolving a click use
+ *  `findNearestUtteranceIndex` — **the split is deliberate** (transcript.md). */
 export function findUtteranceIndexAt(utterances: Utterance[], timeMs: number): number {
   const index = firstEndingAfter(utterances, timeMs)
   const utterance = utterances[index]
@@ -52,16 +41,9 @@ export function findNearestUtteranceIndex(utterances: Utterance[], timeMs: numbe
   return timeMs - previous.end <= candidate.start - timeMs ? index - 1 : index
 }
 
-/** Return a new transcript with one utterance's text replaced. **`words` are
- *  left untouched**: they carry the original ASR timing anchors, while
- *  `utterance.text` is the source of truth for display and SRT export. */
-/**
- * Merge a patch into one line's own styling.
- *
- * A merge rather than a replacement: the panel sends the field that changed,
- * and the rest of this line's overrides have to survive it. Returns the same
- * transcript when nothing differs, so a no-op costs no undo entry.
- */
+/** **A merge, not a replacement**: the panel sends only the field that changed
+ *  and this line's other overrides have to survive it. Returns the same
+ *  transcript when nothing differs, so a no-op costs no undo entry. */
 export function setUtteranceStyle(
   transcript: Transcript,
   id: string,
@@ -85,17 +67,11 @@ export function setUtteranceStyle(
  *
  * The line is a block on a track, and the playhead divides the block — not what
  * it says. So the halves differ only in where they start and end; text, words,
- * speaker and styling all go across intact. Retiming one, restyling it,
- * rewriting it or deleting it is the point of having cut.
- *
- * `words` cross whole rather than being dealt out between the halves. They are
- * the recording's timing anchors and the recording did not change; re-segmenting
- * reads the archived provider response, never these. Dividing them would also
- * leave each half's words describing less than its own text.
+ * speaker and styling all go across intact, `words` included — they are the
+ * recording's timing anchors and the recording did not change.
  *
  * Returns the same transcript when `timeMs` is on or outside the line's own
- * bounds — a half of zero length is not a line — so such a cut costs no undo
- * entry. See transcript.md for why this is not a cut on a word boundary.
+ * bounds, so such a cut costs no undo entry. See transcript.md.
  */
 export function splitUtterance(transcript: Transcript, id: string, timeMs: number): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
@@ -114,6 +90,8 @@ export function splitUtterance(transcript: Transcript, id: string, timeMs: numbe
   return { ...transcript, utterances }
 }
 
+/** **`words` are left untouched**: they carry the original ASR timing anchors,
+ *  while `utterance.text` is the source of truth for display and SRT export. */
 export function setUtteranceText(transcript: Transcript, id: string, text: string): Transcript {
   return {
     ...transcript,

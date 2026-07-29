@@ -36,14 +36,11 @@ export function registerMediaPath(filePath: string): string {
 /**
  * Handler for the logcut-media:// protocol.
  *
- * The whole requested range is streamed. Capping the reply at a chunk size
- * and letting Chromium ask for the rest does not work: on this path it takes
- * Content-Length as the size of the entire resource and ignores the total in
- * Content-Range, so it reports the file as fully buffered, never issues a
- * second request, and the decoder fails with PIPELINE_ERROR_DECODE the moment
- * playback runs past the bytes it was handed — a 20 Mbit/s file died 3s in on
- * an 8 MiB cap. Memory stays bounded because Chromium applies backpressure,
- * suspending the read once it has buffered enough.
+ * **The whole requested range is streamed; capping it at a chunk size does not
+ * work.** On this path Chromium reads Content-Length as the size of the entire
+ * resource, never issues a second request, and the decoder dies with
+ * PIPELINE_ERROR_DECODE once playback passes the bytes it was handed. Memory
+ * stays bounded by Chromium's own backpressure (see media.md).
  */
 export function handleMediaRequest(request: Request): Response {
   const url = new URL(request.url)

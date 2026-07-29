@@ -3,18 +3,11 @@ import { extendTailwindMerge } from 'tailwind-merge'
 
 /**
  * tailwind-merge ships Tailwind's *stock* scales and knows nothing about the
- * ones registered in styles.css. Every semantic utility therefore has to be
- * declared here, or merging silently gets it wrong:
+ * ones registered in styles.css, so every semantic utility has to be declared
+ * here or merging silently gets it wrong — `text-label` reads as a colour and
+ * loses to one, `h-*`/`p-*`/`gap-*` conflicts go unresolved (see utils.md).
  *
- *  - `text-*` falls through to the text-colour group, so `text-label` and
- *    `text-primary-foreground` look like the same property and the colour,
- *    coming later, deletes the size. That is why every default button rendered
- *    at the inherited 16px however often the type scale was adjusted.
- *  - `h-*` / `p-*` / `gap-*` are simply unknown, so real conflicts are not
- *    resolved at all and both classes survive — which one applies is then down
- *    to the order Tailwind happened to emit them in.
- *
- * Keep these lists in step with the `@theme inline` block in styles.css.
+ * **Keep these lists in step with the `@theme inline` block in styles.css.**
  */
 const TEXT_ROLES = ['caption', 'label', 'body', 'body-lg', 'h3', 'h2', 'h1', 'display', 'timecode']
 

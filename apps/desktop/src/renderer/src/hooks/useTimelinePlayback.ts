@@ -17,18 +17,10 @@ export interface TimelinePlayback {
   advance(): void
 }
 
-/**
- * Plays a list of clips through one `<video>` element.
- *
- * A media element holds exactly one file, so a timeline of several clips is
- * really one element whose `src` is swapped at each boundary. Everything here
- * exists to keep that swap invisible: which clip is loaded, where the element
- * should resume once the new file reports its metadata, and whether it was
- * playing at the time.
- *
- * Timeline time is the only currency crossing this boundary. Callers never see
- * element time, because it restarts at zero on every clip.
- */
+/** Plays a list of clips through one `<video>` element, whose `src` is swapped
+ *  at each boundary. **Timeline time is the only currency crossing this
+ *  boundary** — element time restarts at zero on every clip, and callers never
+ *  see it (see useTimelinePlayback.md). */
 export function useTimelinePlayback(
   videoRef: RefObject<HTMLVideoElement | null>,
   clips: TimelineClipSummary[],

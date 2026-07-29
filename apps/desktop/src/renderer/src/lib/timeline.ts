@@ -21,15 +21,9 @@ export function pickTickInterval(scale: number, minLabelPx = 72): number {
   return TICK_STEPS_MS[TICK_STEPS_MS.length - 1] as number
 }
 
-/**
- * Tick marks in `[fromMs, toMs]`, aligned to whole multiples of `interval`.
- *
- * A range rather than "from zero to the end" because the ruler only ever draws
- * the visible window: zoomed all the way in that is a few dozen labels out of
- * tens of thousands, and the range keeps the loop proportional to what is
- * drawn. It also lets the ruler run past the media, which is what fills the
- * empty track to the right once the view is zoomed out below fit-to-width.
- */
+/** Tick marks in `[fromMs, toMs]`, aligned to whole multiples of `interval`.
+ *  **A range rather than "zero to the end"**: it keeps the loop proportional to
+ *  what is drawn, and lets the ruler run past the media (see lib/timeline.md). */
 export function tickTimes(fromMs: number, toMs: number, interval: number): number[] {
   if (interval <= 0 || toMs < fromMs) return []
   const times: number[] = []
@@ -51,20 +45,12 @@ export interface SubtitleBlock {
 /**
  * One block per line, laid out along the strip.
  *
- * **Lines are never folded together.** A merged bar is a drawing of something
- * that is not there: zoomed out it showed one block where several lines sat,
- * and zooming in split it back apart with room to spare, so the track could
- * not be read as a count of anything. Blocks now only ever get narrower.
+ * **Lines are never folded together, and blocks only ever get narrower.**
+ * Overlap is prevented by clamping rather than by merging or widening, so
+ * `minPx` is a floor the clamp is allowed to beat — see lib/timeline.md.
  *
- * Not overlapping is arranged by clamping instead: a block may not reach past
- * where the next one starts, less a hairline. So the width falls out of the
- * room actually available, and `minPx` is a floor for visibility that the
- * clamp is allowed to beat — sub-pixel is the honest answer at that density,
- * and no widening means no way to run into a neighbour.
- *
- * Only what falls inside `[visibleFromPx, visibleToPx]` is built. Zoomed in,
- * an hour of speech is thousands of lines and a screenful is dozens; the list
- * is sorted, so the scan stops at the first line past the window.
+ * Only what falls inside `[visibleFromPx, visibleToPx]` is built; the list is
+ * sorted, so the scan stops at the first line past the window.
  */
 export function subtitleBlocks(
   utterances: Utterance[],

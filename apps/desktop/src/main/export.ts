@@ -19,10 +19,9 @@ import * as projects from './projects'
 /**
  * What `SYSTEM_FONT` becomes on the way into the picture.
  *
- * libass takes one family name, not a stack, so the CJK entry of the renderer's
- * font stack is the one to pick: transcripts here are largely Chinese, and a
- * face without those glyphs would burn in as empty boxes. Latin text renders
- * from these families too, so nothing is lost by choosing for the harder case.
+ * **libass takes one family name, not a stack**, so the CJK entry is the one to
+ * pick — a face without those glyphs burns in as empty boxes, and Latin text
+ * renders from these families too.
  */
 const SYSTEM_FONTS: Record<string, string> = {
   darwin: 'PingFang SC',
@@ -33,13 +32,8 @@ const DEFAULT_SYSTEM_FONT = 'Noto Sans CJK SC'
 /** The canvas when the first clip could not be probed at all. */
 const FALLBACK_FRAME = { width: 1920, height: 1080 }
 
-/**
- * Everything the encoder is told, from the settings and the canvas.
- *
- * The bitrate is derived from the canvas when the user has not typed one, which
- * is the default: a number chosen for 1080p is the wrong number for 4K, and the
- * dialog shows the derived value rather than leaving the field empty.
- */
+/** Everything the encoder is told. The bitrate is derived from the canvas
+ *  unless one was typed — a number chosen for 1080p is wrong for 4K. */
 function videoArgsFor(
   encoder: string,
   settings: ExportSettings,

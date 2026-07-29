@@ -60,13 +60,9 @@ function assAlpha(opacityPct: number): string {
   return `&H${pad(transparent.toString(16).toUpperCase(), 2)}&`
 }
 
-/**
- * Braces open an override block, so text carrying one would be read as markup
- * rather than shown. Newlines end the event outright.
- *
- * A lone backslash is left alone: ASS has no escape for it, and the only
- * sequences that mean anything are `\N`, `\n` and `\h`.
- */
+/** Braces open an override block and newlines end the event outright. A lone
+ *  backslash is left alone — ASS has no escape for it, and only `\N`, `\n` and
+ *  `\h` mean anything. */
 function assText(text: string): string {
   return text
     .replace(/\{/g, '\\{')
@@ -74,29 +70,15 @@ function assText(text: string): string {
     .replace(/\r\n|\r|\n/g, '\\N')
 }
 
-/**
- * Which pass of a caption an event is.
- *
- * **No two of these can be one event.** Under `BorderStyle: 3` the outline
- * colour *is* the plate's fill and the border widths *are* its padding, so
- * asking that same event for a stroke only repaints the box — measured, and the
- * box came out in the stroke's colour. The shadow is separate for a second
- * reason: `\blur` takes the whole event, glyphs and border with it, so a
- * blurred shadow is only a blurred shadow while it is alone on its event.
- *
- * Painted in this order, bottom first.
- */
+/** Which pass of a caption an event is, painted in this order, bottom first.
+ *  **No two of these can be one event** — under `BorderStyle: 3` the outline
+ *  colour *is* the plate's fill, and `\blur` takes the whole event with it (see
+ *  ass.md). */
 type Layer = 'plate' | 'shadow' | 'text'
 
-/**
- * The passes a caption needs, bottom to top.
- *
- * **Exactly one of them draws the letterforms** — `text`, always present. The
- * plate could be made to carry them too, and once did, which saved an event
- * whenever there was no stroke; it stops working the moment a shadow has to go
- * between the plate and the type, and a rule with an exception in it is the
- * kind that gets applied to the wrong branch later.
- */
+/** The passes a caption needs, bottom to top. **Exactly one of them draws the
+ *  letterforms** — `text`, always present; letting the plate carry them too
+ *  breaks the moment a shadow has to go between the plate and the type. */
 function layersFor(style: CaptionStyle): Layer[] {
   return [
     ...(style.background ? (['plate'] as const) : []),
@@ -153,11 +135,9 @@ function overrides(style: CaptionStyle, input: AssInput, layer: Layer): string {
         : layer === 'shadow'
           ? [
               // **The shadow of stroked type is stroked too**, in the shadow's
-              // own colour: what casts the shadow is the silhouette, and the
-              // stroke is part of it. CSS agrees — a `text-shadow` is taken
-              // from the painted glyph, `-webkit-text-stroke` included — so
-              // leaving this off would give the burn a visibly thinner shadow
-              // than the preview at any real stroke width.
+              // own colour: what casts it is the silhouette, stroke included.
+              // CSS agrees, so leaving this off makes the burn's shadow
+              // visibly thinner than the preview at any real stroke width.
               `\\3c${assColour(style.shadowColor)}`,
               `\\3a${assAlpha(style.shadowOpacityPct)}`,
               `\\bord${num(captionLengthFor(style.outlineWidth, height))}`
@@ -210,17 +190,10 @@ const STYLE_LINES = [
 
 const STYLE_NAME: Record<Layer, string> = { plate: 'Plate', shadow: 'Stroke', text: 'Stroke' }
 
-/**
- * Serialize captions as an ASS document for ffmpeg's `ass` filter.
- *
- * The mapping mirrors the preview overlay field for field — that correspondence
- * is the feature, so a change to either side is a change to both.
- *
- * Three things the preview can express and a burn cannot: line spacing, which
- * has no ASS equivalent at all; `backgroundRadius`, because the opaque box is
- * square; and `align`, whose only expression would be an anchor that moves the
- * block off the centre it is stored at (see ass.md).
- */
+/** Serialize captions as an ASS document for ffmpeg's `ass` filter. **The
+ *  mapping mirrors the preview field for field — that correspondence is the
+ *  feature**, so a change to either side is a change to both. The three things
+ *  a burn cannot express are listed in ass.md. */
 export function toAss(input: AssInput): string {
   const resolved = input.lines.map((line) => ({
     line,

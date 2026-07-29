@@ -1,15 +1,10 @@
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
-/**
- * Drives the playhead at frame rate without going through React.
- *
- * `timeupdate` only fires about four times a second — enough to highlight the
- * current subtitle, far too coarse for a marker sliding across the timeline.
- * The callback here runs inside requestAnimationFrame while playing and is
- * expected to write to the DOM directly; routing it through state would mean a
- * re-render every frame.
- */
+/** Drives the playhead at frame rate without going through React — `timeupdate`
+ *  is ~4Hz, far too coarse for a sliding marker. **The callback is expected to
+ *  write to the DOM directly**; routing it through state would be a re-render
+ *  every frame. */
 export function usePlaybackClock(
   videoRef: RefObject<HTMLVideoElement | null>,
   onTick: (timeMs: number) => void,

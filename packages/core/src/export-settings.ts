@@ -6,14 +6,9 @@ export type ExportQuality = 'high' | 'medium' | 'low'
 
 export type AudioChannels = 1 | 2
 
-/**
- * What the export dialog holds, and what a project remembers between exports.
- *
- * **Zero means "follow the source" for the three sizing fields.** They are the
- * defaults, and they are the only values that stay right when the media
- * changes: a project set to 1920×1080 because that is what was imported would
- * otherwise keep upscaling once a 4K clip replaces it.
- */
+/** What the export dialog holds, and what a project remembers between exports.
+ *  **Zero means "follow the source" for the three sizing fields** — the only
+ *  values that stay right when the media changes (see export-settings.md). */
 export interface ExportSettings {
   /** Canvas, or 0 × 0 to take the first clip's. */
   width: number
@@ -61,14 +56,9 @@ export const AUDIO_SAMPLE_RATE_CHOICES = [44_100, 48_000]
 export const AUDIO_BITRATE_KBPS = { min: 64, max: 512 }
 export const VIDEO_BITRATE_KBPS = { min: 500, max: 100_000 }
 
-/**
- * Bits per pixel per second at each quality, before the codec has its say.
- *
- * `medium` lands 1080p30 at about 8 Mbit/s, the conventional shape for delivery
- * H.264 at that size; the other two are the same picture with more and less
- * room. Not exposed as raw numbers anywhere — the dialog offers the three words
- * and the bitrate they produce.
- */
+/** Bits per pixel per second at each quality, before the codec has its say.
+ *  `medium` lands 1080p30 at about 8 Mbit/s. **Never exposed as raw numbers** —
+ *  the dialog offers the three words and the bitrate they produce. */
 const BITS_PER_PIXEL: Record<ExportQuality, number> = {
   high: 0.006,
   medium: 0.004,
@@ -79,13 +69,9 @@ const BITS_PER_PIXEL: Record<ExportQuality, number> = {
  *  bitrate would quietly spend the saving rather than take it. */
 const CODEC_FACTOR: Record<ExportCodec, number> = { h264: 1, hevc: 0.6 }
 
-/**
- * The bitrate a canvas is worth at this quality, in kbit/s.
- *
- * Lives here rather than in the app because the dialog shows the number before
- * anything is exported, and a second implementation of it would eventually
- * disagree with the one that runs.
- */
+/** The bitrate a canvas is worth at this quality, in kbit/s. **In core because
+ *  the dialog shows the number before anything is exported** — a second
+ *  implementation would eventually disagree with the one that runs. */
 export function deriveBitrateKbps(
   width: number,
   height: number,
@@ -109,14 +95,8 @@ function readChoice<T>(value: unknown, choices: readonly T[], fallback: T): T {
   return choices.includes(value as T) ? (value as T) : fallback
 }
 
-/**
- * Fill in whatever was missing and drop what does not belong.
- *
- * Runs on both sides of the disk, like `normalizeCaptionStyles` and for the
- * same reason: it has to open a project written before this field existed, and
- * the identical guarantee makes a value arriving from the renderer safe to
- * store without a second validator.
- */
+/** Fill in whatever was missing and drop what does not belong. **Runs on both
+ *  sides of the disk**, like `normalizeCaptionStyles` and for the same reason. */
 export function normalizeExportSettings(stored: unknown): ExportSettings {
   const raw: Record<string, unknown> =
     typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {}

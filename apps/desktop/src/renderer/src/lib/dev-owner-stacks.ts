@@ -3,17 +3,13 @@ import React from 'react'
 /**
  * React's owner stacks, switchable at runtime.
  *
- * They answer "which JSX wrote this element" — the thing you want when a React
- * warning names a component but not the line that produced it. React implements
- * them by calling `console.createTask()` **once per element created**, and
- * capturing a stack that many times is the single most expensive thing the
- * renderer does in development: switching them off roughly halves the time this
- * app spends opening a panel, and takes a threefold run-to-run variance with it
- * (measurements in components/SubtitleList.md).
+ * React implements them by calling `console.createTask()` **once per element
+ * created**, which is the single most expensive thing the renderer does in
+ * development (measurements in components/SubtitleList.md).
  *
- * **StrictMode is untouched.** Double rendering and the effect checks live in
- * the reconciler; owner tracking lives in the JSX runtime. Nothing here changes
- * how many times anything renders.
+ * **StrictMode is untouched.** Double rendering lives in the reconciler, owner
+ * tracking in the JSX runtime; nothing here changes how many times anything
+ * renders.
  */
 
 interface Internals {

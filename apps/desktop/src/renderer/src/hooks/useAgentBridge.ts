@@ -24,19 +24,13 @@ interface AgentBridge {
   dispatch(commands: EditCommand[]): CommandResult
 }
 
-/**
- * Answer an agent for as long as the editor is on screen.
+/** Answer an agent for as long as the editor is on screen — the answers are the
+ *  editor's own state, and main deliberately holds no copy (see
+ *  main/agent-bridge.md).
  *
- * Mounted by the editor page, because the answers are the editor's own state:
- * there is no second copy of the document in main to serve them from, and there
- * is deliberately none (see main/agent-bridge.md). Unmounting withdraws the
- * registration, so an agent calling with no project open is told so rather than
- * waiting on a window that is not there.
- *
- * The handlers are read through a ref so the subscription survives every render
- * — re-subscribing on each one would drop requests in flight, and the editor
- * re-renders on every timeupdate.
- */
+ *  **The handlers are read through a ref so the subscription survives every
+ *  render**: re-subscribing would drop requests in flight, and this component
+ *  re-renders on every timeupdate. */
 export function useAgentBridge(bridge: AgentBridge): void {
   const ref = useRef(bridge)
   ref.current = bridge

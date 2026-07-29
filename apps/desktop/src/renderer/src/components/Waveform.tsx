@@ -15,22 +15,11 @@ interface WaveformProps {
   toPx: number
 }
 
-/**
- * The audio envelope, drawn at whatever width the timeline is currently at.
+/** The audio envelope, drawn at whatever width the timeline is at.
  *
- * **Only the visible span is drawn.** The timeline zooms to 500×, which puts
- * the strip past half a million pixels — beyond any canvas, and pointless to
- * paint when a screen holds a thousand of them. So the canvas is the size of
- * what shows, positioned over that part of the clip, and **the cost of drawing
- * does not grow with the length of the footage**.
- *
- * This replaced a PNG behind a CSS mask. A picture has one width, and past
- * about 1.4× zoom every pixel was upscaled; numbers have no resolution.
- *
- * **Drawn in an effect, never per React frame.** Zoom and scroll both change
- * continuously, and re-rendering a component tree on each of those is the trap
- * this file's neighbours have fallen into before (see Timeline.md).
- */
+ *  **Only the visible span is drawn** — at 500× the strip is past half a
+ *  million pixels, beyond any canvas. **Drawn in an effect, never per React
+ *  frame**, since zoom and scroll both change continuously. See Waveform.md. */
 export default function Waveform({
   peaks,
   clipWidthPx,

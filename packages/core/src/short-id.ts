@@ -1,32 +1,26 @@
 /**
- * Ids are UUIDs, which is right for storage and wrong for a conversation: a
- * model has to quote one back, and at 36 characters that is expensive both ways
- * and unrecoverable if one character is wrong.
+ * Ids are UUIDs, right for storage and wrong for a conversation (see
+ * short-id.md).
  *
  * **The two directions are deliberately separate functions.** Shortening is a
  * presentation decision made where output is produced; accepting a prefix is an
  * input decision made where commands are read. Neither implies the other.
  */
 
-/**
- * Below this, a prefix stops being recognizable as an id and starts looking
- * like a word. Eight hex characters is also comfortably past the point where
- * two ids in one transcript collide by chance.
- */
+/** Below this a prefix stops looking like an id, and above it two ids in one
+ *  transcript do not collide by chance. */
 export const SHORT_ID_FLOOR = 8
 
 /**
  * The shortest prefix that identifies each id uniquely, never shorter than
  * `SHORT_ID_FLOOR`.
  *
- * Uniqueness is decided against **every id given**, so the map must be built
- * from the whole set the reader may see — not from one page of results. Build
- * it per page and the same line comes back as `a1b2c3d4` in one answer and
- * `a1b2c3d45` in the next, which reads as two different lines.
+ * **Uniqueness is decided against every id given, so build this from the whole
+ * set the reader may see** — not one page of results, or the same line comes
+ * back as `a1b2c3d4` in one answer and `a1b2c3d45` in the next.
  *
- * Sorted once and compared only with neighbours: in sort order, the longest
- * prefix an id shares with anything is shared with the entry just before or
- * just after it, so this settles in one pass instead of comparing every pair.
+ * Sorted once and compared only with neighbours: in sort order the longest
+ * prefix an id shares with anything is shared with its immediate neighbour.
  */
 export function shortIdMap(ids: Iterable<string>, floor = SHORT_ID_FLOOR): Map<string, string> {
   const sorted = [...new Set(ids)].sort()
@@ -52,17 +46,10 @@ function commonPrefixLength(a: string | undefined, b: string | undefined): numbe
   return length
 }
 
-/**
- * The full id a candidate names: itself when it is already one, otherwise the
- * single id it prefixes.
- *
- * `null` when nothing matches **and** when several do. An ambiguous prefix is
- * not a near miss to be resolved by picking the first one — that would edit an
- * arbitrary line and report success.
- *
- * An exact match wins without looking further, so a full id never becomes
- * ambiguous just because another id happens to start with it.
- */
+/** The full id a candidate names. **`null` when nothing matches and when
+ *  several do** — an ambiguous prefix resolved to the first candidate would
+ *  edit an arbitrary line and report success. An exact match wins without
+ *  looking further. */
 export function resolveShortId(candidate: string, ids: Iterable<string>): string | null {
   if (candidate === '') return null
   let match: string | null = null

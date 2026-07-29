@@ -98,14 +98,9 @@ function generateArtwork(projectId: string, asset: MediaAsset): void {
     })
 }
 
-/**
- * Rebuild any artwork left over from older parameters, or never built at all.
- *
- * Called when a project is opened, and **detached**: the existing pictures are
- * on screen already, so nothing waits for this. Each one that finishes updates
- * the asset and broadcasts, exactly as it does on import — same function, so
- * there is no second path that could drift from the first.
- */
+/** Rebuild artwork left over from older parameters, or never built at all.
+ *  **Detached** — the existing pictures are already on screen. Reuses the
+ *  import path rather than a second one that could drift from it. */
 export function refreshStaleArtwork(projectId: string): void {
   const project = loadProject(projectId)
   if (!project) return

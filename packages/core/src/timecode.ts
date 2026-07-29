@@ -1,10 +1,5 @@
-/**
- * Timecodes, both directions.
- *
- * The parser lives beside the formatters because they have to agree: the
- * subtitle list writes a time out for the user to edit and reads back whatever
- * comes home, and any disagreement between the two silently moves subtitles.
- */
+/** Timecodes, both directions. **The parser lives beside the formatters because
+ *  they have to agree** — any disagreement silently moves subtitles. */
 
 /** mm:ss below an hour, h:mm:ss above it. What a reader wants to see. */
 export function formatTimecode(ms: number): string {

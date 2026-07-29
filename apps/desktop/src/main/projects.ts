@@ -13,11 +13,8 @@ import type { MediaKind, TranscriptStatus } from '../shared/ipc'
  */
 const PROJECT_SCHEMA_VERSION = 2
 
-/**
- * The persisted subset of the wire status: 'running' describes an in-flight
- * request and has no meaning on disk. Deriving it rather than restating the
- * members keeps the two from drifting.
- */
+/** The persisted subset of the wire status — 'running' is in-flight only.
+ *  **Derived rather than restated**, so the two cannot drift. */
 export type StoredTranscriptStatus = Exclude<TranscriptStatus, 'running'>
 
 export interface MediaAsset {
@@ -59,46 +56,26 @@ export interface ProjectFile {
   name: string
   createdAt: number
   updatedAt: number
-  /**
-   * Clips laid end to end, in order. Empty until something is dragged in —
-   * importing alone puts nothing on the timeline.
-   *
-   * Projects written before this field existed read as an empty timeline;
-   * their assets and transcripts are untouched, so no schema bump.
-   */
+  /** Clips laid end to end, in order. Empty until something is dragged in —
+   *  importing alone puts nothing on the timeline. Absent in older projects,
+   *  which read as empty, so this needed no schema bump. */
   timeline: TimelineClip[]
   assets: MediaAsset[]
-  /**
-   * Longest subtitle line, in characters. Absent in projects written before the
-   * setting existed, which read as the core's default — like `timeline`, an
-   * added field with a safe fallback and therefore no schema bump. Bumping
-   * would make loadProject return null and every existing project vanish.
-   *
-   * A project-level setting rather than a per-asset one: line length is how
-   * this cut reads, and one cut should not change its mind between clips.
-   */
+  /** Longest subtitle line, in characters; absent reads as the core's default.
+   *  **Project-level rather than per-asset** — one cut should not change its
+   *  mind about line length between clips. */
   maxChars?: number
-  /**
-   * How the captions look. Absent in projects written before it existed, and
-   * every field inside is optional too — `normalizeCaptionStyles` fills in the
-   * rest on load, which is why this needed no schema bump either.
-   */
+  /** How the captions look; `normalizeCaptionStyles` fills in whatever an
+   *  older file is missing, so this needed no schema bump either. */
   captionStyles?: CaptionStyles
-  /**
-   * How this project was last exported. Absent in projects written before it
-   * existed and normalized on load, like the two above — another added field
-   * with a safe fallback, so no schema bump.
-   */
+  /** How this project was last exported; normalized on load like the two
+   *  above, so no schema bump. */
   exportSettings?: ExportSettings
 }
 
-/**
- * One entry on the timeline.
- *
- * **A clip references an asset rather than being one**: the same file can sit
- * on the timeline twice, and removing a clip must not touch the library. No
- * in/out point yet — see projects.md.
- */
+/** **A clip references an asset rather than being one**: the same file can sit
+ *  on the timeline twice, and removing a clip must not touch the library. No
+ *  in/out point yet — see projects.md. */
 export interface TimelineClip {
   id: string
   assetId: string
@@ -134,11 +111,9 @@ export function waveformPath(id: string, fileName: string): string {
   return path.join(projectDir(id), 'waveforms', fileName)
 }
 
-/**
- * Write through a temp file. Transcript saves are frequent, and a plain
- * writeFileSync interrupted mid-flight leaves truncated JSON that loadProject
- * reports as "no such project" — the user sees their work vanish.
- */
+/** **Write through a temp file.** A plain `writeFileSync` interrupted mid-flight
+ *  leaves truncated JSON, which `loadProject` reports as "no such project" —
+ *  the user sees their work vanish. */
 function writeJsonAtomic(filePath: string, data: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const temp = `${filePath}.tmp`
@@ -150,9 +125,7 @@ export function loadProject(id: string): ProjectFile | null {
   try {
     const project = JSON.parse(fs.readFileSync(projectFilePath(id), 'utf8')) as ProjectFile
     if (project.version !== PROJECT_SCHEMA_VERSION) return null
-    // Files written before the timeline existed have no such field. Filling it
-    // in here is why that change needed no schema bump: every reader past this
-    // point can assume the array.
+    // Filled in here so every reader past this point can assume the array.
     project.timeline ??= []
     project.captionStyles = normalizeCaptionStyles(project.captionStyles)
     project.exportSettings = normalizeExportSettings(project.exportSettings)
@@ -195,9 +168,8 @@ export function renameProject(id: string, name: string): ProjectFile | null {
 
 export function setCaptionStyles(id: string, styles: CaptionStyles): ProjectFile | null {
   return update(id, (project) => {
-    // Normalized rather than assigned: this arrives from the renderer, and the
-    // same guarantee that makes an old file safe to open makes this safe to
-    // store.
+    // Normalized rather than assigned: the same guarantee that makes an old
+    // file safe to open makes a renderer's value safe to store.
     project.captionStyles = normalizeCaptionStyles(styles)
   })
 }

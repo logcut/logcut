@@ -2,15 +2,10 @@ import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateState } from '../shared/ipc'
 
-/**
- * Auto update against the GitHub release, using the latest.yml /
- * latest-mac.yml that electron-builder publishes beside the installers.
- *
- * Nothing here works in development: an unpacked app has no app-update.yml,
- * and every call throws. The state is pinned to 'unsupported' rather than
- * left idle so the settings dialog can say why instead of showing a button
- * that always fails.
- */
+/** Auto update against the GitHub release. **Nothing here works in
+ *  development** — an unpacked app has no app-update.yml and every call throws,
+ *  so the state is pinned to 'unsupported' rather than left idle (see
+ *  updater.md). */
 
 const SUPPORTED = app.isPackaged
 

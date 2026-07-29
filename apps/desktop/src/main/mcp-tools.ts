@@ -2,16 +2,14 @@ import type { EditCommand } from '@logcut/core'
 import { agentDispatch, agentQuery, agentSession } from './agent-bridge'
 
 /**
- * The tools an outside agent gets, and what each one does.
+ * The tools an outside agent gets.
  *
- * Descriptions are not documentation here — they are the whole of what a model
- * knows about this editor before it acts. A tool whose description omits that
- * ids may be prefixes, or that a window selects overlapping lines, produces an
- * agent that guesses those things wrong on its first attempt.
+ * **The descriptions are not documentation — they are the whole of what a model
+ * knows about this editor before it acts** (see mcp-tools.md).
  *
- * Names are snake_case rather than the command's own `subtitle.setText`: tool
+ * **Names are snake_case, never the command's own `subtitle.setText`**: tool
  * names reach providers that only accept `[a-zA-Z0-9_-]`, and a dot fails there
- * for reasons a user would have no way to diagnose.
+ * in a way nobody could diagnose.
  */
 
 export interface McpTool {

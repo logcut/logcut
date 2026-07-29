@@ -94,13 +94,9 @@ function StyleRow({
   )
 }
 
-/**
- * A number typed rather than dragged.
- *
- * **Held as a string while being edited**, so a half-typed or momentarily empty
- * box is not coerced into a number the rest of the panel jumps to. Commits on
- * blur or Enter, clamped; anything unparseable puts the box back.
- */
+/** **Held as a string while being edited**, so a half-typed or momentarily empty
+ *  box is not coerced into a number the rest of the panel jumps to. Commits on
+ *  blur or Enter, clamped; anything unparseable puts the box back. */
 function NumberField({
   value,
   min,
@@ -159,15 +155,9 @@ function NumberField({
  *  drag from the next. */
 const COLOUR_GESTURE_GAP_MS = 400
 
-/**
- * A colour, shown as a swatch and its hex.
- *
- * **The platform's own picker, not a swatch grid of ours.** Nothing hand-rolled
- * comes close to it — eyedropper, recent colours, every model the OS offers —
- * and a caption colour is picked against the frame behind it, which a grid of
- * squares cannot help with. The real `<input>` is only visually hidden, so it
- * keeps its keyboard behaviour and its label.
- */
+/** A colour, shown as a swatch and its hex. **The platform's own picker, not a
+ *  swatch grid of ours** (see SubtitleEditor.md). The real `<input>` is only
+ *  visually hidden, so it keeps its keyboard behaviour and its label. */
 function ColourField({
   value,
   label,
@@ -209,17 +199,10 @@ function ColourField({
   )
 }
 
-/**
- * One collapsible group of settings, with its own heading.
- *
- * **Open to begin with, every one of them.** Collapsing is for reaching the
- * list sooner, not a way of admitting a group is secondary.
- *
- * The gap above is `stack` and not `block`: with five of these in a column they
- * are adjacent items in one list, not five separate blocks of content — and in
- * a panel this short the difference is a third of a control row per group. The
- * gap below belongs to the content, so closing a group actually gets it back.
- */
+/** One collapsible group of settings. **Open to begin with, every one of them**
+ *  — collapsing is for reaching the list sooner, not for admitting a group is
+ *  secondary. The gap below belongs to the content, so closing a group actually
+ *  gets it back. */
 function StyleGroup({
   title,
   action,
@@ -257,13 +240,9 @@ function StyleGroup({
   )
 }
 
-/**
- * The switch in a layer's heading, rather than a row of its own.
- *
- * It answers "is there a shadow at all", while the rows below only describe the
- * one there is — the same relationship the scope select has to the Style
- * heading.
- */
+/** The switch in a layer's heading rather than a row of its own: it answers "is
+ *  there a shadow at all", while the rows below only describe the one there
+ *  is. */
 function LayerSwitch({
   label,
   on,
@@ -305,15 +284,10 @@ function ColourRow({
   )
 }
 
-/**
- * A number this panel drags or types: slider, readout box, and the three
- * callbacks a drag needs.
- *
- * **Dragging and typing are not the same event**, which is why they are two
- * props rather than one. Every frame of a drag goes through `onSlide`, which
- * folds into the one undo step the gesture is worth; a typed value is a single
- * step of its own and goes through `onCommit`.
- */
+/** **Dragging and typing are not the same event**, which is why the callbacks
+ *  are separate: every frame of a drag goes through `onSlide` and folds into
+ *  one undo step, while a typed value is a step of its own through `onCommit`
+ *  (see SubtitleEditor.md). */
 function ValueRow({
   label,
   value,
@@ -364,21 +338,10 @@ function ValueRow({
   )
 }
 
-/**
- * The style panel.
- *
- * **Memoized, and that is the point.** It is a stack of Radix controls — a
- * select, two toggle groups, three number fields, a slider — and every one of
- * them is layers of forwardRef and context. On a packaged build they accounted
- * for a third of the React time spent during a drag, purely from being
- * re-rendered alongside everything else.
- *
- * The list above re-renders at pointer rate whenever the playhead moves. None
- * of that concerns these controls, so long as their props hold still — which
- * is what `scopedStyle` and `onChange` being memoized upstream buys (see
- * pages/EditorPage.tsx). A single inline arrow passed in here undoes all of it,
- * silently.
- */
+/** The style panel. **Memoized, and that is the point** — it is a stack of Radix
+ *  controls that accounted for a third of the React time spent during a drag,
+ *  purely from being re-rendered alongside everything else. A single inline
+ *  arrow passed in here undoes it, silently (see pages/EditorPage.tsx). */
 const CaptionStylePanel = memo(function CaptionStylePanel({
   style,
   onChange,
@@ -396,15 +359,10 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
 }): JSX.Element {
   const fonts = useCaptionFonts()
 
-  /**
-   * A slider writes on every frame it moves, and only the first of those is a
-   * step worth going back to — without this one drag buries the history under a
-   * hundred entries of itself.
-   *
-   * A ref, not state: it is read by the very handler that sets it, and a
-   * re-render in between would be a re-render per frame for nothing. One flag
-   * for all five sliders is enough — a pointer can only hold one of them.
-   */
+  /** Marks the frames of a drag that must not be recorded (see
+   *  SubtitleEditor.md). **A ref, not state**: it is read by the very handler
+   *  that sets it, and a re-render in between would be one per frame for
+   *  nothing. One flag covers all five sliders — a pointer holds one. */
   const sliding = useRef(false)
   const slide = (patch: Partial<CaptionStyle>): void => {
     onChange(patch, { continuing: sliding.current })
@@ -681,12 +639,8 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
         />
       </StyleGroup>
 
-      {/* The letterforms themselves.
-
-          **No switch on this one, unlike the three below it.** Turning the fill
-          off is the same act as taking its opacity to nothing, and a control
-          that duplicates another one only asks the user which of the two the
-          program is really watching. */}
+      {/* **No switch on this one, unlike the three below it** — turning the fill
+          off is the same act as taking its opacity to nothing. */}
       <StyleGroup title="Fill">
         <ColourRow
           label="Fill"
@@ -704,12 +658,8 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
         />
       </StyleGroup>
 
-      {/* A stroke around the glyphs.
-
-          Its rows are left in place and disabled rather than hidden while it is
-          off: the values are still there, and a row that disappears reads as
-          "this setting does not exist" rather than "it is not in use". Every
-          group below does the same. */}
+      {/* Rows are disabled rather than hidden while a layer is off — the values
+          are still there, and every group below does the same. */}
       <StyleGroup
         title="Outline"
         action={
@@ -789,9 +739,8 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
           onSlideEnd={endSlide}
           onCommit={(next) => onChange({ shadowBlur: next })}
         />
-        {/* Two numbers on one row, so it gives up its readout column the way
-            Spacing and Pos do. They are one quantity between them — where the
-            shadow falls — and neither is worth a track of its own. */}
+        {/* One quantity between them — where the shadow falls — so neither gets
+            a track of its own, and the row gives up its readout column. */}
         <StyleRow label="Offset" wide>
           <div className="flex flex-1 items-center gap-component">
             <span className="shrink-0 text-caption font-normal text-muted-foreground">Dist</span>
@@ -818,8 +767,8 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
         </StyleRow>
       </StyleGroup>
 
-      {/* The plate behind the type. On by default, because every caption this
-          program has ever burned had one. */}
+      {/* On by default, because every caption this program has ever burned had
+          a plate. */}
       <StyleGroup
         title="Background"
         action={
@@ -923,14 +872,8 @@ interface SubtitleEditorProps {
   onStyleResize(delta: number, room: number): void
 }
 
-/**
- * Subtitle editing: the toolbar, the style panel, and the list of lines.
- *
- * **Nothing about it is modal.** The player keeps its full width beside it and
- * playback carries on — subtitles get fixed while they are being watched, which
- * is the whole reason this is a column and not a dialog. Where it lives and how
- * it is opened: see SubtitleEditor.md.
- */
+/** Subtitle editing: the toolbar, the style panel, and the list of lines.
+ *  **Nothing about it is modal** — see SubtitleEditor.md. */
 export default function SubtitleEditor({
   utterances,
   activeId,
@@ -1021,10 +964,7 @@ export default function SubtitleEditor({
         </p>
       )}
 
-      {/* The style settings above the list, and the handle that decides how
-          much of the column each one gets. Both are deliberate — see
-          SubtitleEditor.md for why the settings are on top, and why the split
-          is dragged rather than fixed. */}
+      {/* Settings above the list, split by a handle — see SubtitleEditor.md. */}
       <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
         {/* A plain element carries the share, not the panel itself: the panel
             is memoized, and an inline style object handed to it would be a new

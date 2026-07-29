@@ -1,15 +1,10 @@
 import { app, BrowserWindow, Menu } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 
-/**
- * The application menu.
- *
- * Setting one at all is what puts Settings where a desktop app keeps it, but it
- * also *replaces* Electron's default menu — and that default is where the
- * standard editing shortcuts come from. So every role menu below has to be
- * spelled out: drop the Edit menu and Cmd/Ctrl+C, V, Z and A stop working in
- * every input in the app, with nothing on screen to explain why.
- */
+/** The application menu. **Setting one replaces Electron's default**, which is
+ *  where the standard editing shortcuts come from — drop the Edit menu and
+ *  Cmd/Ctrl+C, V, Z and A stop working in every input in the app, with nothing
+ *  on screen to explain why. */
 
 /**
  * Settings is a dialog owned by the renderer, so the menu can only ask for it.

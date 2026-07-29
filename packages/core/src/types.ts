@@ -30,24 +30,15 @@ export interface Utterance {
   words: Word[]
 }
 
-/**
- * The spoken content of one media asset. It carries no reference back to the
- * file it came from: which asset a transcript belongs to is the project's
- * business, and a path in here is a platform concept the core has no use for.
- */
+/** The spoken content of one media asset. **It carries no reference back to the
+ *  file** — which asset a transcript belongs to is the project's business. */
 export interface Transcript {
   audioDurationMs: number
   utterances: Utterance[]
 }
 
-/**
- * Which line an edit landed on — what a caller with a screen would put in
- * view afterwards.
- *
- * It is a fact about the edit, not an instruction: whether to move the
- * playhead there is the caller's decision, and a caller without a screen
- * ignores it entirely.
- */
+/** Which line an edit landed on. **A fact about the edit, not an instruction**
+ *  — whether to move the playhead is the caller's decision. */
 export interface EditFocus {
   assetId: string
   utteranceId: string

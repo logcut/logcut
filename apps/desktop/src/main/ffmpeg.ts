@@ -89,16 +89,10 @@ function runFfmpeg(args: string[]): Promise<string> {
   return run(resolveFfmpeg().binary, args)
 }
 
-/**
- * The encoders this app knows how to drive, per codec, in the order it would
- * pick them.
- *
- * All hardware, because the sidecars are built `--disable-gpl` and libx264 and
- * libx265 are both GPL — there is no software encoder in them to fall back to.
- * Which of these exists is a property of the build, not of the platform, so it
- * is discovered rather than assumed: the Linux sidecar has none of them today,
- * and giving it one later must not require touching this table's readers.
- */
+/** The encoders this app can drive, per codec, in preference order. **All
+ *  hardware** — the sidecars are `--disable-gpl`, so there is no software
+ *  encoder to fall back to, and which of these exists is a property of the
+ *  build rather than the platform (see ffmpeg.md). */
 const ENCODERS: Record<ExportCodec, string[]> = {
   h264: ['h264_videotoolbox', 'h264_mf'],
   hevc: ['hevc_videotoolbox', 'hevc_mf']
@@ -106,31 +100,26 @@ const ENCODERS: Record<ExportCodec, string[]> = {
 
 let encoders: Promise<Set<string>> | null = null
 
-/**
- * Every encoder the sidecar was built with.
- *
- * The promise is cached rather than the value, so concurrent callers during
- * startup share the one process instead of racing to spawn their own.
- */
+/** Every encoder the sidecar was built with. **The promise is cached rather
+ *  than the value**, so concurrent callers at startup share one process. */
 function availableEncoders(): Promise<Set<string>> {
-  // `captureStdout` is the whole of this working: `-encoders` reports on
-  // stdout, which `run` throws away unless asked for. Without it the list comes
-  // back empty, every encoder looks absent, and the export button goes quietly
-  // dead the moment a project has captions to burn.
+  // **`captureStdout` is the whole of this working**: `-encoders` reports on
+  // stdout, which `run` throws away unless asked. Without it the list comes back
+  // empty, every encoder looks absent, and the export button goes quietly dead
+  // the moment a project has captions to burn — this shipped once (ffmpeg.md).
   encoders ??= run(resolveFfmpeg().binary, ['-hide_banner', '-encoders'], { captureStdout: true })
     .then((output) => {
       const names = new Set(
         output
           .split('\n')
-          // ` V....D h264_videotoolbox    VideoToolbox H.264 Encoder`: the flag
-          // column first, the name second, prose after. Anchored to a lowercase
-          // start so the legend above the list (` V..... = Video`) is skipped.
+          // Anchored to a lowercase start so the legend above the list
+          // (` V..... = Video`) does not parse as an encoder named `=`.
           .map((line) => /^\s[A-Z.]{6}\s+([a-z0-9][\w-]*)/.exec(line)?.[1])
           .filter((name): name is string => name !== undefined)
       )
-      // An empty list is not a build without encoders — every ffmpeg has some.
-      // It means the output was not read, and the only symptom downstream is a
-      // disabled button with a misleading reason on it.
+      // **An empty list is not a build without encoders** — every ffmpeg has
+      // some. It means the output was not read, and the only symptom downstream
+      // is a disabled button with a misleading reason on it.
       if (names.size === 0) console.warn('[ffmpeg] Encoder list came back empty')
       return names
     })
@@ -174,13 +163,9 @@ interface ProgressOptions {
   onProgress(percent: number): void
 }
 
-/**
- * Run ffmpeg for long enough that somebody wants to watch it, or stop it.
- *
- * Separate from `run` above rather than an option on it: this one keeps the
- * child so it can be killed, and reads stdout as a live feed instead of
- * collecting it. Its five callers need none of that.
- */
+/** Run ffmpeg for long enough that somebody wants to watch it, or stop it.
+ *  **Separate from `run` rather than an option on it** — this one keeps the
+ *  child so it can be killed, and reads stdout as a live feed. */
 export function runFfmpegProgress(args: string[], options: ProgressOptions): FfmpegRun {
   const { binary } = resolveFfmpeg()
   const label = path.basename(binary)
@@ -192,9 +177,9 @@ export function runFfmpegProgress(args: string[], options: ProgressOptions): Ffm
   let stderrTail = ''
 
   child.stdout.on('data', (chunk: Buffer) => {
-    // `-progress` writes key=value lines, but a chunk boundary lands wherever
-    // it lands; the tail after the last newline is the start of a line, not a
-    // line, and reading it as one gives a truncated number.
+    // **Line-buffered by hand**: a chunk boundary lands wherever it lands, so
+    // the tail after the last newline is the start of a line, not a line, and
+    // reading it as one yields a truncated number.
     const text = pending + chunk.toString()
     const lines = text.split('\n')
     pending = lines.pop() ?? ''

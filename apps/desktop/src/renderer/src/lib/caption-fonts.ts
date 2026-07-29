@@ -11,10 +11,9 @@ export interface CaptionFont {
 /**
  * The platform's own UI font: always offered, always first, and the default.
  *
- * It is the only entry certain to have glyphs for whatever language the
- * transcript is in, and the only one that survives the project being opened on
- * another machine — so it stays at the top even once the installed fonts are
- * listed below it.
+ * **The only entry certain to have glyphs for whatever language the transcript
+ * is in, and the only one that survives opening the project on another
+ * machine** — so it stays at the top even once installed fonts are listed.
  */
 export const SYSTEM_CAPTION_FONT: CaptionFont = {
   value: SYSTEM_FONT,
