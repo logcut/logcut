@@ -29,7 +29,7 @@ import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 import { captionFontStack as captionFontStackFor } from '@/lib/caption-fonts'
 import { liveScope, styleForScope, type CaptionScope } from '@/lib/caption-scope'
 import { layUtterances } from '@/lib/timeline'
-import type { MediaAssetSummary } from '../../../shared/ipc'
+import type { EditorLayout, MediaAssetSummary } from '../../../shared/ipc'
 
 /** The editor opens split 60/40 between the panes and the timeline. */
 const TIMELINE_HEIGHT_RATIO = 0.4
@@ -49,21 +49,31 @@ const DEFAULT_SUBTITLES_WIDTH = 340
 const OUTER_GAP = 8
 const PANE_GAP = 6
 
-/**
- * The tab panel and the player open at equal width.
- *
- * What is halved is the row *minus* the chat column and every gap — those are
- * fixed pixels and take no part in the split. The subtitle column is not
- * subtracted because it starts closed; opening it re-fits through `fitTabs`.
- */
-function defaultTabsWidth(): number {
-  const consumed = OUTER_GAP * 2 + PANE_GAP * 2 + DEFAULT_CHAT_WIDTH
-  return clamp(
-    Math.round((window.innerWidth - consumed) / 2),
-    MIN_TABS_WIDTH,
-    window.innerWidth - consumed - MIN_PLAYER_WIDTH
+function defaultTimelineHeight(): number {
+  return Math.max(
+    MIN_TIMELINE_HEIGHT,
+    Math.round((window.innerHeight - TOP_BAR_HEIGHT) * TIMELINE_HEIGHT_RATIO)
   )
 }
+
+/** What "Reset layout" restores, and what the editor opens on the very first
+ *  time. One source, so the two can never drift apart. */
+function defaultLayout(): EditorLayout {
+  return {
+    chatWidth: DEFAULT_CHAT_WIDTH,
+    // Null, not a number: these two go back to being derived, so the panel and
+    // the player are equal again whatever the window and the columns are doing.
+    tabsWidth: null,
+    subtitlesWidth: DEFAULT_SUBTITLES_WIDTH,
+    timelineHeight: null,
+    chatOpen: true,
+    subtitlesOpen: false
+  }
+}
+
+/** How long the arrangement has to sit still before it is written. A drag
+ *  changes it on every frame; without this each one would be a disk write. */
+const LAYOUT_SAVE_DELAY_MS = 500
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max))
@@ -145,15 +155,14 @@ export default function EditorPage({
   /** Which subtitles the style panel writes to. Held raw; `liveScope` is what
    *  the rest of the page reads, so a scope that vanishes cannot be used. */
   const [storedScope, setCaptionScope] = useState<CaptionScope>({ kind: 'all' })
-  const [tabsWidth, setTabsWidth] = useState(defaultTabsWidth)
+  /** Null while nobody has dragged the divider — see `EditorLayout`. */
+  const [tabsWidth, setTabsWidth] = useState<number | null>(null)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [subtitlesWidth, setSubtitlesWidth] = useState(DEFAULT_SUBTITLES_WIDTH)
-  const [timelineHeight, setTimelineHeight] = useState(() =>
-    Math.max(
-      MIN_TIMELINE_HEIGHT,
-      Math.round((window.innerHeight - TOP_BAR_HEIGHT) * TIMELINE_HEIGHT_RATIO)
-    )
-  )
+  const [timelineHeight, setTimelineHeight] = useState<number | null>(null)
+  /** False until the saved arrangement has been read, so the defaults on screen
+   *  in the meantime are never written over it. */
+  const [layoutLoaded, setLayoutLoaded] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const captionFonts = useCaptionFonts()
 
@@ -203,26 +212,61 @@ export default function EditorPage({
    *  fixed slice — the window itself while it is hidden. */
   const availableWidth = (): number => window.innerWidth - chatSlice()
 
+  /** The tallest the timeline may be drawn — the panes above keep their
+   *  minimum. Same read-time clamp as the tab panel below, and for the same
+   *  reason: a height saved on a taller window must not be written over. */
+  const timelineHeightCap = (): number => window.innerHeight - TOP_BAR_HEIGHT - MIN_PANES_HEIGHT
+  const shownTimelineHeight = clamp(
+    timelineHeight ?? defaultTimelineHeight(),
+    MIN_TIMELINE_HEIGHT,
+    timelineHeightCap()
+  )
+
+  /** The widest the tab panel may be drawn right now — what is left once both
+   *  side columns and the player's minimum have taken theirs. */
+  const tabsWidthCap = (): number => availableWidth() - subtitlesSlice() - MIN_PLAYER_WIDTH
+
   /**
-   * Pull the tab panel back within bounds before a side column takes its width.
+   * Half of what the tab panel and the player have to share.
    *
-   * The slices are arguments, not reads off state: the caller is opening a
-   * column, and its slice has to count as present before the state saying so
-   * has committed.
+   * Taken out first are both side columns and every gap: those are fixed
+   * pixels and take no part in the split. **The number of gaps follows how
+   * many columns are actually showing** — one between each neighbouring pair.
    */
-  const fitTabs = (chat: number, subtitles: number): void => {
-    setTabsWidth((current) =>
-      clamp(current, MIN_TABS_WIDTH, window.innerWidth - chat - subtitles - MIN_PLAYER_WIDTH)
-    )
+  const equalTabsWidth = (): number => {
+    const gaps = OUTER_GAP * 2 + PANE_GAP * (1 + (chatOpen ? 1 : 0) + (subtitlesOpen ? 1 : 0))
+    return Math.round((window.innerWidth - gaps - chatSlice() - subtitlesSlice()) / 2)
   }
 
+  /**
+   * The width the tab panel is actually drawn at.
+   *
+   * Two separate things are going on here, and conflating them was the bug:
+   *
+   * - **`null` means nobody has stated a width**, so one is derived — the panel
+   *   and the player equal. It is recomputed every render, so closing a side
+   *   column re-splits what that column gave back instead of handing all of it
+   *   to the player, which is the flexible one and would otherwise take the lot.
+   * - **A number is a width the user dragged to**, and only a drag ever writes
+   *   one. It is clamped *as it is drawn*, never written back: opening a column
+   *   narrows the panel and closing it hands the width straight back, with the
+   *   smaller number never stored. Clamping the state itself was the earlier
+   *   bug — on a window too narrow for four columns the panel was pinned to
+   *   `MIN_TABS_WIDTH` and stayed there for the rest of the session.
+   */
+  const shownTabsWidth = clamp(tabsWidth ?? equalTabsWidth(), MIN_TABS_WIDTH, tabsWidthCap())
+
   // Limits are recomputed per drag rather than cached, so a resized window
-  // never leaves a stale bound behind. The ratio only seeds the initial
-  // height; past that the size is whatever the user dragged it to.
+  // never leaves a stale bound behind.
   const resizeTabs = (delta: number): void => {
-    setTabsWidth((current) =>
-      clamp(current + delta, MIN_TABS_WIDTH, availableWidth() - subtitlesSlice() - MIN_PLAYER_WIDTH)
-    )
+    setTabsWidth((current) => {
+      const cap = tabsWidthCap()
+      // From where the panel is *drawn* — the derived width if it has never
+      // been dragged, and otherwise the stored one pulled inside the current
+      // bounds. Starting anywhere else makes the first drag jump.
+      const from = clamp(current ?? equalTabsWidth(), MIN_TABS_WIDTH, cap)
+      return clamp(from + delta, MIN_TABS_WIDTH, cap)
+    })
   }
 
   // The chat column is the first one, so its handle is on its right edge:
@@ -235,7 +279,7 @@ export default function EditorPage({
       clamp(
         current + delta,
         MIN_CHAT_WIDTH,
-        window.innerWidth - subtitlesSlice() - tabsWidth - MIN_PLAYER_WIDTH
+        window.innerWidth - subtitlesSlice() - shownTabsWidth - MIN_PLAYER_WIDTH
       )
     )
   }
@@ -244,38 +288,105 @@ export default function EditorPage({
   // and the sign flips: dragging left widens it.
   const resizeSubtitles = (delta: number): void => {
     setSubtitlesWidth((current) =>
-      clamp(current - delta, MIN_SUBTITLES_WIDTH, availableWidth() - tabsWidth - MIN_PLAYER_WIDTH)
+      clamp(
+        current - delta,
+        MIN_SUBTITLES_WIDTH,
+        availableWidth() - shownTabsWidth - MIN_PLAYER_WIDTH
+      )
     )
   }
 
-  /** The one way in — three callers, so the re-fit belongs here and not at any
-   *  one of them (see EditorPage.md). */
-  const openSubtitles = (): void => {
-    if (!subtitlesOpen) fitTabs(chatSlice(), subtitlesWidth)
-    setSubtitlesOpen(true)
-  }
+  /** The one way in — three callers name this rather than the setter, so the
+   *  entry point stays one thing to find. */
+  const openSubtitles = (): void => setSubtitlesOpen(true)
 
-  /** Closing gives the width back, so only the opening half needs the re-fit. */
-  const toggleSubtitles = (): void => {
-    if (subtitlesOpen) setSubtitlesOpen(false)
-    else openSubtitles()
-  }
+  const toggleSubtitles = (): void => setSubtitlesOpen((open) => !open)
 
-  const toggleChat = (): void => {
-    setChatOpen((open) => {
-      if (!open) fitTabs(chatWidth, subtitlesSlice())
-      return !open
+  const toggleChat = (): void => setChatOpen((open) => !open)
+
+  /**
+   * Put an arrangement on screen.
+   *
+   * The two side widths are clamped **here**, unlike the tab panel and the
+   * timeline which are clamped as they are drawn: this value came off disk and
+   * may have been saved on a different display, and these two are what the
+   * other columns are measured against — a chat column wider than the window
+   * leaves the panel and the player nothing to divide. Each cap is what is left
+   * once every other column has its minimum. The subtitle column's minimum is
+   * subtracted from the chat cap whether or not it is open, because it can be
+   * opened a moment later and the arithmetic must already hold.
+   */
+  const applyLayout = useCallback((layout: EditorLayout): void => {
+    setChatWidth(
+      clamp(
+        layout.chatWidth,
+        MIN_CHAT_WIDTH,
+        window.innerWidth - MIN_TABS_WIDTH - MIN_PLAYER_WIDTH - MIN_SUBTITLES_WIDTH
+      )
+    )
+    setSubtitlesWidth(
+      clamp(
+        layout.subtitlesWidth,
+        MIN_SUBTITLES_WIDTH,
+        window.innerWidth - MIN_CHAT_WIDTH - MIN_TABS_WIDTH - MIN_PLAYER_WIDTH
+      )
+    )
+    setTabsWidth(layout.tabsWidth)
+    setTimelineHeight(layout.timelineHeight)
+    setChatOpen(layout.chatOpen)
+    setSubtitlesOpen(layout.subtitlesOpen)
+  }, [])
+
+  /** Read once on entry. Nothing is written until this has finished — see
+   *  `layoutLoaded`. */
+  useEffect(() => {
+    let cancelled = false
+    void window.logcut.getEditorLayout().then((saved) => {
+      if (cancelled) return
+      if (saved) applyLayout(saved)
+      setLayoutLoaded(true)
     })
+    return () => {
+      cancelled = true
+    }
+  }, [applyLayout])
+
+  /**
+   * Write it back, once it has stopped moving.
+   *
+   * The debounce is what makes this affordable: every one of these values
+   * changes on every frame of a drag, and the timer restarts each time, so a
+   * drag costs one write at the end rather than sixty a second.
+   */
+  useEffect(() => {
+    if (!layoutLoaded) return undefined
+    const id = setTimeout(() => {
+      void window.logcut.saveEditorLayout({
+        chatWidth,
+        tabsWidth,
+        subtitlesWidth,
+        timelineHeight,
+        chatOpen,
+        subtitlesOpen
+      })
+    }, LAYOUT_SAVE_DELAY_MS)
+    return () => clearTimeout(id)
+  }, [layoutLoaded, chatWidth, tabsWidth, subtitlesWidth, timelineHeight, chatOpen, subtitlesOpen])
+
+  /** Written straight through rather than left to the debounce above: a reset
+   *  the user immediately follows by quitting still has to survive. */
+  const resetLayout = (): void => {
+    const fresh = defaultLayout()
+    applyLayout(fresh)
+    void window.logcut.saveEditorLayout(fresh)
   }
 
   const resizeTimeline = (delta: number): void => {
-    setTimelineHeight((current) =>
-      clamp(
-        current - delta,
-        MIN_TIMELINE_HEIGHT,
-        window.innerHeight - TOP_BAR_HEIGHT - MIN_PANES_HEIGHT
-      )
-    )
+    setTimelineHeight((current) => {
+      const cap = timelineHeightCap()
+      const from = clamp(current ?? defaultTimelineHeight(), MIN_TIMELINE_HEIGHT, cap)
+      return clamp(from - delta, MIN_TIMELINE_HEIGHT, cap)
+    })
   }
 
   /** The dialog speaks the transcript's own ids, the timeline speaks composite
@@ -776,6 +887,7 @@ export default function EditorPage({
         name={project?.name ?? 'Loading…'}
         chatOpen={chatOpen}
         subtitlesOpen={subtitlesOpen}
+        onResetLayout={resetLayout}
         onBack={onBack}
         onRename={(name) => void rename(name)}
         onToggleChat={toggleChat}
@@ -806,7 +918,7 @@ export default function EditorPage({
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1">
-            <div className="flex shrink-0 flex-col" style={{ width: tabsWidth }}>
+            <div className="flex shrink-0 flex-col" style={{ width: shownTabsWidth }}>
               <Panel className="flex min-h-0 flex-1 flex-col">
                 <Tabs
                   value={tab}
@@ -894,7 +1006,7 @@ export default function EditorPage({
 
           <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
 
-          <Panel className="flex shrink-0 flex-col" style={{ height: timelineHeight }}>
+          <Panel className="flex shrink-0 flex-col" style={{ height: shownTimelineHeight }}>
             <TimelineToolbar
               onSplit={handleSplit}
               snapEnabled={snapEnabled}

@@ -15,6 +15,36 @@ import type {
  * stay out of @logcut/core, which must remain platform-neutral.
  */
 
+/**
+ * How the editor is arranged, remembered between sessions.
+ *
+ * Sizes are the pixels the user dragged to, saved as-is and **clamped on read
+ * rather than on write** — a layout saved on a wide display has to still open
+ * sanely on a narrow one, and the value the user chose is worth keeping for
+ * when they are back on the big screen.
+ *
+ * The two open flags are here because the columns are part of the arrangement:
+ * reopening on the same working setup is the point of remembering at all.
+ */
+export interface EditorLayout {
+  chatWidth: number
+  /**
+   * Null until the divider is dragged, and back to null on reset.
+   *
+   * These two are **derived from the room available** until someone states
+   * otherwise: the tab panel and the player open equal, and the timeline takes
+   * its share of the height. Storing the derived pixels instead would freeze a
+   * ratio into a number — close a side column and the panel keeps a width that
+   * was half of a row that no longer exists, while the player, being the
+   * flexible one, silently pockets the difference.
+   */
+  tabsWidth: number | null
+  subtitlesWidth: number
+  timelineHeight: number | null
+  chatOpen: boolean
+  subtitlesOpen: boolean
+}
+
 export interface SettingsStatus {
   hasApiKey: boolean
   /** Last 4 characters of the configured key, for display only. */
@@ -224,6 +254,15 @@ export interface LogcutApi {
   getLanguagePreference(): Promise<LanguageOption | null>
   /** Persist the user's transcription language choice. */
   setLanguagePreference(option: LanguageOption): Promise<void>
+
+  /** The remembered editor arrangement, or null before one has been saved. */
+  getEditorLayout(): Promise<EditorLayout | null>
+  /**
+   * Write the arrangement. Resetting is the same call with the defaults in it —
+   * there is no separate clear, because "no saved layout" and "the defaults
+   * saved" are read back identically.
+   */
+  saveEditorLayout(layout: EditorLayout): Promise<void>
 
   /** Create an empty project; the editor opens on it right away. */
   createProject(name?: string): Promise<ProjectSummary>

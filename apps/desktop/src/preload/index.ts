@@ -23,6 +23,8 @@ const api: LogcutApi = {
   getSettingsStatus: () => ipcRenderer.invoke('settings:get-status'),
   setApiKey: (key) => ipcRenderer.invoke('settings:set-api-key', key),
   getSystemLocale: () => ipcRenderer.invoke('system:get-locale'),
+  getEditorLayout: () => ipcRenderer.invoke('settings:get-layout'),
+  saveEditorLayout: (layout) => ipcRenderer.invoke('settings:save-layout', layout),
   getLanguagePreference: () => ipcRenderer.invoke('settings:get-language'),
   setLanguagePreference: (option) => ipcRenderer.invoke('settings:set-language', option),
 

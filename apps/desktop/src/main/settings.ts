@@ -2,13 +2,16 @@ import type { LanguageOption } from '@logcut/core'
 import { app, safeStorage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import type { SettingsStatus } from '../shared/ipc'
+import type { EditorLayout, SettingsStatus } from '../shared/ipc'
 
 interface SettingsFile {
   /** Base64 of the safeStorage-encrypted Volcano Engine API key. */
   volcApiKey?: string
   /** Last chosen transcription language (non-sensitive, stored in plaintext). */
   languageOption?: LanguageOption
+  /** How the editor was last arranged. Application-wide, not per project: it
+   *  is a working habit, and it should not change when a project is opened. */
+  editorLayout?: EditorLayout
 }
 
 function settingsPath(): string {
@@ -61,4 +64,12 @@ export function getLanguageOption(): LanguageOption | null {
 
 export function setLanguageOption(option: LanguageOption): void {
   writeSettingsFile({ ...readSettingsFile(), languageOption: option })
+}
+
+export function getEditorLayout(): EditorLayout | null {
+  return readSettingsFile().editorLayout ?? null
+}
+
+export function setEditorLayout(layout: EditorLayout): void {
+  writeSettingsFile({ ...readSettingsFile(), editorLayout: layout })
 }

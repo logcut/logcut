@@ -1,8 +1,14 @@
-import { ChevronLeft, PanelLeft, PanelRight } from 'lucide-react'
+import { ChevronLeft, LayoutGrid, PanelLeft, PanelRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import TitleBar from '@/components/TitleBar'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 
 interface EditorTopBarProps {
@@ -13,6 +19,9 @@ interface EditorTopBarProps {
   onRename(name: string): void
   onToggleChat(): void
   onToggleSubtitles(): void
+  /** Put every column and the timeline back to the sizes the editor opens on
+   *  the first time. */
+  onResetLayout(): void
 }
 
 /**
@@ -30,7 +39,8 @@ export default function EditorTopBar({
   onBack,
   onRename,
   onToggleChat,
-  onToggleSubtitles
+  onToggleSubtitles,
+  onResetLayout
 }: EditorTopBarProps): JSX.Element {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -96,6 +106,22 @@ export default function EditorTopBar({
           `aria-pressed` is both the state for assistive tech and what colours
           the icon while a column is showing. */}
       <div className="flex flex-1 justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="quiet"
+              size="icon-lg"
+              title="Layout"
+              className="[-webkit-app-region:no-drag]"
+            >
+              <LayoutGrid />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onResetLayout}>Reset layout</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         <Button
           variant="quiet"
           size="icon-lg"

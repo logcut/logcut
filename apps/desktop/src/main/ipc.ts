@@ -11,6 +11,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type {
+  EditorLayout,
   ExportSrtResult,
   ImportMediaResult,
   MediaAssetSummary,
@@ -148,6 +149,10 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('system:get-locale', () => app.getLocale())
+  ipcMain.handle('settings:get-layout', () => settings.getEditorLayout())
+  ipcMain.handle('settings:save-layout', (_event, layout: EditorLayout) => {
+    settings.setEditorLayout(layout)
+  })
   ipcMain.handle('settings:get-language', () => settings.getLanguageOption())
   ipcMain.handle('settings:set-language', (_event, option: LanguageOption) => {
     settings.setLanguageOption(option)
