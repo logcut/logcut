@@ -2,7 +2,8 @@ import {
   CAPTION_REFERENCE_HEIGHT,
   CAPTION_STYLE_LIMITS,
   captionSizePct,
-  captionSizePx
+  captionSizePx,
+  DEFAULT_CAPTION_STYLE
 } from '@logcut/core'
 import type { CaptionAlign, CaptionStyle, Utterance } from '@logcut/core'
 import type { CaptionScope } from '@/lib/caption-scope'
@@ -11,7 +12,9 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  ChevronDown,
   Italic,
+  RotateCcw,
   Search,
   Underline,
   Undo2,
@@ -21,6 +24,7 @@ import { memo, useEffect, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -30,6 +34,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
+import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 
@@ -39,6 +44,16 @@ import { useCaptionFonts } from '@/hooks/useCaptionFonts'
  * changes as the preview pane is resized.
  */
 const REFERENCE_HINT = `Pixels at ${CAPTION_REFERENCE_HEIGHT}p. Stored relative to the picture, so it holds at any export size.`
+
+/** What the Layout reset puts back. Read off the default style rather than
+ *  written out again, so changing a default cannot leave this button behind. */
+const DEFAULT_LAYOUT: Partial<CaptionStyle> = {
+  scalePct: DEFAULT_CAPTION_STYLE.scalePct,
+  widthPct: DEFAULT_CAPTION_STYLE.widthPct,
+  x: DEFAULT_CAPTION_STYLE.x,
+  y: DEFAULT_CAPTION_STYLE.y,
+  rotation: DEFAULT_CAPTION_STYLE.rotation
+}
 
 /** One setting per row: a fixed-width name, the control, a fixed-width readout.
  *  **Every row is the same height whatever is in it** — see SubtitleEditor.md
@@ -91,6 +106,7 @@ function NumberField({
   max,
   label,
   title,
+  disabled,
   onCommit
 }: {
   value: number
@@ -98,6 +114,9 @@ function NumberField({
   max: number
   label: string
   title?: string
+  /** For a field whose value is being decided by something else — the width
+   *  while it is on auto. */
+  disabled?: boolean
   onCommit(next: number): void
 }): JSX.Element {
   const [typed, setTyped] = useState(String(value))
@@ -122,6 +141,7 @@ function NumberField({
       value={typed}
       aria-label={label}
       title={title}
+      disabled={disabled}
       className="h-control-md w-full px-inline text-right"
       onChange={(event) => setTyped(event.target.value)}
       onBlur={commit}
@@ -129,6 +149,49 @@ function NumberField({
         if (event.key === 'Enter') event.currentTarget.blur()
       }}
     />
+  )
+}
+
+/**
+ * A colour, shown as a swatch and its hex.
+ *
+ * **The platform's own picker, not a swatch grid of ours.** Nothing hand-rolled
+ * comes close to it — eyedropper, recent colours, every model the OS offers —
+ * and a caption colour is picked against the frame behind it, which a grid of
+ * squares cannot help with. The real `<input>` is only visually hidden, so it
+ * keeps its keyboard behaviour and its label.
+ */
+function ColourField({
+  value,
+  label,
+  disabled,
+  onChange
+}: {
+  value: string
+  label: string
+  disabled?: boolean
+  onChange(next: string): void
+}): JSX.Element {
+  return (
+    <label
+      className={`flex h-control-md items-center gap-component rounded-md border border-input px-compact ${
+        disabled === true ? 'pointer-events-none opacity-50' : 'cursor-pointer'
+      }`}
+    >
+      <span
+        className="size-icon-sm rounded-sm border border-border"
+        style={{ backgroundColor: value }}
+      />
+      <span className="timecode text-foreground uppercase">{value}</span>
+      <input
+        type="color"
+        value={value}
+        aria-label={label}
+        disabled={disabled}
+        className="sr-only"
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
   )
 }
 
@@ -282,24 +345,12 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
           </ToggleGroup>
         </StyleRow>
 
-        {/* The platform's own colour picker. Nothing hand-rolled comes close
-                to it — eyedropper, recent colours, every model the OS offers —
-                and a caption colour is picked against the frame behind it, which
-                a swatch grid cannot help with. */}
         <StyleRow label="Colour">
-          <label className="flex h-control-md cursor-pointer items-center gap-component rounded-md border border-input px-compact">
-            <span
-              className="size-icon-sm rounded-sm border border-border"
-              style={{ backgroundColor: style.color }}
-            />
-            <span className="timecode text-foreground uppercase">{style.color}</span>
-            <input
-              type="color"
-              value={style.color}
-              className="sr-only"
-              onChange={(event) => onChange({ color: event.target.value })}
-            />
-          </label>
+          <ColourField
+            value={style.color}
+            label="Caption colour"
+            onChange={(color) => onChange({ color })}
+          />
         </StyleRow>
 
         {/* Both on one row, typed rather than dragged: they are adjustments
@@ -356,6 +407,237 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
           </ToggleGroup>
         </StyleRow>
       </div>
+
+      {/* Where the caption sits and how big it is — the four fields the handles
+          on the picture drag. A second heading rather than four more rows above:
+          these answer "where is it", while everything above answers "what does
+          it look like", and the reset below only makes sense over the first.
+
+          Open to begin with. Collapsing is for reaching the list sooner, not a
+          way of admitting these four are secondary.
+
+          The gap above is `block` and not `section`: this panel is 40% of a
+          column, around 330px, and a section-scale gap spends a seventh of it
+          on one space — enough that the section scrolled with the group shut.
+          The gap below belongs to the content, so closing the group actually
+          gets it back. */}
+      <Collapsible defaultOpen>
+        <div className="mt-block flex items-center gap-component">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex flex-1 cursor-pointer items-center gap-inline border-0 bg-transparent p-0 text-caption font-medium text-foreground"
+            >
+              {/* The chevron turns rather than swapping icons, so the open state
+                  reads as one control moving instead of two icons alternating. */}
+              <ChevronDown
+                size={14}
+                className="text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90"
+              />
+              <h2 className="m-0 font-medium">Layout</h2>
+            </button>
+          </CollapsibleTrigger>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="Back to the default position and size"
+            onClick={() => onChange(DEFAULT_LAYOUT)}
+          >
+            <RotateCcw size={14} />
+          </Button>
+        </div>
+
+        <CollapsibleContent className="flex flex-col gap-component pt-component">
+          {/* What the corner handles drag. Separate from Size because they answer
+            different questions — see CaptionStyle. */}
+          <StyleRow
+            label="Scale"
+            readout={
+              <NumberField
+                value={Math.round(style.scalePct)}
+                min={CAPTION_STYLE_LIMITS.scalePct.min}
+                max={CAPTION_STYLE_LIMITS.scalePct.max}
+                label="Caption scale, as a percentage"
+                title="A percentage of the size set above. Dragging a corner on the picture changes this, not the size."
+                onCommit={(next) => onChange({ scalePct: next })}
+              />
+            }
+          >
+            <Slider
+              value={[style.scalePct]}
+              min={CAPTION_STYLE_LIMITS.scalePct.min}
+              max={CAPTION_STYLE_LIMITS.scalePct.max}
+              step={1}
+              onValueChange={([next]) => onChange({ scalePct: next })}
+            />
+          </StyleRow>
+
+          {/* Two numbers, so the row gives up its readout column the way Spacing
+            does. Shown as percentages of the picture, which is how they are
+            stored — pixels would mean nothing without saying at what size. */}
+          <StyleRow label="Pos" wide>
+            <div className="flex flex-1 items-center gap-component">
+              <span className="shrink-0 text-caption font-normal text-muted-foreground">X</span>
+              <NumberField
+                value={Math.round(style.x * 100)}
+                min={CAPTION_STYLE_LIMITS.x.min * 100}
+                max={CAPTION_STYLE_LIMITS.x.max * 100}
+                label="Caption centre across the picture, as a percentage"
+                onCommit={(next) => onChange({ x: next / 100 })}
+              />
+              <span className="shrink-0 text-caption font-normal text-muted-foreground">Y</span>
+              <NumberField
+                value={Math.round(style.y * 100)}
+                min={CAPTION_STYLE_LIMITS.y.min * 100}
+                max={CAPTION_STYLE_LIMITS.y.max * 100}
+                label="Caption centre down the picture, as a percentage"
+                onCommit={(next) => onChange({ y: next / 100 })}
+              />
+            </div>
+          </StyleRow>
+
+          {/* No slider: 0 is auto rather than the narrowest width, so a track
+            running from it would put the widest behaviour at the narrow end.
+            The toggle says which of the two states this is, and the box is the
+            width when there is one. */}
+          <StyleRow label="Width" wide>
+            <div className="flex flex-1 items-center gap-component">
+              <Toggle
+                variant="outline"
+                pressed={style.widthPct === 0}
+                // Leaving auto adopts the width auto already resolves to, so the
+                // caption itself does not move on the way out.
+                onPressedChange={(auto) => onChange({ widthPct: auto ? 0 : 100 })}
+              >
+                Auto
+              </Toggle>
+              <NumberField
+                value={style.widthPct}
+                min={1}
+                max={CAPTION_STYLE_LIMITS.widthPct.max}
+                label="Caption width, as a percentage of the picture"
+                title="Where the caption wraps. Drag either side handle on the picture to set it."
+                disabled={style.widthPct === 0}
+                onCommit={(next) => onChange({ widthPct: next })}
+              />
+            </div>
+          </StyleRow>
+
+          <StyleRow
+            label="Rotate"
+            readout={
+              <NumberField
+                value={Math.round(style.rotation)}
+                min={CAPTION_STYLE_LIMITS.rotation.min}
+                max={CAPTION_STYLE_LIMITS.rotation.max}
+                label="Caption rotation in degrees"
+                onCommit={(next) => onChange({ rotation: next })}
+              />
+            }
+          >
+            <Slider
+              value={[style.rotation]}
+              min={CAPTION_STYLE_LIMITS.rotation.min}
+              max={CAPTION_STYLE_LIMITS.rotation.max}
+              step={1}
+              onValueChange={([next]) => onChange({ rotation: next })}
+            />
+          </StyleRow>
+        </CollapsibleContent>
+      </Collapsible>
+
+      {/* A stroke around the glyphs. The switch is in the heading rather than a
+          row of its own, because it answers "is there an outline at all" and
+          the rows below only describe the one there is — the same shape the
+          scope select has in the Style heading. */}
+      <Collapsible defaultOpen>
+        <div className="mt-block flex items-center gap-component">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex flex-1 cursor-pointer items-center gap-inline border-0 bg-transparent p-0 text-caption font-medium text-foreground"
+            >
+              <ChevronDown
+                size={14}
+                className="text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90"
+              />
+              <h2 className="m-0 font-medium">Outline</h2>
+            </button>
+          </CollapsibleTrigger>
+          <Toggle
+            variant="outline"
+            size="sm"
+            aria-label="Outline the caption"
+            pressed={style.outline}
+            onPressedChange={(outline) => onChange({ outline })}
+          >
+            {style.outline ? 'On' : 'Off'}
+          </Toggle>
+        </div>
+
+        {/* Left in place and disabled rather than hidden while the outline is
+            off: the values are still there, and a row that disappears reads as
+            "this setting does not exist" rather than "it is not in use". */}
+        <CollapsibleContent className="flex flex-col gap-component pt-component">
+          <StyleRow label="Colour">
+            <ColourField
+              value={style.outlineColor}
+              label="Outline colour"
+              disabled={!style.outline}
+              onChange={(outlineColor) => onChange({ outlineColor })}
+            />
+          </StyleRow>
+
+          <StyleRow
+            label="Opacity"
+            readout={
+              <NumberField
+                value={Math.round(style.outlineOpacityPct)}
+                min={CAPTION_STYLE_LIMITS.outlineOpacityPct.min}
+                max={CAPTION_STYLE_LIMITS.outlineOpacityPct.max}
+                label="Outline opacity, as a percentage"
+                disabled={!style.outline}
+                onCommit={(next) => onChange({ outlineOpacityPct: next })}
+              />
+            }
+          >
+            <Slider
+              value={[style.outlineOpacityPct]}
+              min={CAPTION_STYLE_LIMITS.outlineOpacityPct.min}
+              max={CAPTION_STYLE_LIMITS.outlineOpacityPct.max}
+              step={1}
+              disabled={!style.outline}
+              onValueChange={([next]) => onChange({ outlineOpacityPct: next })}
+            />
+          </StyleRow>
+
+          {/* Pixels at the reference height, like the two spacings — every
+              length in this panel means the same thing. */}
+          <StyleRow
+            label="Width"
+            readout={
+              <NumberField
+                value={style.outlineWidth}
+                min={CAPTION_STYLE_LIMITS.outlineWidth.min}
+                max={CAPTION_STYLE_LIMITS.outlineWidth.max}
+                label="Outline width"
+                title={REFERENCE_HINT}
+                disabled={!style.outline}
+                onCommit={(next) => onChange({ outlineWidth: next })}
+              />
+            }
+          >
+            <Slider
+              value={[style.outlineWidth]}
+              min={CAPTION_STYLE_LIMITS.outlineWidth.min}
+              max={CAPTION_STYLE_LIMITS.outlineWidth.max}
+              step={1}
+              disabled={!style.outline}
+              onValueChange={([next]) => onChange({ outlineWidth: next })}
+            />
+          </StyleRow>
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   )
 })

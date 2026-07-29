@@ -3,9 +3,11 @@ import { test } from 'node:test'
 import {
   CAPTION_REFERENCE_HEIGHT,
   CAPTION_STYLE_LIMITS,
+  captionFontSizePct,
   captionLengthFor,
   captionSizePct,
   captionSizePx,
+  captionWrapShare,
   DEFAULT_CAPTION_STYLE,
   DEFAULT_CAPTION_STYLES,
   normalizeCaptionStyles,
@@ -82,13 +84,19 @@ test('every field survives a round trip through normalizing', () => {
     base: {
       fontFamily: 'Inter',
       fontSizePct: 7.5,
+      scalePct: 140,
       bold: true,
       italic: true,
       underline: true,
       color: '#ff8800',
+      outline: true,
+      outlineColor: '#001122',
+      outlineOpacityPct: 40,
+      outlineWidth: 7,
       letterSpacing: 12,
       lineSpacing: 30,
       align: 'left',
+      widthPct: 60,
       x: 0.25,
       y: 0.5,
       rotation: -15
@@ -170,4 +178,59 @@ test('a size typed back in is the size that was shown', () => {
   for (let pct = CAPTION_STYLE_LIMITS.fontSizePct.min; pct <= 20; pct += 0.5) {
     assert.equal(captionSizePct(captionSizePx(pct)), pct, `${pct}% did not survive`)
   }
+})
+
+test('scale multiplies the size and leaves it alone at 100', () => {
+  assert.equal(captionFontSizePct({ fontSizePct: 5, scalePct: 100 }), 5)
+  assert.equal(captionFontSizePct({ fontSizePct: 5, scalePct: 200 }), 10)
+  assert.equal(captionFontSizePct({ fontSizePct: 5, scalePct: 50 }), 2.5)
+})
+
+test('an auto width wraps at the whole picture', () => {
+  assert.equal(captionWrapShare(0), 1)
+  assert.equal(captionWrapShare(100), 1)
+  assert.equal(captionWrapShare(50), 0.5)
+})
+
+// Whatever the default is, it has to be the one that leaves a caption looking
+// exactly as it did before either field existed.
+test('the defaults are the no-op values', () => {
+  assert.equal(DEFAULT_CAPTION_STYLE.scalePct, 100)
+  assert.equal(DEFAULT_CAPTION_STYLE.widthPct, 0)
+  assert.equal(captionWrapShare(DEFAULT_CAPTION_STYLE.widthPct), 1)
+  assert.equal(captionFontSizePct(DEFAULT_CAPTION_STYLE), DEFAULT_CAPTION_STYLE.fontSizePct)
+})
+
+// A project written before these fields existed still has to open.
+test('a stored style missing scale and width takes the defaults', () => {
+  const styles = normalizeCaptionStyles({ base: { fontSizePct: 7 } })
+  assert.equal(styles.base.scalePct, DEFAULT_CAPTION_STYLE.scalePct)
+  assert.equal(styles.base.widthPct, DEFAULT_CAPTION_STYLE.widthPct)
+})
+
+test('scale and width are clamped rather than dropped', () => {
+  const styles = normalizeCaptionStyles({ base: { scalePct: 9999, widthPct: -20 } })
+  assert.equal(styles.base.scalePct, CAPTION_STYLE_LIMITS.scalePct.max)
+  assert.equal(styles.base.widthPct, CAPTION_STYLE_LIMITS.widthPct.min)
+})
+
+// The outline is off by default, so a project that never touched it looks
+// exactly as it did before the fields existed.
+test('the outline defaults to off and keeps its settings under it', () => {
+  assert.equal(DEFAULT_CAPTION_STYLE.outline, false)
+  const styles = normalizeCaptionStyles({ base: { outlineWidth: 9 } })
+  assert.equal(styles.base.outline, false)
+  // The width still reads back: turning the switch on is what uses it.
+  assert.equal(styles.base.outlineWidth, 9)
+})
+
+test('a malformed outline colour falls back rather than reaching CSS', () => {
+  const styles = normalizeCaptionStyles({ base: { outlineColor: 'black; content: url(x)' } })
+  assert.equal(styles.base.outlineColor, DEFAULT_CAPTION_STYLE.outlineColor)
+})
+
+test('outline opacity and width are clamped', () => {
+  const styles = normalizeCaptionStyles({ base: { outlineOpacityPct: 500, outlineWidth: -3 } })
+  assert.equal(styles.base.outlineOpacityPct, CAPTION_STYLE_LIMITS.outlineOpacityPct.max)
+  assert.equal(styles.base.outlineWidth, CAPTION_STYLE_LIMITS.outlineWidth.min)
 })

@@ -4,6 +4,7 @@ import type {
   CommandResult,
   EditCommand,
   EditDocument,
+  ExportSettings,
   TranscribeConfig,
   Transcript
 } from '@logcut/core'
@@ -112,6 +113,9 @@ export interface UseProjectResult {
   undo(): void
   redo(): void
   exportSrt(assetId: string): Promise<string | null>
+  /** Remember how this project is exported. Not an undoable edit: it changes
+   *  what the next export produces, not the cut itself. */
+  setExportSettings(settings: ExportSettings): Promise<void>
 }
 
 /** Owns one open project: its detail record, the transcripts of whatever is on
@@ -334,6 +338,11 @@ export function useProject(projectId: string): UseProjectResult {
     [guard, projectId, record]
   )
 
+  const setExportSettings = useCallback(
+    (settings: ExportSettings) => guard(() => window.logcut.setExportSettings(projectId, settings)),
+    [guard, projectId]
+  )
+
   /**
    * Change the longest subtitle line and re-split what can be re-split.
    *
@@ -469,6 +478,7 @@ export function useProject(projectId: string): UseProjectResult {
     doc,
     undo,
     redo,
-    exportSrt
+    exportSrt,
+    setExportSettings
   }
 }

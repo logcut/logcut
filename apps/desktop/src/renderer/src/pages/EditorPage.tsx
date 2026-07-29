@@ -1,5 +1,6 @@
 import {
   DEFAULT_CAPTION_STYLES,
+  DEFAULT_EXPORT_SETTINGS,
   DEFAULT_MAX_CHARS,
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
@@ -12,6 +13,8 @@ import { Captions, Film } from 'lucide-react'
 import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import EditorTopBar from '@/components/EditorTopBar'
+import ExportDialog from '@/components/ExportDialog'
+import ExportSettingsDialog from '@/components/ExportSettingsDialog'
 import MediaTab from '@/components/MediaTab'
 import Panel from '@/components/Panel'
 import ResizeHandle from '@/components/ResizeHandle'
@@ -23,6 +26,7 @@ import type { TimelineClipView } from '@/components/Timeline'
 import VideoPlayer from '@/components/VideoPlayer'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAgentBridge } from '@/hooks/useAgentBridge'
+import { useExport } from '@/hooks/useExport'
 import { useProject } from '@/hooks/useProject'
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback'
 import { useCaptionFonts } from '@/hooks/useCaptionFonts'
@@ -107,7 +111,8 @@ export default function EditorPage({
     canUndo,
     canRedo,
     redo,
-    exportSrt
+    exportSrt,
+    setExportSettings
   } = useProject(projectId)
 
   const [tab, setTab] = useState('media')
@@ -165,9 +170,48 @@ export default function EditorPage({
   const clips = useMemo(() => project?.timeline ?? [], [project])
   const assets = useMemo(() => project?.assets ?? [], [project])
   const playback = useTimelinePlayback(videoRef, clips, assets)
+  const [exportSettingsOpen, setExportSettingsOpen] = useState(false)
+
+  const {
+    state: exportState,
+    codecs: exportCodecs,
+    start: startExport,
+    cancel: cancelExport,
+    dismiss: dismissExport
+  } = useExport(projectId)
 
   const assetOf = (assetId: string): MediaAssetSummary | null =>
     assets.find((asset) => asset.id === assetId) ?? null
+
+  /**
+   * Each asset's audio envelope, fetched once and kept.
+   *
+   * Not carried on the asset summary: it is two orders of magnitude larger than
+   * everything else there, and that shape is re-sent on every project update.
+   * The envelope never changes once built, so one fetch per asset is all there
+   * ever is.
+   */
+  const [peaks, setPeaks] = useState<Record<string, Uint8Array>>({})
+  const peaksAsked = useRef(new Set<string>())
+
+  useEffect(() => {
+    for (const asset of assets) {
+      // Artwork lands minutes after an import, so `hasWaveform` flips from
+      // false to true and this runs again — which is why the guard is on
+      // having asked, not on the flag.
+      if (!asset.hasWaveform || peaksAsked.current.has(asset.id)) continue
+      peaksAsked.current.add(asset.id)
+      void window.logcut.getWaveform(projectId, asset.id).then((data) => {
+        // Null means it went missing between the summary and the read; let a
+        // later pass ask again rather than leaving the clip blank for good.
+        if (data === null) {
+          peaksAsked.current.delete(asset.id)
+          return
+        }
+        setPeaks((current) => ({ ...current, [asset.id]: data }))
+      })
+    }
+  }, [assets, projectId])
 
   /** Clips with their asset's artwork folded in, ready to draw. */
   const clipViews = useMemo<TimelineClipView[]>(
@@ -180,19 +224,43 @@ export default function EditorPage({
           durationMs: clip.durationMs,
           name: asset?.fileName ?? 'Missing media',
           filmstripUrl: asset?.filmstripUrl ?? null,
-          waveformUrl: asset?.waveformUrl ?? null,
+          peaks: (asset && peaks[asset.id]) ?? null,
           // 16:9 when the probe came back without dimensions — a wrong guess
           // only misjudges how many frames fit, never distorts one.
           aspect: asset?.width && asset.height ? asset.width / asset.height : 16 / 9,
           missing: asset?.missing ?? true
         }
       }),
-    [clips, assets]
+    [clips, assets, peaks]
   )
 
   /** Every clip's subtitles on the timeline's own clock, and downstream this
    *  must keep reading as one transcript — nothing below knows about pieces. */
   const utterances = useMemo(() => layUtterances(clips, transcripts), [clips, transcripts])
+
+  const timelineDurationMs = clips.reduce((total, clip) => total + clip.durationMs, 0)
+
+  /**
+   * Export is unavailable for two reasons and says which.
+   *
+   * The encoder check only bites when there is something to burn: a timeline
+   * with no captions is copied through rather than rendered, which a build with
+   * no encoder can still do (see main/export.md).
+   */
+  const exportBlockedReason =
+    clips.length === 0
+      ? 'Add a clip to the timeline first'
+      : utterances.length > 0 && exportCodecs?.length === 0
+        ? 'This build has no video encoder, so captions cannot be burned in'
+        : null
+
+  /** What "Match source" resolves to, so the dialog can name it rather than
+   *  leaving the user to guess what they are matching. */
+  const firstAsset = clips[0] ? assetOf(clips[0].assetId) : null
+  const sourceFrame =
+    firstAsset?.width !== undefined && firstAsset.height !== undefined
+      ? { width: firstAsset.width, height: firstAsset.height }
+      : null
 
   /** Subtitle work targets the selected clip, or the first one laid down. */
   const subtitleClip = clips.find((clip) => clip.id === subtitleClipId) ?? clips[0] ?? null
@@ -859,11 +927,38 @@ export default function EditorPage({
         name={project?.name ?? 'Loading…'}
         chatOpen={chatOpen}
         subtitlesOpen={subtitlesOpen}
+        exporting={exportState.kind === 'choosing' || exportState.kind === 'running'}
+        exportBlockedReason={exportBlockedReason}
         onResetLayout={resetLayout}
         onBack={onBack}
         onRename={(name) => void rename(name)}
         onToggleChat={toggleChat}
         onToggleSubtitles={toggleSubtitles}
+        onExport={() => setExportSettingsOpen(true)}
+      />
+
+      <ExportSettingsDialog
+        open={exportSettingsOpen}
+        settings={project?.exportSettings ?? DEFAULT_EXPORT_SETTINGS}
+        durationMs={timelineDurationMs}
+        captionCount={utterances.length}
+        sourceFrame={sourceFrame}
+        codecs={exportCodecs ?? []}
+        onOpenChange={setExportSettingsOpen}
+        onExport={(settings) => {
+          setExportSettingsOpen(false)
+          // Saved on the way out, not on every keystroke: Cancel has to leave
+          // the project as it was (see ExportSettingsDialog.md).
+          void setExportSettings(settings).then(startExport)
+        }}
+      />
+
+      <ExportDialog
+        state={exportState}
+        durationMs={timelineDurationMs}
+        captionCount={utterances.length}
+        onCancel={cancelExport}
+        onDismiss={dismissExport}
       />
 
       {/* Full-height columns, each side one rendered only while it shows —
@@ -972,6 +1067,7 @@ export default function EditorPage({
                   onCaptionStyleChange={applyStylePatch}
                   captionFontStack={captionFontStack}
                   captionStyle={captionStyle}
+                  snapEnabled={snapEnabled}
                 />
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">

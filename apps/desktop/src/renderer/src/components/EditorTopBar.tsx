@@ -1,4 +1,4 @@
-import { ChevronLeft, LayoutGrid, PanelLeft, PanelRight } from 'lucide-react'
+import { ChevronLeft, LayoutGrid, Loader2, PanelLeft, PanelRight, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import TitleBar from '@/components/TitleBar'
@@ -15,10 +15,16 @@ interface EditorTopBarProps {
   name: string
   chatOpen: boolean
   subtitlesOpen: boolean
+  /** An export is being set up or is running; a second one cannot start. */
+  exporting: boolean
+  /** Why export is unavailable, or null when it is available. Doubles as the
+   *  disabled state, so the button can never be dead without saying why. */
+  exportBlockedReason: string | null
   onBack(): void
   onRename(name: string): void
   onToggleChat(): void
   onToggleSubtitles(): void
+  onExport(): void
   /** Put every column and the timeline back to the sizes the editor opens on
    *  the first time. */
   onResetLayout(): void
@@ -36,10 +42,13 @@ export default function EditorTopBar({
   name,
   chatOpen,
   subtitlesOpen,
+  exporting,
+  exportBlockedReason,
   onBack,
   onRename,
   onToggleChat,
   onToggleSubtitles,
+  onExport,
   onResetLayout
 }: EditorTopBarProps): JSX.Element {
   const [editing, setEditing] = useState(false)
@@ -142,6 +151,21 @@ export default function EditorTopBar({
           onClick={onToggleSubtitles}
         >
           <PanelRight />
+        </Button>
+
+        {/* The filled button on a bar of quiet ones, and the only one here:
+            export is what this screen is ultimately for, and the three to its
+            left are ways of looking at the work rather than acts upon it. The
+            margin is its own, so the toggles stay flush with each other. */}
+        <Button
+          size="lg"
+          title={exportBlockedReason ?? 'Export the timeline as a video'}
+          disabled={exporting || exportBlockedReason !== null}
+          className="ml-component [-webkit-app-region:no-drag]"
+          onClick={onExport}
+        >
+          {exporting ? <Loader2 className="animate-spin" /> : <Upload />}
+          Export
         </Button>
       </div>
     </TitleBar>

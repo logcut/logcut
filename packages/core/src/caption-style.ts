@@ -26,11 +26,49 @@ export interface CaptionStyle {
    * size the number was chosen against.
    */
   fontSizePct: number
+  /**
+   * How much this caption is blown up from the size chosen above, as a
+   * percentage. 100 is the size as authored.
+   *
+   * A second number for what looks like one quantity, because they answer
+   * different questions: `fontSizePct` is the type the project is set in, and
+   * this is how big this caption was dragged. Folding the drag into the type
+   * size would mean the panel's size readout changed every time a corner
+   * moved, and there would be nothing left to state the project's own size.
+   *
+   * It multiplies the font size and nothing else — the two spacings and the
+   * backing plate keep their own definitions, which are already relative to
+   * the picture.
+   */
+  scalePct: number
   bold: boolean
   italic: boolean
   underline: boolean
   /** CSS colour, `#rrggbb`. */
   color: string
+  /**
+   * Whether the type is stroked.
+   *
+   * A switch rather than "width 0 means off", so that turning it off and on
+   * again finds the width that was set. The three fields below keep their
+   * values while it is off — that is the whole difference between a toggle and
+   * a zero.
+   */
+  outline: boolean
+  /** CSS colour, `#rrggbb`. */
+  outlineColor: string
+  /** 0 is invisible, 100 is solid. */
+  outlineOpacityPct: number
+  /**
+   * How far the stroke stands out from the glyph, in pixels at
+   * `CAPTION_REFERENCE_HEIGHT` — the same unit as the two spacings.
+   *
+   * **Outward from the edge, not centred on it.** Both renderers are made to
+   * agree on that: ASS's `\bord` grows outward already, while a CSS text
+   * stroke is centred and eats half the letterform, so the preview doubles
+   * this and paints the stroke under the fill.
+   */
+  outlineWidth: number
   /**
    * Extra space between characters, in pixels at `CAPTION_REFERENCE_HEIGHT`.
    * 0 is the font's own spacing.
@@ -42,6 +80,18 @@ export interface CaptionStyle {
    */
   lineSpacing: number
   align: CaptionAlign
+  /**
+   * The width the caption's text is laid out in, as a percentage of the
+   * picture's width — which is to say where it wraps. **0 means auto**: the
+   * box is however wide the text is, and only the picture's own width stops
+   * it.
+   *
+   * Auto is a value rather than the absence of one because the two states are
+   * genuinely different objects. Under auto the box has no width of its own to
+   * drag, and `align` has nothing to align within; once a width is set the box
+   * is a fixed frame the text sits inside.
+   */
+  widthPct: number
   /**
    * Centre of the caption block, as a share of the picture's width and height.
    * 0.5 / 0.88 is centred near the bottom, where a subtitle normally sits.
@@ -73,13 +123,21 @@ export const SYSTEM_FONT = 'system'
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   fontFamily: SYSTEM_FONT,
   fontSizePct: 5,
+  scalePct: 100,
   bold: false,
   italic: false,
   underline: false,
   color: '#ffffff',
+  outline: false,
+  outlineColor: '#000000',
+  outlineOpacityPct: 100,
+  // About a tenth of the default type size, which is where a stroke reads as
+  // an edge rather than as a second weight of the same letter.
+  outlineWidth: 5,
   letterSpacing: 0,
   lineSpacing: 0,
   align: 'center',
+  widthPct: 0,
   x: 0.5,
   y: 0.88,
   rotation: 0
@@ -114,6 +172,30 @@ export function captionLengthFor(referenceLength: number, frameHeight: number): 
   return (referenceLength / CAPTION_REFERENCE_HEIGHT) * frameHeight
 }
 
+/**
+ * The share of the picture's height the type actually occupies: the size the
+ * project is set in, blown up by what this caption was dragged to.
+ *
+ * Both the preview and the burn-in go through here. Two multiplications in two
+ * files is the drift the correspondence between them cannot survive.
+ */
+export function captionFontSizePct(style: Pick<CaptionStyle, 'fontSizePct' | 'scalePct'>): number {
+  return (style.fontSizePct * style.scalePct) / 100
+}
+
+/**
+ * The width the text lays out in, as a share of the picture's width — where
+ * the caption wraps.
+ *
+ * **Auto is the whole picture**, because that is what libass wraps against: an
+ * `\an5`-positioned event still takes its limit from `PlayResX` less the
+ * event's margins, whatever `\pos` says. The preview has to agree or the same
+ * line breaks in one place on screen and another in the file.
+ */
+export function captionWrapShare(widthPct: number): number {
+  return widthPct === 0 ? 1 : widthPct / 100
+}
+
 /** Pixels at the reference height → the share this build stores. */
 export function captionSizePct(px: number): number {
   // Rounded to the same precision the slider steps in, so that typing the
@@ -139,8 +221,14 @@ export const DEFAULT_LINE_RATIO = 1.3
  */
 export const CAPTION_STYLE_LIMITS = {
   fontSizePct: { min: 1, max: 20 },
+  scalePct: { min: 10, max: 500 },
+  outlineOpacityPct: { min: 0, max: 100 },
+  outlineWidth: { min: 0, max: 40 },
   letterSpacing: { min: -20, max: 100 },
   lineSpacing: { min: -40, max: 200 },
+  // 0 is auto, so the low bound is not a width — every control offering this
+  // range has to say what 0 means rather than showing it as a number.
+  widthPct: { min: 0, max: 100 },
   // The centre stays on the picture. A caption may hang over an edge, but a
   // centre outside it is a caption that cannot be grabbed to bring back.
   x: { min: 0, max: 1 },
@@ -184,10 +272,29 @@ const READERS: {
     typeof value === 'number' && Number.isFinite(value)
       ? clamp(value, CAPTION_STYLE_LIMITS.fontSizePct.min, CAPTION_STYLE_LIMITS.fontSizePct.max)
       : undefined,
+  scalePct: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clamp(value, CAPTION_STYLE_LIMITS.scalePct.min, CAPTION_STYLE_LIMITS.scalePct.max)
+      : undefined,
   bold: (value) => (typeof value === 'boolean' ? value : undefined),
   italic: (value) => (typeof value === 'boolean' ? value : undefined),
   underline: (value) => (typeof value === 'boolean' ? value : undefined),
   color: (value) => (typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined),
+  outline: (value) => (typeof value === 'boolean' ? value : undefined),
+  outlineColor: (value) =>
+    typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined,
+  outlineOpacityPct: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clamp(
+          value,
+          CAPTION_STYLE_LIMITS.outlineOpacityPct.min,
+          CAPTION_STYLE_LIMITS.outlineOpacityPct.max
+        )
+      : undefined,
+  outlineWidth: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clamp(value, CAPTION_STYLE_LIMITS.outlineWidth.min, CAPTION_STYLE_LIMITS.outlineWidth.max)
+      : undefined,
   letterSpacing: (value) =>
     typeof value === 'number' && Number.isFinite(value)
       ? clamp(value, CAPTION_STYLE_LIMITS.letterSpacing.min, CAPTION_STYLE_LIMITS.letterSpacing.max)
@@ -199,6 +306,10 @@ const READERS: {
   align: (value) =>
     typeof value === 'string' && (ALIGNMENTS as string[]).includes(value)
       ? (value as CaptionAlign)
+      : undefined,
+  widthPct: (value) =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clamp(value, CAPTION_STYLE_LIMITS.widthPct.min, CAPTION_STYLE_LIMITS.widthPct.max)
       : undefined,
   x: (value) =>
     typeof value === 'number' && Number.isFinite(value)

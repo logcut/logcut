@@ -1,17 +1,29 @@
 /**
- * Pull a dragged time onto a nearby landmark (see snap.md).
+ * How near the pointer has to come before a drag is pulled onto a landmark,
+ * **in screen pixels**.
  *
- * **The tolerance is in milliseconds and the caller converts it from a pixel
- * distance at the current zoom.** One that felt right zoomed out covers a
- * whole word zoomed in.
+ * It is a distance the hand can hold, so it is quoted where the hand is — on
+ * screen — and every caller converts it into whatever it is dragging: the
+ * timeline divides by its scale to get milliseconds, the caption overlay by
+ * the picture's size to get a share of it. One number, because two would drift
+ * and a drag would then feel different depending on what was being dragged.
  */
-export function snapTime(timeMs: number, candidates: number[], toleranceMs: number): number {
-  if (toleranceMs <= 0) return timeMs
+export const SNAP_TOLERANCE_PX = 8
 
-  let best = timeMs
-  let bestDistance = toleranceMs
+/**
+ * Pull a dragged value onto a nearby landmark (see snap.md).
+ *
+ * **The tolerance is in the value's own units and the caller converts it from
+ * `SNAP_TOLERANCE_PX`.** A tolerance that felt right zoomed out covers a whole
+ * word zoomed in.
+ */
+export function snapToNearest(value: number, candidates: number[], tolerance: number): number {
+  if (tolerance <= 0) return value
+
+  let best = value
+  let bestDistance = tolerance
   for (const candidate of candidates) {
-    const distance = Math.abs(candidate - timeMs)
+    const distance = Math.abs(candidate - value)
     // Strictly nearer, so that among equidistant candidates the first given
     // wins — the caller orders them by what should take precedence.
     if (distance < bestDistance) {

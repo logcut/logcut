@@ -77,7 +77,13 @@ export function handleMediaRequest(request: Request): Response {
       'Content-Type': mime,
       'Accept-Ranges': 'bytes',
       'Content-Range': `bytes ${start}-${end}/${size}`,
-      'Content-Length': String(end - start + 1)
+      'Content-Length': String(end - start + 1),
+      // `corsEnabled` on the scheme only permits the check to happen; without
+      // an allowing header it then fails on its own. Any origin, because the
+      // only ones that exist are this app's own — file:// when packaged and
+      // the dev server otherwise — while what may be served at all is decided
+      // by the registered-path allow-list above, not by who is asking.
+      'Access-Control-Allow-Origin': '*'
     }
   })
 }

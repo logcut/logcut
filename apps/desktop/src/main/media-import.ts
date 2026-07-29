@@ -3,7 +3,13 @@ import { BrowserWindow } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { isSupportedMediaFile } from '../shared/media'
-import { extractFilmstrip, extractPoster, extractWaveform, probeMedia } from './ffmpeg'
+import {
+  ARTWORK_VERSION,
+  extractFilmstrip,
+  extractPoster,
+  extractWaveform,
+  probeMedia
+} from './ffmpeg'
 import {
   addAsset,
   DEFAULT_PROJECT_NAME,
@@ -58,15 +64,20 @@ function generateArtwork(projectId: string, asset: MediaAsset): void {
       }
     }
   }
+  // Only a run where every picture landed may stamp the version: stamping after
+  // a failure would record the asset as current and leave whatever failed
+  // missing for good, since the version is the only thing that asks for a retry.
+  let allLanded = true
   const warn =
     (what: string) =>
     (error: unknown): void => {
+      allLanded = false
       console.warn(`[media-import] ${what} failed for ${asset.fileName}:`, error)
     }
 
   const poster = `${asset.id}.jpg`
   const filmstrip = `${asset.id}-strip.jpg`
-  const waveform = `${asset.id}.png`
+  const waveform = `${asset.id}.peaks`
 
   void extractPoster(asset.path, posterOffsetMs(asset.durationMs), thumbnailPath(projectId, poster))
     .then(record({ thumbnail: poster }), warn('poster'))
@@ -82,6 +93,25 @@ function generateArtwork(projectId: string, asset: MediaAsset): void {
         warn('waveform')
       )
     )
+    .then(() => {
+      if (allLanded) record({ artworkVersion: ARTWORK_VERSION })()
+    })
+}
+
+/**
+ * Rebuild any artwork left over from older parameters, or never built at all.
+ *
+ * Called when a project is opened, and **detached**: the existing pictures are
+ * on screen already, so nothing waits for this. Each one that finishes updates
+ * the asset and broadcasts, exactly as it does on import — same function, so
+ * there is no second path that could drift from the first.
+ */
+export function refreshStaleArtwork(projectId: string): void {
+  const project = loadProject(projectId)
+  if (!project) return
+  for (const asset of project.assets) {
+    if (asset.artworkVersion !== ARTWORK_VERSION) generateArtwork(projectId, asset)
+  }
 }
 
 /**

@@ -1,18 +1,27 @@
 import {
   configCacheKey,
   DEFAULT_CAPTION_STYLES,
+  DEFAULT_EXPORT_SETTINGS,
   DEFAULT_MAX_CHARS,
   parseVolcanoResponse,
   segmentTranscript,
   toSrt
 } from '@logcut/core'
-import type { CaptionStyles, LanguageOption, TranscribeConfig, Transcript } from '@logcut/core'
+import type {
+  CaptionStyles,
+  ExportSettings,
+  LanguageOption,
+  TranscribeConfig,
+  Transcript
+} from '@logcut/core'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type {
   EditorLayout,
+  ExportCapabilities,
   ExportSrtResult,
+  ExportVideoResult,
   ImportMediaResult,
   MediaAssetSummary,
   ProjectDetail,
@@ -25,9 +34,10 @@ import type {
 } from '../shared/ipc'
 import { VIDEO_EXTENSIONS } from '../shared/media'
 import { transcribeAudio } from './asr'
-import { extractAudio } from './ffmpeg'
+import * as exporter from './export'
+import { availableCodecs, extractAudio } from './ffmpeg'
 import { registerMediaPath } from './media'
-import { importMedia } from './media-import'
+import { importMedia, refreshStaleArtwork } from './media-import'
 import * as projects from './projects'
 import * as settings from './settings'
 import * as updater from './updater'
@@ -77,9 +87,9 @@ function toAssetSummary(projectId: string, asset: projects.MediaAsset): MediaAss
     filmstripUrl: asset.filmstrip
       ? mediaUrlIfPresent(projects.thumbnailPath(projectId, asset.filmstrip))
       : null,
-    waveformUrl: asset.waveform
-      ? mediaUrlIfPresent(projects.waveformPath(projectId, asset.waveform))
-      : null,
+    hasWaveform:
+      asset.waveform !== undefined &&
+      fs.existsSync(projects.waveformPath(projectId, asset.waveform)),
     missing: state.missing,
     stale: state.stale,
     transcriptStatus: asset.transcriptStatus
@@ -110,7 +120,8 @@ function toDetail(project: projects.ProjectFile): ProjectDetail {
     // Resolved here so the renderer never has to know that older projects
     // simply have no such field.
     maxChars: project.maxChars ?? DEFAULT_MAX_CHARS,
-    captionStyles: project.captionStyles ?? DEFAULT_CAPTION_STYLES
+    captionStyles: project.captionStyles ?? DEFAULT_CAPTION_STYLES,
+    exportSettings: project.exportSettings ?? DEFAULT_EXPORT_SETTINGS
   }
 }
 
@@ -149,6 +160,20 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('system:get-locale', () => app.getLocale())
+  ipcMain.handle(
+    'project:waveform',
+    (_event, projectId: string, assetId: string): Uint8Array | null => {
+      const project = projects.loadProject(projectId)
+      const asset = project?.assets.find((candidate) => candidate.id === assetId)
+      if (!asset?.waveform) return null
+      const file = projects.waveformPath(projectId, asset.waveform)
+      // Absent is the normal answer while the envelope is still being built,
+      // and after a failure — never an error the caller has to handle.
+      if (!fs.existsSync(file)) return null
+      return new Uint8Array(fs.readFileSync(file))
+    }
+  )
+
   ipcMain.handle('settings:get-layout', () => settings.getEditorLayout())
   ipcMain.handle('settings:save-layout', (_event, layout: EditorLayout) => {
     settings.setEditorLayout(layout)
@@ -164,9 +189,14 @@ export function registerIpc(): void {
 
   ipcMain.handle('project:list', (): ProjectSummary[] => projects.listProjects().map(toSummary))
 
-  ipcMain.handle('project:open', (_event, projectId: string): ProjectDetail =>
-    toDetail(requireProject(projectId))
-  )
+  ipcMain.handle('project:open', (_event, projectId: string): ProjectDetail => {
+    const detail = toDetail(requireProject(projectId))
+    // After the reply, not before: the pictures already on disk are what the
+    // editor draws with, and rebuilding is minutes of ffmpeg that must not sit
+    // between the click and the project appearing.
+    refreshStaleArtwork(projectId)
+    return detail
+  })
 
   ipcMain.handle('project:rename', (_event, projectId: string, name: string): ProjectDetail => {
     const project = projects.renameProject(projectId, name)
@@ -370,6 +400,42 @@ export function registerIpc(): void {
       return { savedPath: result.filePath }
     }
   )
+
+  ipcMain.handle('export:capabilities', async (): Promise<ExportCapabilities> => ({
+    codecs: await availableCodecs()
+  }))
+  ipcMain.handle('export:cancel', (): void => exporter.cancelExport())
+
+  ipcMain.handle(
+    'export:settings',
+    (_event, projectId: string, settings: ExportSettings): ProjectDetail => {
+      const project = projects.setExportSettings(projectId, settings)
+      if (!project) throw new Error('PROJECT_MISSING: This project no longer exists')
+      return toDetail(project)
+    }
+  )
+
+  ipcMain.handle('export:video', async (event, projectId: string): Promise<ExportVideoResult> => {
+    const project = requireProject(projectId)
+
+    const window = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      defaultPath: `${project.name}.mp4`,
+      filters: [{ name: 'MPEG-4 video', extensions: ['mp4'] }]
+    }
+    const result = window
+      ? await dialog.showSaveDialog(window, options)
+      : await dialog.showSaveDialog(options)
+    // Dismissing the dialog is not a cancelled export: nothing was started,
+    // so the renderer has no progress dialog to put an outcome in.
+    if (result.canceled || !result.filePath) return {}
+
+    return exporter.exportVideo(projectId, result.filePath, (percent) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('export:progress', { projectId, percent })
+      }
+    })
+  })
 
   ipcMain.handle('app:get-version', (): string => app.getVersion())
   ipcMain.handle('update:get-state', (): UpdateState => updater.updateState())

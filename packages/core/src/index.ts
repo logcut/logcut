@@ -27,9 +27,11 @@ export {
 export {
   CAPTION_REFERENCE_HEIGHT,
   CAPTION_STYLE_LIMITS,
+  captionFontSizePct,
   captionLengthFor,
   captionSizePct,
   captionSizePx,
+  captionWrapShare,
   DEFAULT_LINE_RATIO,
   DEFAULT_CAPTION_STYLE,
   DEFAULT_CAPTION_STYLES,
@@ -46,9 +48,32 @@ export type { SegmentOptions } from './segment.ts'
 
 export { parseVolcanoResponse } from './volcano.ts'
 
-export { snapTime, utteranceEdges } from './snap.ts'
+export { SNAP_TOLERANCE_PX, snapToNearest, utteranceEdges } from './snap.ts'
 
 export { formatSrtTimestamp, toSrt } from './srt.ts'
+
+export { formatAssTimestamp, toAss } from './ass.ts'
+export type { AssInput, AssLine } from './ass.ts'
+
+export { captionLinesFor, planExport } from './export.ts'
+export type { CaptionClip, ExportClip, ExportInput, ExportPlan } from './export.ts'
+
+export {
+  AUDIO_BITRATE_KBPS,
+  AUDIO_SAMPLE_RATE_CHOICES,
+  DEFAULT_EXPORT_SETTINGS,
+  deriveBitrateKbps,
+  FPS_CHOICES,
+  normalizeExportSettings,
+  RESOLUTION_CHOICES,
+  VIDEO_BITRATE_KBPS
+} from './export-settings.ts'
+export type {
+  AudioChannels,
+  ExportCodec,
+  ExportQuality,
+  ExportSettings
+} from './export-settings.ts'
 
 export { formatTimecode, formatTimecodeFull, parseTimecode } from './timecode.ts'
 

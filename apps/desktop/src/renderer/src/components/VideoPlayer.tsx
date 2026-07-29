@@ -1,8 +1,12 @@
 import {
   CAPTION_STYLE_LIMITS,
+  captionFontSizePct,
   captionLengthFor,
+  captionWrapShare,
   DEFAULT_LINE_RATIO,
-  formatTimecode
+  formatTimecode,
+  SNAP_TOLERANCE_PX,
+  snapToNearest
 } from '@logcut/core'
 import type { CaptionStyle } from '@logcut/core'
 import { Maximize, Minimize, Pause, Play } from 'lucide-react'
@@ -37,6 +41,13 @@ interface VideoPlayerProps {
   onCaptionStyleChange(patch: Partial<CaptionStyle>): void
   /** CSS font-family for the caption; resolved by the caller. */
   captionFontStack: string
+  /**
+   * Whether a dragged caption lands on the centre of the picture. The same
+   * switch the timeline obeys, and off is a real working mode for the same
+   * reason: a caption meant to sit just off centre cannot be nudged there
+   * while every drag keeps pulling it back.
+   */
+  snapEnabled: boolean
   /** Everything else about the caption's appearance, already resolved. */
   captionStyle: CaptionStyle
 }
@@ -51,14 +62,25 @@ interface VideoPlayerProps {
  * position is reported against the timeline instead.
  */
 const clamp01 = (value: number): number => Math.min(1, Math.max(0, value))
-const clampSize = (value: number): number =>
+const clampScale = (value: number): number =>
   Math.min(
-    CAPTION_STYLE_LIMITS.fontSizePct.max,
-    Math.max(CAPTION_STYLE_LIMITS.fontSizePct.min, Math.round(value * 10) / 10)
+    CAPTION_STYLE_LIMITS.scalePct.max,
+    Math.max(CAPTION_STYLE_LIMITS.scalePct.min, Math.round(value))
+  )
+const clampWidth = (value: number): number =>
+  Math.min(
+    CAPTION_STYLE_LIMITS.widthPct.max,
+    // Never 0 from a drag: that is auto, and a gesture that landed on it would
+    // hand the box back to the text mid-drag.
+    Math.max(1, Math.round(value * 10) / 10)
   )
 
 /** Distance from the block's top edge up to the rotation handle. */
 const ROTATE_STALK = 24
+
+/** The one landmark a dragged caption lands on, per axis. Centred is the only
+ *  position with a name — everything else is wherever it was put. */
+const CENTRE = 0.5
 
 const CORNERS = [
   { name: 'top left', x: '0%', y: '0%', cursor: 'cursor-nwse-resize' },
@@ -67,9 +89,16 @@ const CORNERS = [
   { name: 'bottom right', x: '100%', y: '100%', cursor: 'cursor-nwse-resize' }
 ] as const
 
+/** Only the two sides. A caption's height is its text's height — there is
+ *  nothing for a top or bottom handle to drag. */
+const SIDES = [
+  { name: 'left', x: '0%' },
+  { name: 'right', x: '100%' }
+] as const
+
 /** A gesture in progress, and what it started from. */
 interface Drag {
-  mode: 'move' | 'scale' | 'rotate'
+  mode: 'move' | 'scale' | 'rotate' | 'width'
   pointerId: number
   /** The block's centre in client coordinates — the origin for both scale and
    *  rotate, and what makes them immune to the block's own rotation. */
@@ -79,12 +108,18 @@ interface Drag {
   /** Distance and angle to the pointer at the start, for scale and rotate. */
   radius: number
   angle: number
-  style: { x: number; y: number; rotation: number; fontSizePct: number }
+  style: Pick<CaptionStyle, 'x' | 'y' | 'rotation' | 'scalePct'>
 }
 
 /** Angle from a centre to a point, in degrees, clockwise from 12 o'clock. */
 function angleAt(centre: { x: number; y: number }, x: number, y: number): number {
   return (Math.atan2(y - centre.y, x - centre.x) * 180) / Math.PI + 90
+}
+
+/** `#rrggbb` and a percentage, as the eight-digit hex CSS takes. */
+function withAlpha(hex: string, opacityPct: number): string {
+  const alpha = Math.round(clamp01(opacityPct / 100) * 255)
+  return `${hex}${alpha.toString(16).padStart(2, '0')}`
 }
 
 export default function VideoPlayer({
@@ -98,7 +133,8 @@ export default function VideoPlayer({
   onCaptionEdit,
   onCaptionStyleChange,
   captionFontStack,
-  captionStyle
+  captionStyle,
+  snapEnabled
 }: VideoPlayerProps): JSX.Element {
   /** Fullscreen takes the controls with the picture, so it is the whole pane. */
   const paneRef = useRef<HTMLDivElement>(null)
@@ -108,11 +144,12 @@ export default function VideoPlayer({
   /** The picture's size on screen — the letterbox around it is not it. */
   const [frame, setFrame] = useState({ width: 0, height: 0 })
   /**
-   * The line being typed into, or null. Holding the text here rather than
-   * writing through on every keystroke is what lets Escape put the original
-   * back, and keeps one edit to one undo entry.
+   * Whether the caption is being typed into. The text itself stays in the DOM
+   * rather than in state — see the caption element below.
    */
-  const [editing, setEditing] = useState<{ text: string } | null>(null)
+  const [editing, setEditing] = useState(false)
+  /** The caption element: an edit is focused through it and read back off it. */
+  const captionRef = useRef<HTMLDivElement>(null)
   /** Selection is the player's own state, not the document's: it is where the
    *  pointer is, and it should not survive a reload or reach the file. */
   const [selected, setSelected] = useState(false)
@@ -136,10 +173,25 @@ export default function VideoPlayer({
 
   /** The caption's size in this pane's pixels. Every other length below is
    *  derived from it or scaled the same way, so it is computed once. */
-  const fontSizePx = (frame.height * style.fontSizePct) / 100
+  const fontSizePx = (frame.height * captionFontSizePct(style)) / 100
 
-  /** Shared by the caption and the box that replaces it, so editing does not
-   *  reflow the very text being edited. */
+  /** Where the text wraps, in this pane's pixels — the same limit the burn-in
+   *  takes from the event's margins. */
+  const wrapPx = frame.width * captionWrapShare(style.widthPct)
+
+  /**
+   * A guide is drawn per axis that is centred, while the caption is being
+   * moved. Read off the pending patch rather than held in state of its own:
+   * `x` is only ever in there during a move, so its presence *is* "a move is
+   * under way" and there is nothing to keep in step.
+   */
+  const moving = pending?.x !== undefined
+  const guides = {
+    vertical: moving && style.x === CENTRE,
+    horizontal: moving && style.y === CENTRE
+  }
+
+  /** Everything about the caption's type that comes from the document. */
   const captionCss = {
     fontFamily: captionFontStack,
     fontSize: fontSizePx,
@@ -152,7 +204,16 @@ export default function VideoPlayer({
     // in the preview would leave them untouched at export.
     letterSpacing: captionLengthFor(style.letterSpacing, frame.height),
     lineHeight: `${fontSizePx * DEFAULT_LINE_RATIO + captionLengthFor(style.lineSpacing, frame.height)}px`,
-    textAlign: style.align
+    textAlign: style.align,
+    // **Doubled, and painted under the fill.** A CSS text stroke straddles the
+    // glyph's edge, so half of it is spent eating into the letterform; ASS's
+    // `\bord` grows outward only. Twice the width with the fill on top leaves
+    // exactly the outward half showing, which is the width that was asked for.
+    WebkitTextStrokeWidth: style.outline
+      ? captionLengthFor(style.outlineWidth, frame.height) * 2
+      : 0,
+    WebkitTextStrokeColor: withAlpha(style.outlineColor, style.outlineOpacityPct),
+    paintOrder: 'stroke fill'
   } as const
 
   /**
@@ -180,7 +241,7 @@ export default function VideoPlayer({
       angle: angleAt(centre, event.clientX, event.clientY),
       // Read through `style`, so a gesture begun before the previous one has
       // been written back still starts from what is on screen.
-      style: { x: style.x, y: style.y, rotation: style.rotation, fontSizePct: style.fontSizePct }
+      style: { x: style.x, y: style.y, rotation: style.rotation, scalePct: style.scalePct }
     }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -198,9 +259,23 @@ export default function VideoPlayer({
     if (drag.mode === 'move') {
       // The picture's own size is the unit: dragging a third of the way across
       // moves the caption a third of the way, whatever the pane's zoom.
+      //
+      // The tolerance is a distance the hand can hold, so it is stated on
+      // screen and divided by the picture to reach the share this is measured
+      // in — the same conversion the timeline does with its scale. Snapping
+      // off makes it zero, which `snapToNearest` reads as "do not".
+      const tolerance = snapEnabled ? SNAP_TOLERANCE_PX : 0
       preview({
-        x: clamp01(drag.style.x + (event.clientX - drag.from.x) / frame.width),
-        y: clamp01(drag.style.y + (event.clientY - drag.from.y) / frame.height)
+        x: snapToNearest(
+          clamp01(drag.style.x + (event.clientX - drag.from.x) / frame.width),
+          [CENTRE],
+          tolerance / frame.width
+        ),
+        y: snapToNearest(
+          clamp01(drag.style.y + (event.clientY - drag.from.y) / frame.height),
+          [CENTRE],
+          tolerance / frame.height
+        )
       })
       return
     }
@@ -209,7 +284,23 @@ export default function VideoPlayer({
       if (drag.radius === 0) return
       const ratio =
         Math.hypot(event.clientX - drag.centre.x, event.clientY - drag.centre.y) / drag.radius
-      preview({ fontSizePct: clampSize(drag.style.fontSizePct * ratio) })
+      preview({ scalePct: clampScale(drag.style.scalePct * ratio) })
+      return
+    }
+
+    if (drag.mode === 'width') {
+      // The one gesture that is about a direction rather than a distance, so
+      // it is the one that has to undo the block's rotation: the pointer's
+      // offset is projected onto the block's own horizontal axis. Taking the
+      // raw distance instead would widen the box when the pointer moved
+      // *along* a turned edge.
+      const radians = (drag.style.rotation * Math.PI) / 180
+      const along =
+        (event.clientX - drag.centre.x) * Math.cos(radians) +
+        (event.clientY - drag.centre.y) * Math.sin(radians)
+      // The box is positioned by its centre, so a side handle is half a width
+      // away from it and both sides grow together.
+      preview({ widthPct: clampWidth((Math.abs(along) * 2 * 100) / frame.width) })
       return
     }
 
@@ -247,13 +338,22 @@ export default function VideoPlayer({
   const beginEditing = (): void => {
     if (captionText === null) return
     videoRef.current?.pause()
-    setEditing({ text: captionText })
+    // The caption element is rebuilt for the edit, which takes with it the
+    // pointer capture the double-click's first press may have started a move
+    // on. Drop that gesture too, or the half-pixel it travelled stays laid
+    // over the document until some later press happens to end it.
+    dragRef.current = null
+    pendingRef.current = null
+    setPending(null)
+    setEditing(true)
   }
 
   const commitEditing = (): void => {
-    if (editing === null) return
-    const next = editing.text.trim()
-    setEditing(null)
+    if (!editing) return
+    // `innerText`, not `textContent`: a line break the browser chose to store
+    // as an element reads back as the newline it looks like.
+    const next = (captionRef.current?.innerText ?? '').trim()
+    setEditing(false)
     // An unchanged line is reported as unchanged by the command layer anyway;
     // stopping here also spares the round trip.
     if (next !== '' && next !== captionText) onCaptionEdit(next)
@@ -274,8 +374,23 @@ export default function VideoPlayer({
   // than write the text onto whatever line arrived, the edit is dropped — the
   // caption it was opened on is no longer the caption on screen.
   useEffect(() => {
-    setEditing(null)
+    setEditing(false)
   }, [captionText])
+
+  // The edit starts on a freshly built element, so the caret can only be
+  // placed once that element is mounted.
+  useEffect(() => {
+    if (!editing) return
+    const element = captionRef.current
+    if (!element) return
+    element.focus()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.collapse(false)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  }, [editing])
 
   // Escape and the platform's own shortcut leave fullscreen without touching
   // the button, so the icon follows the document rather than the last click.
@@ -358,6 +473,17 @@ export default function VideoPlayer({
             {/* Sized to the picture, so the caption sits inside the frame
                 wherever the letterbox happens to leave it. */}
             <div className="relative" style={{ width: frame.width, height: frame.height }}>
+              {/* Before the caption, so a guide passes behind the text rather
+                  than through it. Edge to edge, because what it says is "this
+                  line is the middle of the picture" — a stub the length of the
+                  caption would only say the caption is where it already is. */}
+              {guides.vertical && (
+                <span className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-primary" />
+              )}
+              {guides.horizontal && (
+                <span className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-primary" />
+              )}
+
               {/* Positioned by its centre, then rotated about it. Storing the
                   centre rather than a corner is what keeps rotation and scaling
                   from also moving the caption: both are about this point.
@@ -367,12 +493,28 @@ export default function VideoPlayer({
                   the position is a coordinate. */}
               <div
                 data-caption-block
-                className="absolute"
+                // The plate is centred in the box whatever `align` says, because
+                // that is what the burn-in does: an `\an5` event is centred on
+                // its `\pos` and the margins that set the wrap width are
+                // symmetric. `align` aligns the lines *inside* the plate, which
+                // is all it has ever meant here.
+                //
+                // Flex and not `text-align`, so the box takes its height from
+                // the plate exactly — an inline-block would add the line box's
+                // descender under it and the selection frame would sit low.
+                className="absolute flex justify-center"
                 style={{
                   left: `${style.x * 100}%`,
                   top: `${style.y * 100}%`,
                   transform: `translate(-50%, -50%) rotate(${style.rotation}deg)`,
-                  maxWidth: frame.width
+                  // Under auto, `width: auto` would shrink-to-fit against the
+                  // space from `left` to the picture's right edge — half of it
+                  // at the default position — and the transform that centres
+                  // the block runs after layout, so it hands none of that back.
+                  // Stating the width is what puts `maxWidth` in charge of
+                  // where a caption wraps.
+                  width: style.widthPct === 0 ? 'max-content' : wrapPx,
+                  maxWidth: wrapPx
                 }}
                 onPointerMove={onDragMove}
                 onPointerUp={endDrag}
@@ -384,57 +526,73 @@ export default function VideoPlayer({
 
                   The size is a percentage of the *picture*, so the preview
                   shows the same proportion the export will — that is the whole
-                  reason it is not stored in pixels. */}
-                {editing === null ? (
-                  <span
-                    // Only the caption takes the pointer; the rest of the overlay
-                    // stays transparent to it so the picture below is unaffected.
-                    className={`pointer-events-auto block max-w-full rounded-panel bg-black/60 px-stack py-inline [text-wrap:balance] ${
-                      selected ? 'cursor-move' : 'cursor-pointer'
-                    }`}
-                    style={captionCss}
-                    title={selected ? 'Drag to move · double-click to edit' : 'Click to select'}
-                    onPointerDown={(event) => {
-                      event.stopPropagation()
-                      setSelected(true)
-                      // Only a drag that starts on the block itself moves it; the
-                      // handles are siblings and start their own gestures.
-                      if (selected) beginDrag(event, 'move')
-                    }}
-                    onDoubleClick={beginEditing}
-                  >
-                    {captionText}
-                  </span>
-                ) : (
-                  /* Same box, same type: what is being typed has to look like
-                   what it will be, or the line is edited against one set of
-                   metrics and read back in another.
-                   `field-sizing:content` keeps the box the size of the text,
-                   so a caption does not jump as the first character lands. */
-                  <textarea
-                    autoFocus
-                    value={editing.text}
-                    className="pointer-events-auto max-w-full resize-none rounded-panel border border-primary bg-black/60 px-stack py-inline outline-none [field-sizing:content]"
-                    style={captionCss}
-                    onChange={(event) => setEditing({ ...editing, text: event.target.value })}
-                    onBlur={commitEditing}
-                    onKeyDown={(event) => {
-                      // Enter commits, Shift+Enter breaks the line: a caption is
-                      // usually one line, and reaching for a button to save one
-                      // would cost more than the edit.
-                      if (event.key === 'Enter' && !event.shiftKey) {
-                        event.preventDefault()
-                        commitEditing()
-                      }
-                      if (event.key === 'Escape') setEditing(null)
-                    }}
-                  />
-                )}
+                  reason it is not stored in pixels.
 
-                {/* Handles only while selected and not typing: during an edit the
-                  block is a text field, and a grab handle over it would fight
-                  the caret for the same pointer. */}
-                {selected && editing === null && (
+                  Showing and editing are one element on purpose: a `<textarea>`
+                  cannot be made to break lines where this one does — see
+                  VideoPlayer.md. */}
+                <div
+                  // Rebuilt whenever the mode flips. That is what puts the
+                  // original text back on Escape: the browser owns this node's
+                  // text during an edit, and React will not rewrite children it
+                  // believes it already wrote.
+                  key={editing ? 'editing' : 'showing'}
+                  ref={captionRef}
+                  contentEditable={editing ? 'plaintext-only' : false}
+                  suppressContentEditableWarning
+                  // Only the caption takes the pointer; the rest of the overlay
+                  // stays transparent to it so the picture below is unaffected.
+                  //
+                  // An outline and not a border for the edit state: a border
+                  // would take a pixel out of the text's width on every side
+                  // and move the wrap the moment the box was double-clicked.
+                  className={`pointer-events-auto max-w-full rounded-panel bg-black/60 px-stack py-inline text-balance whitespace-pre-wrap ${
+                    editing
+                      ? 'outline-1 -outline-offset-1 outline-primary'
+                      : selected
+                        ? 'cursor-move'
+                        : 'cursor-pointer'
+                  }`}
+                  style={captionCss}
+                  title={
+                    editing
+                      ? undefined
+                      : selected
+                        ? 'Drag to move · double-click to edit'
+                        : 'Click to select'
+                  }
+                  onPointerDown={(event) => {
+                    event.stopPropagation()
+                    // While typing, a press is the caret being placed.
+                    if (editing) return
+                    setSelected(true)
+                    // Only a drag that starts on the block itself moves it; the
+                    // handles are siblings and start their own gestures.
+                    if (selected) beginDrag(event, 'move')
+                  }}
+                  onDoubleClick={beginEditing}
+                  onBlur={commitEditing}
+                  onKeyDown={(event) => {
+                    // An IME takes Enter to accept a candidate. Reading that as
+                    // the commit ends the edit in the middle of a word.
+                    if (event.nativeEvent.isComposing) return
+                    // Enter commits, Shift+Enter breaks the line: a caption is
+                    // usually one line, and reaching for a button to save one
+                    // would cost more than the edit.
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      commitEditing()
+                    }
+                    if (event.key === 'Escape') setEditing(false)
+                  }}
+                >
+                  {captionText}
+                </div>
+
+                {/* Handles only while selected and not typing: during an edit
+                  the caption takes the caret, and a grab handle over it would
+                  fight for the same pointer. */}
+                {selected && !editing && (
                   <>
                     {/* A square frame of its own rather than an outline on the
                         caption: an outline follows the block's rounded corners,
@@ -449,14 +607,33 @@ export default function VideoPlayer({
                       <span
                         key={corner.name}
                         role="slider"
-                        aria-label={`Resize from ${corner.name}`}
-                        aria-valuenow={Math.round(style.fontSizePct * 10) / 10}
+                        aria-label={`Scale from ${corner.name}`}
+                        aria-valuenow={Math.round(style.scalePct)}
                         tabIndex={-1}
                         className={`pointer-events-auto absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary bg-background ${corner.cursor}`}
                         style={{ left: corner.x, top: corner.y }}
                         onPointerDown={(event) => {
                           event.stopPropagation()
                           beginDrag(event, 'scale')
+                        }}
+                      />
+                    ))}
+
+                    {/* A bar rather than a dot, and only on the two sides: the
+                        shape says which axis it moves, and there is no vertical
+                        one to confuse it with. */}
+                    {SIDES.map((side) => (
+                      <span
+                        key={side.name}
+                        role="slider"
+                        aria-label={`Set the caption width from the ${side.name}`}
+                        aria-valuenow={Math.round(wrapPx)}
+                        tabIndex={-1}
+                        className="pointer-events-auto absolute top-1/2 h-4 w-1.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border border-primary bg-background"
+                        style={{ left: side.x }}
+                        onPointerDown={(event) => {
+                          event.stopPropagation()
+                          beginDrag(event, 'width')
                         }}
                       />
                     ))}

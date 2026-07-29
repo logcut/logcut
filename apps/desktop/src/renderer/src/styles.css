@@ -286,16 +286,66 @@
   }
 }
 
-/* ---- Subtitle panel scroll area ---- */
-.ConvertResult::-webkit-scrollbar {
+/* ---- Scrollbars ----
+ *
+ * One rule for every scroll area rather than a class each one has to remember
+ * to carry: a scroll area that forgets it does not look plain, it looks like a
+ * different application — the platform's overlay bar is a different shape, a
+ * different colour, and it fades, while this one does not.
+ *
+ * The timeline draws its own bar out of a div (it pans by transform, so there
+ * is no scroll container to style) and these values are that bar's: a
+ * `--color-border` pill on nothing, `--color-input` under the pointer. The two
+ * have to agree — they are on screen together.
+ *
+ * Unlayered on purpose, so it reaches the scroll areas inside Radix popovers
+ * too. It sets no property that `[&::-webkit-scrollbar]:hidden` sets, so the
+ * one place that hides its bar (tabs.tsx) still does.
+ */
+::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
-.ConvertResult::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   border-radius: 4px;
   background: var(--color-border);
 }
-.ConvertResult::-webkit-scrollbar-track {
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-input);
+}
+::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/*
+ * A styled scrollbar is no longer the platform's overlay bar — it occupies
+ * layout. Without a reserved gutter, a pane loses 8px of width the moment its
+ * content overflows and gets it back when it stops: everything inside shifts
+ * sideways as a group is opened, or as the window crosses the height where the
+ * content stops fitting. Reserving the gutter costs the 8px permanently and
+ * costs nothing else.
+ *
+ * Keyed on the overflow utilities rather than a class of our own, because the
+ * rule is "every vertical scroll container" and those class names are exactly
+ * that set — one fewer thing a new pane has to remember. `overflow-x-*` is
+ * deliberately absent: the gutter it would reserve is the vertical one, which
+ * on a horizontal scroller (`ui/tabs.tsx`) is dead space on the right.
+ */
+.overflow-auto,
+.overflow-scroll,
+.overflow-y-auto,
+.overflow-y-scroll {
+  scrollbar-gutter: stable;
+}
+
+/*
+ * Except popovers, which are sized to their content instead of filling a pane.
+ * There is nothing for a short menu to shift against, so a reserved gutter is
+ * only 8px of empty space down its right edge.
+ */
+[data-slot='select-content'],
+[data-slot='dropdown-menu-content'] {
+  scrollbar-gutter: auto;
 }
 
 /*

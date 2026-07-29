@@ -11,7 +11,21 @@ import { registerUpdater } from './updater'
 // standard is required: without it the media stack fails with
 // PIPELINE_ERROR_READ on seekable (Range) responses.
 protocol.registerSchemesAsPrivileged([
-  { scheme: MEDIA_SCHEME, privileges: { standard: true, stream: true, supportFetchAPI: true } }
+  {
+    scheme: MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+      // Without this Chromium refuses a cross-origin check on the scheme
+      // outright — "only supported for protocol schemes: chrome, …" — and any
+      // use that counts as reading the pixels fails. `mask-image` is one: a
+      // mask samples the alpha channel, so unlike `background-image` it is
+      // treated as a cross-origin read, and the timeline's waveforms silently
+      // never loaded (see components/Timeline.md).
+      corsEnabled: true
+    }
+  }
 ])
 
 function createWindow(): void {

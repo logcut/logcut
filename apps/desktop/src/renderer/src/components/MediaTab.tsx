@@ -76,9 +76,9 @@ export default function MediaTab({
         {error !== '' && <span className="text-caption font-normal text-destructive">{error}</span>}
       </div>
 
-      {/* auto-fill rather than a fixed column count: the panel is resizable, and
-          two cards stretched across a wide panel look like a mistake. */}
-      <div className="grid min-h-0 grid-cols-[repeat(auto-fill,minmax(112px,1fr))] gap-component overflow-y-auto">
+      {/* A fixed track, not `1fr`: the panel's width moves on its own — see
+          MediaTab.md. */}
+      <div className="grid min-h-0 grid-cols-[repeat(auto-fill,112px)] gap-component overflow-y-auto">
         {assets.map((asset) => {
           const selected = asset.id === selectedAssetId
           return (

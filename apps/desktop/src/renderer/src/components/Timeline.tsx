@@ -2,10 +2,12 @@ import {
   clampUtteranceTime,
   findNearestUtteranceIndex,
   formatTimecode,
-  snapTime,
+  SNAP_TOLERANCE_PX,
+  snapToNearest,
   utteranceEdges
 } from '@logcut/core'
 import type { Utterance } from '@logcut/core'
+import Waveform from '@/components/Waveform'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   DragEvent as ReactDragEvent,
@@ -22,21 +24,13 @@ import { pickTickInterval, pxPerMs, subtitleBlocks, tickTimes } from '@/lib/time
 import { FILMSTRIP_FRAMES } from '../../../shared/media'
 
 /**
- * How near a landmark a drag has to get before it lands on it, on screen.
- *
- * Half a finger-width would grab things nobody aimed at; a couple of pixels
- * would never catch. Eight is about the distance a pointer overshoots by.
- */
-const SNAP_PX = 8
-
-/**
- * Fit-to-width makes a short line a fraction of a pixel wide. Blocks are
- * widened to this so every subtitle stays visible and aimable; nothing is
- * being edited on the timeline, so the drift it introduces costs nothing.
- */
-/**
  * Below this a block has no room for a word, and a couple of clipped glyphs
  * read as damage rather than as a label.
+ *
+ * **A threshold for showing the text, not a floor on the block.** Blocks are
+ * never widened to stay legible — see `subtitleBlocks` for why widening was
+ * given up. Reading this as a minimum width is what puts short lines back on
+ * top of their neighbours.
  */
 const MIN_CAPTION_PX = 28
 
@@ -107,7 +101,8 @@ export interface TimelineClipView {
   /** Row of frames for the clip's body; null until generated. */
   filmstripUrl: string | null
   /** White-on-transparent envelope, tinted here; null until generated. */
-  waveformUrl: string | null
+  /** The audio envelope, or null while it is being built or absent. */
+  peaks: Uint8Array | null
   /** Frame width over height, for laying the filmstrip out undistorted. */
   aspect: number
   missing: boolean
@@ -350,9 +345,21 @@ export default function Timeline({
 
   const scale = pxPerMs(contentWidth, durationMs)
 
+  /**
+   * The offset we last told React to apply. Between the call and the render
+   * that applies it, viewRef.current.offsetPx is stale; without this the
+   * auto-follow would re-fire every frame.
+   */
+  const pendingOffsetRef = useRef<number | null>(null)
+
+  // Clear the pending marker once React has applied the update.
+  useEffect(() => {
+    pendingOffsetRef.current = null
+  }, [offsetPx])
+
   // Written straight to the DOM: this runs every animation frame during
   // playback and must not re-render the tree.
-  const movePlayhead = useCallback((timeMs: number) => {
+  const movePlayhead = useCallback((timeMs: number, autoFollow: boolean) => {
     // Recorded on the way past because snapping needs to know where the
     // playhead is, and the position itself only exists as a CSS transform.
     playheadMsRef.current = timeMs
@@ -360,14 +367,32 @@ export default function Timeline({
     const view = viewRef.current
     if (!playhead || !(view.durationMs > 0)) return
     const ratio = Math.max(0, Math.min(1, timeMs / view.durationMs))
-    playhead.style.transform = `translateX(${ratio * view.contentWidth - view.offsetPx}px)`
+    const playheadPx = ratio * view.contentWidth
+    // Use the pending offset if we just requested one but React hasn't
+    // rendered yet.
+    const effectiveOffset = pendingOffsetRef.current ?? view.offsetPx
+    const playheadInViewPx = playheadPx - effectiveOffset
+
+    // Auto-follow: when the playhead crosses the right edge during playback,
+    // scroll so it reappears at the left edge of the next "page". Disabled
+    // when the user is manually scrolling — they may want to look ahead.
+    if (autoFollow && playheadInViewPx > view.width) {
+      const maxOffset = Math.max(0, view.contentWidth - view.width)
+      const newOffset = Math.min(maxOffset, playheadPx)
+      pendingOffsetRef.current = newOffset
+      setOffsetPx(newOffset)
+      playhead.style.transform = `translateX(${playheadPx - newOffset}px)`
+      return
+    }
+
+    playhead.style.transform = `translateX(${playheadInViewPx}px)`
   }, [])
 
   // Through a ref so the tick callback stays stable across clip switches.
   const clipOffsetRef = useRef(clipOffsetMs)
   clipOffsetRef.current = clipOffsetMs
   const onTick = useCallback(
-    (elementMs: number) => movePlayhead(clipOffsetRef.current + elementMs),
+    (elementMs: number) => movePlayhead(clipOffsetRef.current + elementMs, true),
     [movePlayhead]
   )
   // Re-attaches when the player appears; see usePlaybackClock.
@@ -379,7 +404,7 @@ export default function Timeline({
   // given under the previous geometry and drifts away from the ruler.
   useEffect(() => {
     const video = videoRef.current
-    movePlayhead(clipOffsetRef.current + (video ? video.currentTime * 1000 : 0))
+    movePlayhead(clipOffsetRef.current + (video ? video.currentTime * 1000 : 0), false)
   }, [contentWidth, offsetPx, movePlayhead, videoRef])
 
   // Only the window's own span: zoomed in, the strip holds thousands of
@@ -420,7 +445,7 @@ export default function Timeline({
    * **Pixels, never a duration.** A tolerance in milliseconds would cover whole
    * words zoomed in and be imperceptible zoomed out.
    */
-  const snapToleranceMs = (): number => (snapEnabled && scale > 0 ? SNAP_PX / scale : 0)
+  const snapToleranceMs = (): number => (snapEnabled && scale > 0 ? SNAP_TOLERANCE_PX / scale : 0)
 
   const timeAtClientX = (clientX: number): number => {
     const content = contentRef.current
@@ -439,7 +464,7 @@ export default function Timeline({
    * every pointermove is what makes the drag itself stutter.
    */
   const seekTo = (timeMs: number): void => {
-    movePlayhead(timeMs)
+    movePlayhead(timeMs, false)
     onScrub(timeMs)
 
     pendingSeekRef.current = timeMs
@@ -550,7 +575,7 @@ export default function Timeline({
     const lead = utterances.find((utterance) => utterance.id === current.ids[0])
     if (lead) {
       const target = lead[current.edge] + delta
-      const snapped = snapTime(
+      const snapped = snapToNearest(
         target,
         // The playhead first: "line this up with where I am" is the reason to
         // reach for the handle, and it outranks a neighbouring line when both
@@ -668,7 +693,9 @@ export default function Timeline({
     if (dragRef.current === 'scrub') {
       // The other direction: the playhead lands on a subtitle's edge. Every
       // line is a candidate — none of them is moving.
-      seekTo(snapTime(timeAtClientX(event.clientX), utteranceEdges(utterances), snapToleranceMs()))
+      seekTo(
+        snapToNearest(timeAtClientX(event.clientX), utteranceEdges(utterances), snapToleranceMs())
+      )
       return
     }
     if (dragRef.current !== 'marquee') return
@@ -1103,21 +1130,26 @@ export default function Timeline({
                     })()}
                 </div>
 
-                {clip.waveformUrl && (
-                  // The PNG is white on transparent; masking lets it take the
-                  // theme's waveform colour instead of shipping one per theme.
-                  <div
-                    className="shrink-0"
-                    style={{
-                      height: 'var(--timeline-media-wave-height)',
-                      background: 'var(--editor-waveform)',
-                      maskImage: `url("${clip.waveformUrl}")`,
-                      maskSize: '100% 100%',
-                      WebkitMaskImage: `url("${clip.waveformUrl}")`,
-                      WebkitMaskSize: '100% 100%'
-                    }}
-                  />
-                )}
+                <div
+                  className="relative shrink-0 overflow-hidden"
+                  style={{ height: 'var(--timeline-media-wave-height)' }}
+                >
+                  {clip.peaks !== null &&
+                    (() => {
+                      // The same visible-span arithmetic as the filmstrip above:
+                      // where this clip starts in the strip, how wide it is now,
+                      // and which part of it the viewport is over.
+                      const clipLeftPx = contentWidth * (clip.startMs / durationMs)
+                      return (
+                        <Waveform
+                          peaks={clip.peaks}
+                          clipWidthPx={contentWidth * (clip.durationMs / durationMs)}
+                          fromPx={offsetPx - clipLeftPx}
+                          toPx={offsetPx + width - clipLeftPx}
+                        />
+                      )
+                    })()}
+                </div>
 
                 {/* Selection is its own layer, stacked over the bands, rather
                     than a border or outline on the clip itself.

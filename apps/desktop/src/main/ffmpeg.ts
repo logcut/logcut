@@ -1,3 +1,4 @@
+import type { ExportCodec } from '@logcut/core'
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
@@ -86,6 +87,149 @@ function run(
 
 function runFfmpeg(args: string[]): Promise<string> {
   return run(resolveFfmpeg().binary, args)
+}
+
+/**
+ * The encoders this app knows how to drive, per codec, in the order it would
+ * pick them.
+ *
+ * All hardware, because the sidecars are built `--disable-gpl` and libx264 and
+ * libx265 are both GPL — there is no software encoder in them to fall back to.
+ * Which of these exists is a property of the build, not of the platform, so it
+ * is discovered rather than assumed: the Linux sidecar has none of them today,
+ * and giving it one later must not require touching this table's readers.
+ */
+const ENCODERS: Record<ExportCodec, string[]> = {
+  h264: ['h264_videotoolbox', 'h264_mf'],
+  hevc: ['hevc_videotoolbox', 'hevc_mf']
+}
+
+let encoders: Promise<Set<string>> | null = null
+
+/**
+ * Every encoder the sidecar was built with.
+ *
+ * The promise is cached rather than the value, so concurrent callers during
+ * startup share the one process instead of racing to spawn their own.
+ */
+function availableEncoders(): Promise<Set<string>> {
+  // `captureStdout` is the whole of this working: `-encoders` reports on
+  // stdout, which `run` throws away unless asked for. Without it the list comes
+  // back empty, every encoder looks absent, and the export button goes quietly
+  // dead the moment a project has captions to burn.
+  encoders ??= run(resolveFfmpeg().binary, ['-hide_banner', '-encoders'], { captureStdout: true })
+    .then((output) => {
+      const names = new Set(
+        output
+          .split('\n')
+          // ` V....D h264_videotoolbox    VideoToolbox H.264 Encoder`: the flag
+          // column first, the name second, prose after. Anchored to a lowercase
+          // start so the legend above the list (` V..... = Video`) is skipped.
+          .map((line) => /^\s[A-Z.]{6}\s+([a-z0-9][\w-]*)/.exec(line)?.[1])
+          .filter((name): name is string => name !== undefined)
+      )
+      // An empty list is not a build without encoders — every ffmpeg has some.
+      // It means the output was not read, and the only symptom downstream is a
+      // disabled button with a misleading reason on it.
+      if (names.size === 0) console.warn('[ffmpeg] Encoder list came back empty')
+      return names
+    })
+    .catch((error: unknown) => {
+      console.warn('[ffmpeg] Could not list encoders:', error)
+      return new Set<string>()
+    })
+  return encoders
+}
+
+/** The encoder to render this codec with, or null when this build has none. */
+export async function videoEncoder(codec: ExportCodec): Promise<string | null> {
+  const available = await availableEncoders()
+  return ENCODERS[codec].find((name) => available.has(name)) ?? null
+}
+
+/** Which codecs this build can actually produce. Empty on a build with no
+ *  hardware encoder at all, which today means Linux. */
+export async function availableCodecs(): Promise<ExportCodec[]> {
+  const available = await availableEncoders()
+  return (Object.keys(ENCODERS) as ExportCodec[]).filter((codec) =>
+    ENCODERS[codec].some((name) => available.has(name))
+  )
+}
+
+export interface FfmpegRun {
+  /** Resolves when ffmpeg finished or was cancelled; rejects when it failed. */
+  done: Promise<{ cancelled: boolean }>
+  cancel(): void
+}
+
+interface ProgressOptions {
+  /**
+   * Working directory. The export sets this to the directory holding the
+   * subtitle file so the filtergraph can name it without a path — see
+   * packages/core/src/export.ts.
+   */
+  cwd: string
+  totalDurationMs: number
+  /** Called with a percentage that only ever goes up. */
+  onProgress(percent: number): void
+}
+
+/**
+ * Run ffmpeg for long enough that somebody wants to watch it, or stop it.
+ *
+ * Separate from `run` above rather than an option on it: this one keeps the
+ * child so it can be killed, and reads stdout as a live feed instead of
+ * collecting it. Its five callers need none of that.
+ */
+export function runFfmpegProgress(args: string[], options: ProgressOptions): FfmpegRun {
+  const { binary } = resolveFfmpeg()
+  const label = path.basename(binary)
+  const child = spawn(binary, args, { cwd: options.cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+
+  let cancelled = false
+  let percent = 0
+  let pending = ''
+  let stderrTail = ''
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    // `-progress` writes key=value lines, but a chunk boundary lands wherever
+    // it lands; the tail after the last newline is the start of a line, not a
+    // line, and reading it as one gives a truncated number.
+    const text = pending + chunk.toString()
+    const lines = text.split('\n')
+    pending = lines.pop() ?? ''
+    for (const line of lines) {
+      const match = /^out_time_us=(\d+)$/.exec(line.trim())
+      if (!match || options.totalDurationMs <= 0) continue
+      const next = (Number(match[1]) / 1000 / options.totalDurationMs) * 100
+      // Never backwards: ffmpeg's reported time dips around a segment
+      // boundary, and a progress bar that retreats reads as a fault.
+      percent = Math.min(100, Math.max(percent, next))
+      options.onProgress(percent)
+    }
+  })
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-2000)
+  })
+
+  const done = new Promise<{ cancelled: boolean }>((resolve, reject) => {
+    child.on('error', (error) => reject(new Error(`Failed to start ${label}: ${error.message}`)))
+    child.on('close', (code) => {
+      // A killed ffmpeg exits with a null code and a signal, which is
+      // indistinguishable from a crash unless the kill is remembered.
+      if (cancelled) resolve({ cancelled: true })
+      else if (code === 0) resolve({ cancelled: false })
+      else reject(new Error(`${label} exited with code ${code}:\n${stderrTail}`))
+    })
+  })
+
+  return {
+    done,
+    cancel: () => {
+      cancelled = true
+      child.kill()
+    }
+  }
 }
 
 /**
@@ -206,27 +350,113 @@ export async function extractFilmstrip(
 }
 
 /**
- * The audio envelope as a white-on-transparent PNG, coloured by the renderer
- * with a CSS mask so it follows the theme.
+ * The generation parameters, as a number.
  *
- * ffmpeg's showwavespic draws it directly — computing peaks here would mean
- * piping raw PCM through Node for no gain.
+ * Bump it after changing anything below — how the waveform is sampled or
+ * stored, the filmstrip's frame count, where the poster is taken from. Assets carry the
+ * version they were built with, and a project opened with an older one rebuilds
+ * itself in the background (see media-import.ts).
+ *
+ * **One number for all three pictures**, so changing only the waveform rebuilds
+ * the poster and the filmstrip too. Three separate numbers would be exact, at
+ * the price of three fields and three comparisons — and this changes rarely,
+ * while the rebuild is a background task that interrupts nothing.
+ */
+export const ARTWORK_VERSION = 5
+
+/**
+ * The rate the waveform is stored at, and **what is stored is the audio
+ * itself** — one byte per sample, its magnitude scaled to 0–255 — not a peak
+ * per window.
+ *
+ * That distinction is the whole look of the thing. A window's peak is a
+ * statistic, and neighbouring windows barely differ: measured over speech, two
+ * adjacent 1ms peaks were a third of a pixel apart in a 16px strip. It draws a
+ * smooth envelope, which is what a peak *is*, and reads as a volume curve.
+ * Real samples swing either side of zero from one to the next, and that is
+ * where the grain of a waveform comes from.
+ *
+ * 2kHz, downsampled by ffmpeg so it is low-passed rather than aliased. Speech
+ * lives under 1kHz, so the shape survives; 8kHz keeps more grain at 28MB an
+ * hour, against 7MB here. Below 2kHz the swing starts flattening out again.
+ *
+ * The renderer takes the loudest sample in a column when zoomed out, so the
+ * envelope is still right at any width — a statistic can be computed from
+ * samples, but samples cannot be recovered from a statistic, which is why this
+ * is the side of the trade to store.
+ */
+export const WAVEFORM_SAMPLE_RATE = 2000
+
+/**
+ * The audio as bytes: magnitude per sample, at `WAVEFORM_SAMPLE_RATE`.
+ *
+ * ffmpeg decodes and downsamples to raw mono PCM on stdout and the magnitudes
+ * are taken here, in a stream: the whole decode of a long file never exists in
+ * memory at once, only the chunk being walked.
+ *
+ * Rejects when the file has no audio track, which the caller treats as any
+ * other artwork failure.
  */
 export async function extractWaveform(filePath: string, outPath: string): Promise<void> {
   fs.mkdirSync(path.dirname(outPath), { recursive: true })
-  await runFfmpeg([
-    '-y',
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-i',
-    filePath,
-    '-filter_complex',
-    `[0:a]aformat=channel_layouts=mono,showwavespic=s=2000x${STRIP_HEIGHT}:colors=white`,
-    '-frames:v',
-    '1',
-    outPath
-  ])
+  const { binary } = resolveFfmpeg()
+  const child = spawn(
+    binary,
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-i',
+      filePath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      String(WAVEFORM_SAMPLE_RATE),
+      '-f',
+      's16le',
+      '-'
+    ],
+    { stdio: ['ignore', 'pipe', 'pipe'] }
+  )
+
+  let stderr = ''
+  child.stderr.setEncoding('utf8')
+  child.stderr.on('data', (text: string) => {
+    stderr += text
+  })
+
+  const magnitudes: number[] = []
+  // s16le is two bytes per sample, and a chunk boundary lands mid-sample as
+  // often as not — the odd byte waits here for the rest of its pair.
+  let halfSample: number | null = null
+  const take = (value: number): void => {
+    magnitudes.push(Math.round((Math.abs(value) / 32768) * 255))
+  }
+
+  try {
+    for await (const chunk of child.stdout as AsyncIterable<Buffer>) {
+      let at = 0
+      if (halfSample !== null) {
+        // s16le: the byte held over is the low half, the one arriving is the
+        // high half. Swapping them mangles one sample per chunk boundary.
+        take(((halfSample | (chunk[0] << 8)) << 16) >> 16)
+        halfSample = null
+        at = 1
+      }
+      for (; at + 1 < chunk.length; at += 2) take(chunk.readInt16LE(at))
+      if (at < chunk.length) halfSample = chunk[at]
+    }
+  } catch (error) {
+    child.kill()
+    throw error
+  }
+
+  const code = await new Promise<number>((resolve) => child.on('close', resolve))
+  if (code !== 0) throw new Error(`ffmpeg exited ${code}: ${stderr.trim()}`)
+  if (magnitudes.length === 0) throw new Error('no audio')
+
+  fs.writeFileSync(outPath, Buffer.from(magnitudes))
 }
 
 /** Write a single frame as JPEG, for project cards. */

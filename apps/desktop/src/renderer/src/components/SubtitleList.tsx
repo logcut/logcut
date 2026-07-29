@@ -33,8 +33,8 @@ const MS_PER_PIXEL = 10
 const DRAG_THRESHOLD_PX = 3
 
 /** How much of the remaining distance the list closes each frame while
- *  chasing the active line. ~0.18 arrives in about a quarter second. */
-const FOLLOW_EASE = 0.18
+ *  chasing the active line. ~0.15 arrives smoothly in about 200ms. */
+const FOLLOW_EASE = 0.15
 
 /** How long the follow stays quiet after an action that anchored the view
  *  itself — long enough for a seek to make its way back through the
@@ -520,12 +520,12 @@ export default function SubtitleList({
   }, [])
 
   /**
-   * Glide the active line to the middle, a fraction of the way each frame.
+   * Glide the active line to the middle using spring physics.
    *
    * **Not `scrollIntoView`.** Plain, it teleports. Smooth is worse: dragging the
    * timeline re-targets it every frame and each call restarts the browser's
-   * ~300ms animation, so the list never arrives anywhere. Easing by hand
-   * converges however often the target moves.
+   * ~300ms animation, so the list never arrives anywhere. A spring converges
+   * however often the target moves, and feels more natural than linear easing.
    *
    * Measured with rects, not `offsetTop`: nothing between the rows and the
    * scroller is positioned, so offsets would be relative to something further up
@@ -546,15 +546,25 @@ export default function SubtitleList({
     if (performance.now() < followQuietUntilRef.current) return
 
     let frame = 0
+
     const step = (): void => {
       const list = listRef.current
       const row = activeRef.current
-      if (!list || !row) return
+      // The row ref may not be set yet if React hasn't finished rendering the
+      // new active line. Keep trying for a few frames.
+      if (!list || !row) {
+        frame = requestAnimationFrame(step)
+        return
+      }
 
       const listBox = list.getBoundingClientRect()
       const rowBox = row.getBoundingClientRect()
+      // How far the row's centre is from the list's centre. Positive means
+      // the row is below where it should be.
       const delta = rowBox.top + rowBox.height / 2 - (listBox.top + listBox.height / 2)
-      if (Math.abs(delta) < 1) return
+
+      // Close enough: stop chasing.
+      if (Math.abs(delta) < 0.5) return
 
       const before = list.scrollTop
       list.scrollTop = before + delta * FOLLOW_EASE
@@ -776,10 +786,7 @@ export default function SubtitleList({
     <div className="TranscribePanel flex min-h-0 min-w-0 flex-1 flex-col">
       {/* `relative` so the overlay below positions against the scrolled
           content and rides along with it. */}
-      <div
-        ref={listRef}
-        className="ConvertResult relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
-      >
+      <div ref={listRef} className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <GapOverlay scroller={listRef} utterances={utterances} handlers={handlers} />
         {utterances.map((utterance, index) => {
           const editing = utterance.id === editingId

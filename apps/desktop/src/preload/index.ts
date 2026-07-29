@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   AgentRequest,
   AgentResponse,
+  ExportProgress,
   LogcutApi,
   TranscribeProgress,
   UpdateState
@@ -31,6 +32,7 @@ const api: LogcutApi = {
   getSettingsStatus: () => ipcRenderer.invoke('settings:get-status'),
   setApiKey: (key) => ipcRenderer.invoke('settings:set-api-key', key),
   getSystemLocale: () => ipcRenderer.invoke('system:get-locale'),
+  getWaveform: (projectId, assetId) => ipcRenderer.invoke('project:waveform', projectId, assetId),
   getEditorLayout: () => ipcRenderer.invoke('settings:get-layout'),
   saveEditorLayout: (layout) => ipcRenderer.invoke('settings:save-layout', layout),
   getLanguagePreference: () => ipcRenderer.invoke('settings:get-language'),
@@ -76,6 +78,19 @@ const api: LogcutApi = {
   },
 
   exportSrt: (projectId, assetId) => ipcRenderer.invoke('export:srt', projectId, assetId),
+
+  exportVideo: (projectId) => ipcRenderer.invoke('export:video', projectId),
+  cancelExport: () => ipcRenderer.invoke('export:cancel'),
+  getExportCapabilities: () => ipcRenderer.invoke('export:capabilities'),
+  setExportSettings: (projectId, settings) =>
+    ipcRenderer.invoke('export:settings', projectId, settings),
+  onExportProgress: (callback) => {
+    const listener = (_event: unknown, progress: ExportProgress): void => callback(progress)
+    ipcRenderer.on('export:progress', listener)
+    return () => {
+      ipcRenderer.removeListener('export:progress', listener)
+    }
+  },
 
   getAppVersion: () => ipcRenderer.invoke('app:get-version'),
   getUpdateState: () => ipcRenderer.invoke('update:get-state'),

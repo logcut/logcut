@@ -2,6 +2,8 @@ import type {
   CaptionStyles,
   CommandResult,
   EditCommand,
+  ExportCodec,
+  ExportSettings,
   LanguageOption,
   TranscribeConfig,
   Transcript,
@@ -104,7 +106,13 @@ export interface MediaAssetSummary {
   /** Row of frames for the timeline's media track; null until generated. */
   filmstripUrl: string | null
   /** White-on-transparent audio envelope, coloured by CSS; null until generated. */
-  waveformUrl: string | null
+  /**
+   * Whether an envelope exists to ask for. The samples themselves are fetched
+   * once per asset through `getWaveform` rather than ridden along here: they
+   * are two orders of magnitude larger than the rest of a summary, and this
+   * shape is re-sent on every project update.
+   */
+  hasWaveform: boolean
   /** The file is no longer at `path`. */
   missing: boolean
   /** Present but changed since import: transcript and poster may not match. */
@@ -146,6 +154,9 @@ export interface ProjectDetail {
   maxChars: number
   /** Always complete on the wire; main normalizes what it read from disk. */
   captionStyles: CaptionStyles
+  /** How this project was last exported. Complete on the wire for the same
+   *  reason as the styles above. */
+  exportSettings: ExportSettings
 }
 
 export type ImportRejectReason = 'UNSUPPORTED' | 'UNREADABLE'
@@ -176,6 +187,40 @@ export interface TranscribeResult {
 
 export interface ExportSrtResult {
   savedPath?: string
+}
+
+/**
+ * How a video export ended.
+ *
+ * **Both fields absent means the save dialog was dismissed** — a third outcome
+ * distinct from cancelling the render, and the only one with nothing to report:
+ * the user never got as far as starting anything.
+ */
+export interface ExportVideoResult {
+  savedPath?: string
+  cancelled?: boolean
+}
+
+/**
+ * Addressed by project like `TranscribeProgress`, and for the same reason: a
+ * renderer with two projects open must be able to tell whose export this is.
+ */
+export interface ExportProgress {
+  projectId: string
+  /** Monotonic, 0–100. */
+  percent: number
+}
+
+/**
+ * What this build can actually produce.
+ *
+ * **A list rather than a boolean**, because the dialog has to offer the codecs
+ * that exist and no others. Empty means no hardware encoder at all, which today
+ * means Linux — a project with captions cannot be exported there, though one
+ * without them still can (see main/export.md).
+ */
+export interface ExportCapabilities {
+  codecs: ExportCodec[]
 }
 
 /**
@@ -256,6 +301,13 @@ export interface LogcutApi {
   getSystemLocale(): Promise<string>
   /** The user's last chosen transcription language, or null if never set. */
   getLanguagePreference(): Promise<LanguageOption | null>
+  /**
+   * An asset's audio envelope: one byte per point, `PEAKS_PER_SECOND` of them
+   * per second (see main/ffmpeg.ts). Null when the asset has no audio or the
+   * envelope has not been built yet.
+   */
+  getWaveform(projectId: string, assetId: string): Promise<Uint8Array | null>
+
   /** Persist the user's transcription language choice. */
   setLanguagePreference(option: LanguageOption): Promise<void>
 
@@ -325,6 +377,25 @@ export interface LogcutApi {
 
   /** Export an asset's transcript as SRT via a save dialog. Empty if cancelled. */
   exportSrt(projectId: string, assetId: string): Promise<ExportSrtResult>
+
+  /**
+   * Render the timeline to a video file, picked through a save dialog.
+   *
+   * Long enough to watch, so progress arrives on `onExportProgress` — but the
+   * outcome is this promise, not a terminal progress event. Throws
+   * TIMELINE_EMPTY / MEDIA_MISSING / NO_ENCODER, and whatever ffmpeg said when
+   * it failed.
+   */
+  exportVideo(projectId: string): Promise<ExportVideoResult>
+  /** Stop the export in flight. It resolves as cancelled, not as a failure. */
+  cancelExport(): Promise<void>
+  /** Which codecs this build can produce; empty when it can encode nothing. */
+  getExportCapabilities(): Promise<ExportCapabilities>
+  /** Remember how this project is exported. Saved when the export starts, not
+   *  while the dialog is being fiddled with (see components/ExportSettingsDialog.md). */
+  setExportSettings(projectId: string, settings: ExportSettings): Promise<ProjectDetail>
+  /** Subscribe to export progress. Returns an unsubscribe function. */
+  onExportProgress(callback: (progress: ExportProgress) => void): () => void
 
   /** Version of the running build, for the settings dialog. */
   getAppVersion(): Promise<string>

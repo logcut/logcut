@@ -1,5 +1,5 @@
-import { normalizeCaptionStyles, randomId } from '@logcut/core'
-import type { CaptionStyles, Transcript } from '@logcut/core'
+import { normalizeCaptionStyles, normalizeExportSettings, randomId } from '@logcut/core'
+import type { CaptionStyles, ExportSettings, Transcript } from '@logcut/core'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -39,6 +39,12 @@ export interface MediaAsset {
   filmstrip?: string
   /** Audio envelope PNG, in <projectDir>/waveforms/. Absent until built. */
   waveform?: string
+  /**
+   * Which version of the generation parameters the three pictures above were
+   * built with. Absent counts as stale, so anything that failed to build once
+   * is retried rather than staying missing until the file is imported again.
+   */
+  artworkVersion?: number
   transcriptStatus: StoredTranscriptStatus
   /** configCacheKey of the language config the stored transcript came from. */
   transcriptConfigKey?: string
@@ -78,6 +84,12 @@ export interface ProjectFile {
    * rest on load, which is why this needed no schema bump either.
    */
   captionStyles?: CaptionStyles
+  /**
+   * How this project was last exported. Absent in projects written before it
+   * existed and normalized on load, like the two above — another added field
+   * with a safe fallback, so no schema bump.
+   */
+  exportSettings?: ExportSettings
 }
 
 /**
@@ -143,6 +155,7 @@ export function loadProject(id: string): ProjectFile | null {
     // point can assume the array.
     project.timeline ??= []
     project.captionStyles = normalizeCaptionStyles(project.captionStyles)
+    project.exportSettings = normalizeExportSettings(project.exportSettings)
     return project
   } catch {
     return null
@@ -186,6 +199,12 @@ export function setCaptionStyles(id: string, styles: CaptionStyles): ProjectFile
     // same guarantee that makes an old file safe to open makes this safe to
     // store.
     project.captionStyles = normalizeCaptionStyles(styles)
+  })
+}
+
+export function setExportSettings(id: string, settings: ExportSettings): ProjectFile | null {
+  return update(id, (project) => {
+    project.exportSettings = normalizeExportSettings(settings)
   })
 }
 
