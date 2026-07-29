@@ -12,3 +12,8 @@ declare module '*.svg' {
   const src: string
   export default src
 }
+
+// A stylesheet is imported for its side effect and has nothing to export — the
+// module only has to be known to exist. TypeScript 6 checks side-effect imports
+// where 5 did not, so without this `import './styles.css'` fails to resolve.
+declare module '*.css' {}
