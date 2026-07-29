@@ -239,6 +239,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /*
+   * The window is the viewport, and the document never scrolls.
+   *
+   * Each page root is `h-screen` with a `min-h` / `min-w` floor (see
+   * pages/EditorPage.tsx), and a floor wins over `h-screen`: one zoom step past
+   * 100% shrinks the CSS viewport below it, and without this the entire
+   * application becomes a page that pans — title bar scrolled out of sight,
+   * a classic scrollbar down the window edge. See styles.md.
+   */
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
