@@ -31,12 +31,12 @@ import { liveScope, styleForScope, type CaptionScope } from '@/lib/caption-scope
 import { layUtterances } from '@/lib/timeline'
 import type { EditorLayout, MediaAssetSummary } from '../../../shared/ipc'
 
-/** The editor opens split 60/40 between the panes and the timeline. */
-const TIMELINE_HEIGHT_RATIO = 0.4
+/** The editor opens split 60/40 between the panes and the timeline, with the
+ *  tab panel and the player equal. */
+const DEFAULT_TIMELINE_RATIO = 0.4
+const DEFAULT_TABS_RATIO = 0.5
 const MIN_TIMELINE_HEIGHT = 96
 const MIN_PANES_HEIGHT = 200
-/** Mirrors --titlebar-height; the split needs it as a number. */
-const TOP_BAR_HEIGHT = 36
 
 const MIN_TABS_WIDTH = 260
 const MIN_PLAYER_WIDTH = 360
@@ -44,31 +44,27 @@ const MIN_CHAT_WIDTH = 280
 const DEFAULT_CHAT_WIDTH = 340
 const MIN_SUBTITLES_WIDTH = 280
 const DEFAULT_SUBTITLES_WIDTH = 340
-/** Mirrored from CSS (`--space-component`, `--space-compact`), which the split
- *  maths needs as numbers. */
-const OUTER_GAP = 8
+/** Mirrors `--space-compact`, the handle's own width: it sits between the two
+ *  shares and takes no part in the split. */
 const PANE_GAP = 6
-
-function defaultTimelineHeight(): number {
-  return Math.max(
-    MIN_TIMELINE_HEIGHT,
-    Math.round((window.innerHeight - TOP_BAR_HEIGHT) * TIMELINE_HEIGHT_RATIO)
-  )
-}
 
 /** What "Reset layout" restores, and what the editor opens on the very first
  *  time. One source, so the two can never drift apart. */
 function defaultLayout(): EditorLayout {
   return {
     chatWidth: DEFAULT_CHAT_WIDTH,
-    // Null, not a number: these two go back to being derived, so the panel and
-    // the player are equal again whatever the window and the columns are doing.
-    tabsWidth: null,
     subtitlesWidth: DEFAULT_SUBTITLES_WIDTH,
-    timelineHeight: null,
+    tabsRatio: DEFAULT_TABS_RATIO,
+    timelineRatio: DEFAULT_TIMELINE_RATIO,
     chatOpen: true,
     subtitlesOpen: false
   }
+}
+
+/** Anything that is not a fraction came from a layout that stored pixels, and
+ *  the default stands in for it — see EditorLayout in shared/ipc.ts. */
+function ratioOrDefault(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 && value < 1 ? value : fallback
 }
 
 /** How long the arrangement has to sit still before it is written. A drag
@@ -155,11 +151,11 @@ export default function EditorPage({
   /** Which subtitles the style panel writes to. Held raw; `liveScope` is what
    *  the rest of the page reads, so a scope that vanishes cannot be used. */
   const [storedScope, setCaptionScope] = useState<CaptionScope>({ kind: 'all' })
-  /** Null while nobody has dragged the divider — see `EditorLayout`. */
-  const [tabsWidth, setTabsWidth] = useState<number | null>(null)
+  /** Fractions of what they divide, never pixels — see `EditorLayout`. */
+  const [tabsRatio, setTabsRatio] = useState(DEFAULT_TABS_RATIO)
+  const [timelineRatio, setTimelineRatio] = useState(DEFAULT_TIMELINE_RATIO)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [subtitlesWidth, setSubtitlesWidth] = useState(DEFAULT_SUBTITLES_WIDTH)
-  const [timelineHeight, setTimelineHeight] = useState<number | null>(null)
   /** False until the saved arrangement has been read, so the defaults on screen
    *  in the meantime are never written over it. */
   const [layoutLoaded, setLayoutLoaded] = useState(false)
@@ -212,61 +208,28 @@ export default function EditorPage({
    *  fixed slice — the window itself while it is hidden. */
   const availableWidth = (): number => window.innerWidth - chatSlice()
 
-  /** The tallest the timeline may be drawn — the panes above keep their
-   *  minimum. Same read-time clamp as the tab panel below, and for the same
-   *  reason: a height saved on a taller window must not be written over. */
-  const timelineHeightCap = (): number => window.innerHeight - TOP_BAR_HEIGHT - MIN_PANES_HEIGHT
-  const shownTimelineHeight = clamp(
-    timelineHeight ?? defaultTimelineHeight(),
-    MIN_TIMELINE_HEIGHT,
-    timelineHeightCap()
-  )
-
-  /** The widest the tab panel may be drawn right now — what is left once both
-   *  side columns and the player's minimum have taken theirs. */
-  const tabsWidthCap = (): number => availableWidth() - subtitlesSlice() - MIN_PLAYER_WIDTH
+  /** The two rows a ratio divides. Pixels are needed only while the pointer is
+   *  moving, so they are measured then rather than tracked — which is exactly
+   *  what keeps a window resize from touching either split. */
+  const topRowRef = useRef<HTMLDivElement>(null)
+  const midColumnRef = useRef<HTMLDivElement>(null)
 
   /**
-   * Half of what the tab panel and the player have to share.
+   * Both bounds are stated as fractions of the room there is *right now*.
    *
-   * Taken out first are both side columns and every gap: those are fixed
-   * pixels and take no part in the split. **The number of gaps follows how
-   * many columns are actually showing** — one between each neighbouring pair.
+   * A ratio has no opinion about pixels and the minimum sizes have nothing
+   * else, so the two only meet against a measurement — and the measurement is
+   * taken per drag, never cached, or a resized window leaves a stale bound
+   * behind. What the ratio may not do is drift while the pointer is held past
+   * the end: the panel stops at its minimum but the number would carry on, and
+   * the next widening would pay it all back at once.
    */
-  const equalTabsWidth = (): number => {
-    const gaps = OUTER_GAP * 2 + PANE_GAP * (1 + (chatOpen ? 1 : 0) + (subtitlesOpen ? 1 : 0))
-    return Math.round((window.innerWidth - gaps - chatSlice() - subtitlesSlice()) / 2)
-  }
-
-  /**
-   * The width the tab panel is actually drawn at.
-   *
-   * Two separate things are going on here, and conflating them was the bug:
-   *
-   * - **`null` means nobody has stated a width**, so one is derived — the panel
-   *   and the player equal. It is recomputed every render, so closing a side
-   *   column re-splits what that column gave back instead of handing all of it
-   *   to the player, which is the flexible one and would otherwise take the lot.
-   * - **A number is a width the user dragged to**, and only a drag ever writes
-   *   one. It is clamped *as it is drawn*, never written back: opening a column
-   *   narrows the panel and closing it hands the width straight back, with the
-   *   smaller number never stored. Clamping the state itself was the earlier
-   *   bug — on a window too narrow for four columns the panel was pinned to
-   *   `MIN_TABS_WIDTH` and stayed there for the rest of the session.
-   */
-  const shownTabsWidth = clamp(tabsWidth ?? equalTabsWidth(), MIN_TABS_WIDTH, tabsWidthCap())
-
-  // Limits are recomputed per drag rather than cached, so a resized window
-  // never leaves a stale bound behind.
   const resizeTabs = (delta: number): void => {
-    setTabsWidth((current) => {
-      const cap = tabsWidthCap()
-      // From where the panel is *drawn* — the derived width if it has never
-      // been dragged, and otherwise the stored one pulled inside the current
-      // bounds. Starting anywhere else makes the first drag jump.
-      const from = clamp(current ?? equalTabsWidth(), MIN_TABS_WIDTH, cap)
-      return clamp(from + delta, MIN_TABS_WIDTH, cap)
-    })
+    const room = (topRowRef.current?.clientWidth ?? 0) - PANE_GAP
+    if (room <= 0) return
+    setTabsRatio((current) =>
+      clamp(current + delta / room, MIN_TABS_WIDTH / room, 1 - MIN_PLAYER_WIDTH / room)
+    )
   }
 
   // The chat column is the first one, so its handle is on its right edge:
@@ -274,12 +237,15 @@ export default function EditorPage({
   // handle that sits to a panel's left.
   // Each column's own bound subtracts the *other* one, never itself: the width
   // being dragged is the one under negotiation.
+  // What the flexible pair is subtracted at is their *minimum*, not the width
+  // they happen to be drawn at: they give way in proportion as this column
+  // grows, so anything above the minimum is still theirs to hand over.
   const resizeChat = (delta: number): void => {
     setChatWidth((current) =>
       clamp(
         current + delta,
         MIN_CHAT_WIDTH,
-        window.innerWidth - subtitlesSlice() - shownTabsWidth - MIN_PLAYER_WIDTH
+        window.innerWidth - subtitlesSlice() - MIN_TABS_WIDTH - MIN_PLAYER_WIDTH
       )
     )
   }
@@ -291,7 +257,7 @@ export default function EditorPage({
       clamp(
         current - delta,
         MIN_SUBTITLES_WIDTH,
-        availableWidth() - shownTabsWidth - MIN_PLAYER_WIDTH
+        availableWidth() - MIN_TABS_WIDTH - MIN_PLAYER_WIDTH
       )
     )
   }
@@ -307,14 +273,19 @@ export default function EditorPage({
   /**
    * Put an arrangement on screen.
    *
-   * The two side widths are clamped **here**, unlike the tab panel and the
-   * timeline which are clamped as they are drawn: this value came off disk and
-   * may have been saved on a different display, and these two are what the
-   * other columns are measured against — a chat column wider than the window
-   * leaves the panel and the player nothing to divide. Each cap is what is left
-   * once every other column has its minimum. The subtitle column's minimum is
-   * subtracted from the chat cap whether or not it is open, because it can be
-   * opened a moment later and the arithmetic must already hold.
+   * The two side widths are clamped **here**, unlike the two ratios: a pixel
+   * width came off disk and may have been saved on a different display, and
+   * these two are what the other columns are measured against — a chat column
+   * wider than the window leaves the panel and the player nothing to divide.
+   * Each cap is what is left once every other column has its minimum. The
+   * subtitle column's minimum is subtracted from the chat cap whether or not it
+   * is open, because it can be opened a moment later and the arithmetic must
+   * already hold.
+   *
+   * The ratios need none of that — a fraction means the same thing on every
+   * display, which is half of why they are stored as fractions. They are only
+   * checked for *being* fractions, because a layout saved before this file
+   * stored ratios has pixels in those fields.
    */
   const applyLayout = useCallback((layout: EditorLayout): void => {
     setChatWidth(
@@ -331,8 +302,8 @@ export default function EditorPage({
         window.innerWidth - MIN_CHAT_WIDTH - MIN_TABS_WIDTH - MIN_PLAYER_WIDTH
       )
     )
-    setTabsWidth(layout.tabsWidth)
-    setTimelineHeight(layout.timelineHeight)
+    setTabsRatio(ratioOrDefault(layout.tabsRatio, DEFAULT_TABS_RATIO))
+    setTimelineRatio(ratioOrDefault(layout.timelineRatio, DEFAULT_TIMELINE_RATIO))
     setChatOpen(layout.chatOpen)
     setSubtitlesOpen(layout.subtitlesOpen)
   }, [])
@@ -363,15 +334,15 @@ export default function EditorPage({
     const id = setTimeout(() => {
       void window.logcut.saveEditorLayout({
         chatWidth,
-        tabsWidth,
         subtitlesWidth,
-        timelineHeight,
+        tabsRatio,
+        timelineRatio,
         chatOpen,
         subtitlesOpen
       })
     }, LAYOUT_SAVE_DELAY_MS)
     return () => clearTimeout(id)
-  }, [layoutLoaded, chatWidth, tabsWidth, subtitlesWidth, timelineHeight, chatOpen, subtitlesOpen])
+  }, [layoutLoaded, chatWidth, subtitlesWidth, tabsRatio, timelineRatio, chatOpen, subtitlesOpen])
 
   /** Written straight through rather than left to the debounce above: a reset
    *  the user immediately follows by quitting still has to survive. */
@@ -381,12 +352,13 @@ export default function EditorPage({
     void window.logcut.saveEditorLayout(fresh)
   }
 
+  // The handle sits above the timeline, so dragging down takes height from it.
   const resizeTimeline = (delta: number): void => {
-    setTimelineHeight((current) => {
-      const cap = timelineHeightCap()
-      const from = clamp(current ?? defaultTimelineHeight(), MIN_TIMELINE_HEIGHT, cap)
-      return clamp(from - delta, MIN_TIMELINE_HEIGHT, cap)
-    })
+    const room = (midColumnRef.current?.clientHeight ?? 0) - PANE_GAP
+    if (room <= 0) return
+    setTimelineRatio((current) =>
+      clamp(current - delta / room, MIN_TIMELINE_HEIGHT / room, 1 - MIN_PANES_HEIGHT / room)
+    )
   }
 
   /** The dialog speaks the transcript's own ids, the timeline speaks composite
@@ -916,9 +888,20 @@ export default function EditorPage({
           </>
         )}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1">
-            <div className="flex shrink-0 flex-col" style={{ width: shownTabsWidth }}>
+        {/* The two flexible splits are `flex-grow` pairs off a zero basis, so a
+            window resize is divided by CSS in the stated proportion and never
+            reaches JS at all (see EditorPage.md). The minimums are the browser's
+            to enforce too — on the two panels that must not be squeezed. */}
+        <div ref={midColumnRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            ref={topRowRef}
+            className="flex min-h-0"
+            style={{ flexGrow: 1 - timelineRatio, flexBasis: 0 }}
+          >
+            <div
+              className="flex flex-col"
+              style={{ flexGrow: tabsRatio, flexBasis: 0, minWidth: MIN_TABS_WIDTH }}
+            >
               <Panel className="flex min-h-0 flex-1 flex-col">
                 <Tabs
                   value={tab}
@@ -970,7 +953,10 @@ export default function EditorPage({
 
             <ResizeHandle orientation="vertical" onResize={resizeTabs} />
 
-            <Panel className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Panel
+              className="flex min-h-0 min-w-0 flex-col"
+              style={{ flexGrow: 1 - tabsRatio, flexBasis: 0 }}
+            >
               {playback.src !== '' ? (
                 <VideoPlayer
                   videoRef={videoRef}
@@ -1006,7 +992,10 @@ export default function EditorPage({
 
           <ResizeHandle orientation="horizontal" onResize={resizeTimeline} />
 
-          <Panel className="flex shrink-0 flex-col" style={{ height: shownTimelineHeight }}>
+          <Panel
+            className="flex flex-col"
+            style={{ flexGrow: timelineRatio, flexBasis: 0, minHeight: MIN_TIMELINE_HEIGHT }}
+          >
             <TimelineToolbar
               onSplit={handleSplit}
               snapEnabled={snapEnabled}

@@ -1,10 +1,6 @@
 import type { Utterance } from '@logcut/core'
 
-/**
- * Geometry for the read-only timeline. The scale is fit-to-width — the whole
- * media always spans the container — which is what lets the timeline skip
- * horizontal scrolling, virtualization and a zoom level entirely.
- */
+/** Geometry for the read-only timeline; see lib/timeline.md. */
 
 /** Round numbers a viewer can read off a ruler, coarsest last. */
 const TICK_STEPS_MS = [
@@ -12,8 +8,9 @@ const TICK_STEPS_MS = [
   1_800_000
 ]
 
-export function pxPerMs(containerWidth: number, totalMs: number): number {
-  return totalMs > 0 ? containerWidth / totalMs : 0
+/** Measured against the whole strip, which is not the window it is seen through. */
+export function pxPerMs(stripWidth: number, totalMs: number): number {
+  return totalMs > 0 ? stripWidth / totalMs : 0
 }
 
 /** Coarsest-but-one step whose labels still clear `minLabelPx` of each other. */

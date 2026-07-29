@@ -299,7 +299,7 @@
 }
 
 /*
- * Off-screen subtitle lines skip layout, paint and hit testing.
+ * Off-screen subtitle lines skip layout, paint and hit testing entirely.
  *
  * The list renders every line — not virtualised, on purpose (see
  * SubtitleList.md) — so all several hundred were being laid out, painted and
@@ -307,16 +307,18 @@
  * browser without moving anything into React, which is what virtualising got
  * wrong.
  *
- * It goes on the content grid rather than on `.ConvertItem`: `content-visibility`
- * implies `contain: paint`, and the row's hover strip is deliberately half
- * outside the row's own box. Containing the row would clip it.
+ * **On the row, not on its inner grid.** `content-visibility` implies
+ * `contain: paint`, so while each row still carried a hover strip hanging half
+ * outside its own box, containing the row would have clipped it and this had to
+ * sit one level down — which left every row's box still being laid out. Moving
+ * those controls into one shared overlay is what freed it to go up here.
  *
  * The length is a guess at a one-line row, needed only until a row has been
  * rendered once — `auto` then keeps its measured height. It is not a design
  * value and has no token; being wrong costs a slightly inaccurate scrollbar,
  * not a wrong layout.
  */
-.AimText {
+.ConvertItem {
   content-visibility: auto;
   contain-intrinsic-size: auto 68px;
 }

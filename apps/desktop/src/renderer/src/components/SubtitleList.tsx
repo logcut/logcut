@@ -121,11 +121,6 @@ const SubtitleRow = memo(function SubtitleRow({
   activeRef,
   handlers
 }: SubtitleRowProps): JSX.Element {
-  // Merging is always meaningful between two lines; filling needs a silence to
-  // fill. So the boundary exists wherever there is one, and only Add turns
-  // itself off.
-  const canAdd = previous !== undefined && utterance.start > previous.end
-
   /**
    * Whether this row's speaker menu exists yet. Until it is pressed the row
    * renders a plain button and no Radix at all — the whole list mounts at once
@@ -188,76 +183,16 @@ const SubtitleRow = memo(function SubtitleRow({
       // a boundary that has a line on both sides. On the first row it would
       // land against the section above and read as a double border.
       //
-      // The hover strip below sits on this same edge and covers it while open,
-      // so the boundary shows one thing at a time — a divider, or the controls
-      // that act on it.
-      className={`ConvertItem relative ${previous ? 'border-t border-border' : ''}`}
+      // **No `relative` here.** The row must carry no positioned descendant,
+      // or `content-visibility` cannot go on it — see SubtitleList.md. The
+      // controls that sit on this edge live in one shared GapOverlay instead.
+      //
+      // `data-index` is how that overlay finds which boundary the pointer is
+      // near, so it is load-bearing, not a debugging aid.
+      className={`ConvertItem ${previous ? 'border-t border-border' : ''}`}
       data-index={index}
       ref={active ? activeRef : undefined}
     >
-      {/* Its own hover target: 2px of rule with 6px of slack either
-                side. No spacing token is 14px, and this is not spacing — it
-                is a hit target, sized from what it has to catch.
-                The rows' 4px of padding leaves only 8px of dead space, so the
-                outer 3px at each end laps onto the row beyond: the very top
-                of the timecode button below, the bottom of the text above.
-                That band is border and half-leading rather than glyph, but it
-                does sit over the timecode, which is now draggable — press
-                within 3px of a row's top edge and this catches it instead. The
-                whole row used to be the trigger, which meant the divider and
-                its buttons appeared over the line above whenever the text was
-                merely being read or typed into.
-
-                The buttons are taller than the 6px strip and hang out of it.
-                That is fine — :hover propagates up the DOM, not the box tree,
-                so the pointer moving from the strip onto a button keeps the
-                strip hovered and the group open. They start
-                `pointer-events-none` so the invisible band never swallows a
-                click meant for a row. */}
-      {previous && (
-        <div className="group/gap absolute inset-x-0 top-0 z-10 flex h-[14px] -translate-y-1/2 items-center gap-component">
-          <span className="h-adjust flex-1 rounded-full bg-primary opacity-0 transition-opacity group-hover/gap:opacity-100" />
-          {/* Left in place rather than hidden when there is no gap: the
-                    two kinds of boundary then look identical, nothing jumps
-                    as the pointer runs down the list, and the title says why
-                    it is off. */}
-          <button
-            type="button"
-            disabled={!canAdd}
-            title={
-              canAdd
-                ? 'Add a subtitle in this silence'
-                : 'These lines already touch — no silence to fill'
-            }
-            // Exactly one `group-hover/gap:opacity-*` may be present:
-            // two of them are the same variant, so which wins comes
-            // down to emission order. A bare `disabled:opacity-40`
-            // alongside `opacity-0` is worse still — it outranks the
-            // unqualified rule and left every disabled Add sitting at
-            // 40% with no pointer anywhere near it.
-            className={`pointer-events-none flex h-control-sm items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground opacity-0 shadow-md transition-opacity group-hover/gap:pointer-events-auto ${
-              canAdd
-                ? 'cursor-pointer group-hover/gap:opacity-100 hover:bg-primary/90'
-                : 'cursor-not-allowed group-hover/gap:opacity-40'
-            }`}
-            onClick={() => handlers.onAdd(previous.id)}
-          >
-            <Plus size={12} />
-            Add
-          </button>
-          <button
-            type="button"
-            title="Merge with the line above"
-            className="pointer-events-none flex h-control-sm cursor-pointer items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground opacity-0 shadow-md transition-opacity group-hover/gap:pointer-events-auto group-hover/gap:opacity-100 hover:bg-primary/90"
-            onClick={() => handlers.onMerge(previous.id)}
-          >
-            <Merge size={12} />
-            Merge
-          </button>
-          <span className="h-adjust flex-1 rounded-full bg-primary opacity-0 transition-opacity group-hover/gap:opacity-100" />
-        </div>
-      )}
-
       <div
         className={`AimText grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-component gap-y-inline px-inset py-inline transition-colors ${
           selected || active ? 'bg-muted/60' : ''
@@ -348,6 +283,154 @@ const SubtitleRow = memo(function SubtitleRow({
     </div>
   )
 })
+
+/**
+ * Half the hover band around a boundary: 2px of rule with 6px of slack either
+ * side, so 7px above and below the edge itself.
+ *
+ * Not a spacing token — this is a hit target, sized from what it has to catch.
+ * The rows' 4px of padding leaves only 8px of dead space between two lines, so
+ * the outer 3px at each end laps onto the row beyond: the very top of the
+ * timecode button below, the bottom of the text above. Those bands are border
+ * and half-leading rather than glyph, so nothing legible is covered — but the
+ * timecode *is* draggable, and a press within 3px of a row's top edge is
+ * caught here instead.
+ */
+const GAP_HIT_PX = 7
+
+interface GapPosition {
+  /** Index of the line *above* the boundary. */
+  index: number
+  /** Distance from the top of the scrolled content, not the viewport. */
+  top: number
+}
+
+/**
+ * The Add / Merge controls, on whichever boundary the pointer is near.
+ *
+ * **One of these for the whole list, not one per row.** Per row it was two
+ * positioned elements each — the row itself and the strip — so several hundred
+ * lines meant several hundred paint layers to organise and property nodes to
+ * walk every time the column was shown, for controls nobody was pointing at.
+ * It also forced `content-visibility` down onto the row's inner grid, because
+ * that property implies `contain: paint` and the strip deliberately hangs half
+ * outside the row's box.
+ *
+ * **The state lives here rather than in the list.** A `setState` in the list
+ * would re-run `utterances.map` and rebuild every element — `memo` stops rows
+ * re-rendering but cannot stop them being created — so the pointer crossing the
+ * list would cost more than opening it ever did. Here it re-renders one node.
+ *
+ * And it only sets state when the boundary actually *changes*: moving within
+ * one band returns the same object and React bails out.
+ */
+function GapOverlay({
+  scroller,
+  utterances,
+  handlers
+}: {
+  scroller: RefObject<HTMLDivElement | null>
+  utterances: Utterance[]
+  handlers: RowHandlers
+}): JSX.Element | null {
+  const [gap, setGap] = useState<GapPosition | null>(null)
+  const count = utterances.length
+
+  useEffect(() => {
+    const element = scroller.current
+    if (element === null) return undefined
+
+    const locate = (event: PointerEvent): GapPosition | null => {
+      const target = event.target
+      if (!(target instanceof Element)) return null
+      const row = target.closest('[data-index]')
+      if (!(row instanceof HTMLElement)) return null
+      const index = Number(row.dataset.index)
+      const rect = row.getBoundingClientRect()
+      // Measured against the scroller and offset by how far it is scrolled:
+      // the overlay is absolute *inside* the scrolled content, so it travels
+      // with the rows and needs no scroll listener of its own.
+      const box = element.getBoundingClientRect()
+      const toContent = (viewportY: number): number => viewportY - box.top + element.scrollTop
+      // The first line has no boundary above it and the last none below —
+      // there has to be a line on both sides for Add or Merge to mean anything.
+      if (event.clientY - rect.top <= GAP_HIT_PX && index > 0) {
+        return { index: index - 1, top: toContent(rect.top) }
+      }
+      if (rect.bottom - event.clientY <= GAP_HIT_PX && index < count - 1) {
+        return { index, top: toContent(rect.bottom) }
+      }
+      return null
+    }
+
+    const onMove = (event: PointerEvent): void => {
+      // Over the controls themselves, leave the boundary alone. They are not
+      // rows, so locating would come back empty and take the overlay out from
+      // under the pointer before the click landed.
+      if (event.target instanceof Element && event.target.closest('[data-gap]')) return
+      const next = locate(event)
+      setGap((current) => {
+        if (current === null || next === null) return current === next ? current : next
+        return current.index === next.index ? current : next
+      })
+    }
+    const onLeave = (): void => setGap(null)
+
+    element.addEventListener('pointermove', onMove)
+    element.addEventListener('pointerleave', onLeave)
+    return () => {
+      element.removeEventListener('pointermove', onMove)
+      element.removeEventListener('pointerleave', onLeave)
+    }
+  }, [scroller, count])
+
+  if (gap === null) return null
+  const above = utterances[gap.index]
+  const below = utterances[gap.index + 1]
+  if (above === undefined || below === undefined) return null
+  // Merging is always meaningful between two lines; filling needs a silence to
+  // fill. So only Add turns itself off.
+  const canAdd = below.start > above.end
+
+  return (
+    <div
+      data-gap
+      className="absolute inset-x-0 z-10 flex h-[14px] -translate-y-1/2 animate-in items-center gap-component fade-in-0"
+      style={{ top: gap.top }}
+    >
+      <span className="h-adjust flex-1 rounded-full bg-primary" />
+      {/* Left in place rather than hidden when there is no gap: the two kinds
+          of boundary then look identical, nothing jumps as the pointer runs
+          down the list, and the title says why it is off. */}
+      <button
+        type="button"
+        disabled={!canAdd}
+        title={
+          canAdd
+            ? 'Add a subtitle in this silence'
+            : 'These lines already touch — no silence to fill'
+        }
+        className={`flex h-control-sm items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground shadow-md ${
+          canAdd ? 'cursor-pointer hover:bg-primary/90' : 'cursor-not-allowed opacity-40'
+        }`}
+        onClick={() => handlers.onAdd(above.id)}
+      >
+        <Plus size={12} />
+        Add
+      </button>
+      <button
+        type="button"
+        title="Merge with the line above"
+        className="flex h-control-sm cursor-pointer items-center gap-inline rounded-full bg-primary px-component text-caption font-medium text-primary-foreground shadow-md hover:bg-primary/90"
+        onClick={() => handlers.onMerge(above.id)}
+      >
+        <Merge size={12} />
+        Merge
+      </button>
+      <span className="h-adjust flex-1 rounded-full bg-primary" />
+    </div>
+  )
+}
 
 interface SubtitleListProps {
   utterances: Utterance[]
@@ -691,7 +774,13 @@ export default function SubtitleList({
 
   return (
     <div className="TranscribePanel flex min-h-0 min-w-0 flex-1 flex-col">
-      <div ref={listRef} className="ConvertResult min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+      {/* `relative` so the overlay below positions against the scrolled
+          content and rides along with it. */}
+      <div
+        ref={listRef}
+        className="ConvertResult relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+      >
+        <GapOverlay scroller={listRef} utterances={utterances} handlers={handlers} />
         {utterances.map((utterance, index) => {
           const editing = utterance.id === editingId
           const timeEditEdge = timeEdit?.id === utterance.id ? timeEdit.edge : null

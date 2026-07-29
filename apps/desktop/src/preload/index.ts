@@ -20,6 +20,14 @@ const api: LogcutApi = {
     }
   },
 
+  onSetOwnerStacks: (callback) => {
+    const listener = (_event: unknown, on: boolean): void => callback(on)
+    ipcRenderer.on('menu:set-owner-stacks', listener)
+    return () => {
+      ipcRenderer.removeListener('menu:set-owner-stacks', listener)
+    }
+  },
+
   getSettingsStatus: () => ipcRenderer.invoke('settings:get-status'),
   setApiKey: (key) => ipcRenderer.invoke('settings:set-api-key', key),
   getSystemLocale: () => ipcRenderer.invoke('system:get-locale'),

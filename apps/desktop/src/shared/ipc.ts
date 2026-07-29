@@ -27,20 +27,18 @@ import type {
  * reopening on the same working setup is the point of remembering at all.
  */
 export interface EditorLayout {
+  /** Side columns are pixels: a subtitle list wants the same width whatever
+   *  the screen is (see EditorPage.md). */
   chatWidth: number
-  /**
-   * Null until the divider is dragged, and back to null on reset.
-   *
-   * These two are **derived from the room available** until someone states
-   * otherwise: the tab panel and the player open equal, and the timeline takes
-   * its share of the height. Storing the derived pixels instead would freeze a
-   * ratio into a number — close a side column and the panel keeps a width that
-   * was half of a row that no longer exists, while the player, being the
-   * flexible one, silently pockets the difference.
-   */
-  tabsWidth: number | null
   subtitlesWidth: number
-  timelineHeight: number | null
+  /**
+   * The two flexible splits, each a fraction of what it divides — **never
+   * pixels** (see EditorPage.md). A pixel value reaching either of these is
+   * read as a ratio, and a panel asking for 649 times the row collapses every
+   * other one to nothing.
+   */
+  tabsRatio: number
+  timelineRatio: number
   chatOpen: boolean
   subtitlesOpen: boolean
 }
@@ -245,6 +243,12 @@ export interface LogcutApi {
    * renderer, so the menu can only ask. Returns an unsubscribe function.
    */
   onOpenSettings(callback: () => void): () => void
+
+  /**
+   * The Developer menu toggled React's owner stacks. Development builds only —
+   * in a packaged app the menu does not exist and this never fires.
+   */
+  onSetOwnerStacks(callback: (on: boolean) => void): () => void
 
   getSettingsStatus(): Promise<SettingsStatus>
   setApiKey(key: string): Promise<void>

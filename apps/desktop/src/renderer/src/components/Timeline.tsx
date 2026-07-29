@@ -282,13 +282,19 @@ export default function Timeline({
   const pendingSeekRef = useRef<number | null>(null)
   const seekFrameRef = useRef(0)
   const [width, setWidth] = useState(0)
-  /** 1 is fit-to-width; above that the strip is longer than the window. */
+  /**
+   * The window width the scale is fitted to, which is not the window's current
+   * width (see Timeline.md). Every px ↔ ms conversion goes through this one;
+   * folding it back into `width` is what makes a resize rescale the strip.
+   */
+  const [baseWidth, setBaseWidth] = useState(0)
+  /** 1 is the whole media across `baseWidth`; above that the strip is longer. */
   const [zoom, setZoom] = useState(1)
   /** How far the window is scrolled into the strip, in strip pixels. */
   const [offsetPx, setOffsetPx] = useState(0)
   const hasMedia = durationMs > 0
 
-  const contentWidth = width * zoom
+  const contentWidth = baseWidth * zoom
   const maxOffset = Math.max(0, contentWidth - width)
 
   /**
@@ -296,15 +302,29 @@ export default function Timeline({
    * timeline can express. Capped as well, because a short clip would otherwise
    * allow a zoom so deep that the strip is megapixels wide.
    */
-  const maxZoom = width > 0 && durationMs > 0 ? Math.max(1, Math.min(500, durationMs / width)) : 1
+  const maxZoom =
+    baseWidth > 0 && durationMs > 0 ? Math.max(1, Math.min(500, durationMs / baseWidth)) : 1
 
   // Read by the wheel listener and the playhead writer, both of which run
   // outside the render that produced these numbers.
-  const viewRef = useRef({ width, contentWidth, offsetPx, zoom, durationMs, maxZoom })
-  viewRef.current = { width, contentWidth, offsetPx, zoom, durationMs, maxZoom }
+  const viewRef = useRef({ width, baseWidth, contentWidth, offsetPx, zoom, durationMs, maxZoom })
+  viewRef.current = { width, baseWidth, contentWidth, offsetPx, zoom, durationMs, maxZoom }
 
-  // Shrinking the window, or zooming back out, can leave the view scrolled
-  // past the end of a strip that is now shorter than the offset.
+  /** The span `baseWidth` was fitted to, which tells a resize apart from a
+   *  change of content — the first must not refit, the second must. */
+  const fittedDurationRef = useRef(-1)
+
+  // Fitting happens once per span, never on resize (see Timeline.md).
+  useEffect(() => {
+    if (width <= 0 || fittedDurationRef.current === durationMs) return
+    fittedDurationRef.current = durationMs
+    setBaseWidth(width)
+    setZoom(1)
+    setOffsetPx(0)
+  }, [width, durationMs])
+
+  // Widening the window, or zooming back out, can leave the view scrolled past
+  // the end of a strip that no longer reaches that far.
   useEffect(() => {
     setOffsetPx((current) => Math.min(current, Math.max(0, contentWidth - width)))
   }, [contentWidth, width])
@@ -739,7 +759,7 @@ export default function Timeline({
 
     const onWheel = (event: WheelEvent): void => {
       const view = viewRef.current
-      if (!(view.durationMs > 0) || view.width <= 0) return
+      if (!(view.durationMs > 0) || view.contentWidth <= 0) return
 
       // buttons is a bitmask; 4 is the middle button.
       const zooming = (event.buttons & 4) !== 0 || event.ctrlKey || event.metaKey
@@ -765,7 +785,7 @@ export default function Timeline({
         MIN_ZOOM,
         Math.min(view.maxZoom, view.zoom * Math.exp(-event.deltaY * 0.002))
       )
-      const nextWidth = view.width * next
+      const nextWidth = view.baseWidth * next
       setZoom(next)
       setOffsetPx(
         Math.max(
@@ -793,8 +813,7 @@ export default function Timeline({
     if (last === null || width <= 0) return
     event.stopPropagation()
     thumbXRef.current = event.clientX
-    // The thumb travels the window's width while the view travels the strip's,
-    // so a pixel of thumb is `zoom` pixels of strip.
+    // The thumb travels the window's width while the view travels the strip's.
     const delta = ((event.clientX - last) * contentWidth) / width
     setOffsetPx((current) => Math.max(0, Math.min(maxOffset, current + delta)))
   }
@@ -1193,8 +1212,9 @@ export default function Timeline({
             className="absolute inset-y-adjust cursor-grab rounded-full bg-border transition-colors hover:bg-input active:cursor-grabbing"
             style={{
               left: contentWidth > 0 ? `${(offsetPx / contentWidth) * 100}%` : 0,
-              // Capped: below fit-to-width the strip is shorter than the
-              // window, and the thumb would otherwise overrun the bar.
+              // Capped: the strip is shorter than the window whenever the view
+              // is zoomed out or the window was widened, and the thumb would
+              // otherwise overrun the bar.
               width: contentWidth > 0 ? `${Math.min(1, width / contentWidth) * 100}%` : '100%',
               minWidth: MIN_THUMB_PX
             }}
