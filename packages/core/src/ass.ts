@@ -1,6 +1,7 @@
 import {
   captionFontSizePct,
   captionLengthFor,
+  captionShadowOffset,
   captionWrapShare,
   resolveCaptionStyle,
   SYSTEM_FONT
@@ -24,22 +25,6 @@ export interface AssInput {
   /** What the `SYSTEM_FONT` sentinel resolves to on the machine doing the burn. */
   systemFont: string
 }
-
-/**
- * Horizontal and vertical padding of the caption's backing plate, as lengths at
- * `CAPTION_REFERENCE_HEIGHT`.
- *
- * The preview states these as fixed design tokens (`px-stack` / `py-inline`),
- * which do not grow with the picture — at 4K that plate would be a hairline
- * around type twenty times its size. Reading them as reference-height lengths
- * is what makes them scale like every other measurement in a CaptionStyle, and
- * it reproduces the preview exactly at 1080p.
- */
-const PLATE_PAD_X = 12
-const PLATE_PAD_Y = 4
-
-/** The plate is black at 60% opacity; ASS states the transparent share. */
-const PLATE_ALPHA = Math.round((1 - 0.6) * 255)
 
 function pad(value: number | string, length: number): string {
   return String(value).padStart(length, '0')
@@ -68,8 +53,11 @@ function assColour(hex: string): string {
   return `&H${b}${g}${r}&`.toUpperCase()
 }
 
-function assAlpha(value: number): string {
-  return `&H${pad(value.toString(16).toUpperCase(), 2)}&`
+/** ASS states the *transparent* share, so an opacity has to be turned around
+ *  on the way in. 0% opaque is `&HFF&`, fully solid is `&H00&`. */
+function assAlpha(opacityPct: number): string {
+  const transparent = Math.round((1 - opacityPct / 100) * 255)
+  return `&H${pad(transparent.toString(16).toUpperCase(), 2)}&`
 }
 
 /**
@@ -87,6 +75,37 @@ function assText(text: string): string {
 }
 
 /**
+ * Which pass of a caption an event is.
+ *
+ * **No two of these can be one event.** Under `BorderStyle: 3` the outline
+ * colour *is* the plate's fill and the border widths *are* its padding, so
+ * asking that same event for a stroke only repaints the box — measured, and the
+ * box came out in the stroke's colour. The shadow is separate for a second
+ * reason: `\blur` takes the whole event, glyphs and border with it, so a
+ * blurred shadow is only a blurred shadow while it is alone on its event.
+ *
+ * Painted in this order, bottom first.
+ */
+type Layer = 'plate' | 'shadow' | 'text'
+
+/**
+ * The passes a caption needs, bottom to top.
+ *
+ * **Exactly one of them draws the letterforms** — `text`, always present. The
+ * plate could be made to carry them too, and once did, which saved an event
+ * whenever there was no stroke; it stops working the moment a shadow has to go
+ * between the plate and the type, and a rule with an exception in it is the
+ * kind that gets applied to the wrong branch later.
+ */
+function layersFor(style: CaptionStyle): Layer[] {
+  return [
+    ...(style.background ? (['plate'] as const) : []),
+    ...(style.shadow ? (['shadow'] as const) : []),
+    'text' as const
+  ]
+}
+
+/**
  * Everything about one line that an override tag can carry.
  *
  * Only `Justify` and `BorderStyle` cannot, which is the whole reason there is
@@ -96,36 +115,75 @@ function assText(text: string): string {
 function overrides(style: CaptionStyle, input: AssInput, layer: Layer): string {
   const { width, height } = input.frame
   const family = style.fontFamily === SYSTEM_FONT ? input.systemFont : style.fontFamily
+  // The shadow is the one pass that does not sit on the caption's own centre.
+  // `\pos` is in screen space, so the offset has to be turned by the caption's
+  // rotation here — the preview's shadow is inside the rotated block and is
+  // already turned by it.
+  const offset =
+    layer === 'shadow' ? captionShadowOffset(style, height, style.rotation) : { dx: 0, dy: 0 }
+
+  /** Fill colour and how solid it is — a different answer on every layer. */
+  const fill =
+    layer === 'plate'
+      ? // The plate draws no type of its own; the text layer above puts the
+        // letterforms in. It still has to *lay out* the text, because that is
+        // what gives the box its size.
+        [`\\c${assColour(style.color)}`, '\\1a&HFF&']
+      : layer === 'shadow'
+        ? [`\\c${assColour(style.shadowColor)}`, `\\1a${assAlpha(style.shadowOpacityPct)}`]
+        : [`\\c${assColour(style.color)}`, `\\1a${assAlpha(style.fillOpacityPct)}`]
+
+  /** What surrounds the glyphs: the plate's box, nothing, or the stroke. */
   const border =
     layer === 'plate'
       ? [
           // BorderStyle 3 paints the plate in the outline colour, sized by the
           // border widths — `\xbord` and `\ybord` because the padding is not
-          // square.
-          '\\3c&H000000&',
-          `\\3a${assAlpha(PLATE_ALPHA)}`,
-          `\\xbord${num(captionLengthFor(PLATE_PAD_X, height))}`,
-          `\\ybord${num(captionLengthFor(PLATE_PAD_Y, height))}`
+          // square. Its corners are square too; `backgroundRadius` has nothing
+          // to land on here (see ass.md).
+          `\\3c${assColour(style.backgroundColor)}`,
+          `\\3a${assAlpha(style.backgroundOpacityPct)}`,
+          `\\xbord${num(captionLengthFor(style.backgroundPadX, height))}`,
+          `\\ybord${num(captionLengthFor(style.backgroundPadY, height))}`
         ]
-      : [
-          `\\3c${assColour(style.outlineColor)}`,
-          `\\3a${assAlpha(Math.round((1 - style.outlineOpacityPct / 100) * 255))}`,
-          `\\bord${num(captionLengthFor(style.outlineWidth, height))}`
-        ]
+      : !style.outline
+        ? // Unstroked type has no border to draw. Stated rather than left to
+          // the style table, so that reading one event tells the whole story.
+          ['\\bord0']
+        : layer === 'shadow'
+          ? [
+              // **The shadow of stroked type is stroked too**, in the shadow's
+              // own colour: what casts the shadow is the silhouette, and the
+              // stroke is part of it. CSS agrees — a `text-shadow` is taken
+              // from the painted glyph, `-webkit-text-stroke` included — so
+              // leaving this off would give the burn a visibly thinner shadow
+              // than the preview at any real stroke width.
+              `\\3c${assColour(style.shadowColor)}`,
+              `\\3a${assAlpha(style.shadowOpacityPct)}`,
+              `\\bord${num(captionLengthFor(style.outlineWidth, height))}`
+            ]
+          : [
+              `\\3c${assColour(style.outlineColor)}`,
+              `\\3a${assAlpha(style.outlineOpacityPct)}`,
+              `\\bord${num(captionLengthFor(style.outlineWidth, height))}`
+            ]
+
   const tags = [
     // The stored position is the block's centre, and `\an5` is the one anchor
     // that reads `\pos` the same way.
     '\\an5',
-    `\\pos(${num(style.x * width)},${num(style.y * height)})`,
+    `\\pos(${num(style.x * width + offset.dx)},${num(style.y * height + offset.dy)})`,
     `\\fn${family}`,
     `\\fs${num((captionFontSizePct(style) / 100) * height)}`,
     `\\b${style.bold ? 1 : 0}`,
     `\\i${style.italic ? 1 : 0}`,
     `\\u${style.underline ? 1 : 0}`,
-    `\\c${assColour(style.color)}`,
-    '\\1a&H00&',
+    ...fill,
     ...border,
+    // libass's own shadow is never used: it offsets down-right at a fixed
+    // angle, and `shadowAngle` is not fixed.
     '\\shad0',
+    `\\blur${layer === 'shadow' ? num(captionLengthFor(style.shadowBlur, height)) : '0'}`,
     `\\fsp${num(captionLengthFor(style.letterSpacing, height))}`,
     // Rotation is clockwise everywhere in this project and counter-clockwise
     // in ASS. Drop the minus and every rotated caption burns in mirrored.
@@ -137,17 +195,6 @@ function overrides(style: CaptionStyle, input: AssInput, layer: Layer): string {
 }
 
 /**
- * Which of a caption's two passes an event is.
- *
- * **The plate and the stroke cannot be one event.** Under `BorderStyle: 3` the
- * outline colour *is* the plate's fill and the border widths *are* its padding,
- * so asking the same event for a stroke only repaints the box — measured, and
- * the box came out in the stroke's colour. Two events at the same `\pos`, the
- * stroke laid over the plate, is the only arrangement that produces both.
- */
-type Layer = 'plate' | 'stroke'
-
-/**
  * One `Style:` per border style, because that is the one field an override tag
  * cannot say. Everything else about a line is stated inline.
  */
@@ -155,12 +202,13 @@ const STYLE_LINES = [
   // 3 = the opaque plate.
   'Style: Plate,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,' +
     '0,0,0,0,100,100,0,0,3,0,0,5,0,0,0,1',
-  // 1 = outline and shadow, which is what a stroke around the glyphs needs.
+  // 1 = outline and shadow, which is what a stroke around the glyphs needs —
+  // and what the shadow pass needs too, having no box of its own.
   'Style: Stroke,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,' +
     '0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1'
 ]
 
-const STYLE_NAME: Record<Layer, string> = { plate: 'Plate', stroke: 'Stroke' }
+const STYLE_NAME: Record<Layer, string> = { plate: 'Plate', shadow: 'Stroke', text: 'Stroke' }
 
 /**
  * Serialize captions as an ASS document for ffmpeg's `ass` filter.
@@ -168,10 +216,10 @@ const STYLE_NAME: Record<Layer, string> = { plate: 'Plate', stroke: 'Stroke' }
  * The mapping mirrors the preview overlay field for field — that correspondence
  * is the feature, so a change to either side is a change to both.
  *
- * Three things the preview can express and a burn cannot, all of which land at
- * their defaults: line spacing, which has no ASS equivalent at all; the plate's
- * rounded corners; and `align`, whose only expression would be an anchor that
- * moves the block off the centre it is stored at (see ass.md).
+ * Three things the preview can express and a burn cannot: line spacing, which
+ * has no ASS equivalent at all; `backgroundRadius`, because the opaque box is
+ * square; and `align`, whose only expression would be an anchor that moves the
+ * block off the centre it is stored at (see ass.md).
  */
 export function toAss(input: AssInput): string {
   const resolved = input.lines.map((line) => ({
@@ -206,12 +254,12 @@ export function toAss(input: AssInput): string {
     // way to say it — and being symmetric they leave `\pos` in charge of where
     // the caption actually sits. Auto is zero margins, the whole picture.
     const margin = Math.round((input.frame.width * (1 - captionWrapShare(style.widthPct))) / 2)
-    // The stroke goes second and on the layer above, so it is painted over the
-    // plate. Both passes carry identical geometry — same `\pos`, size, spacing,
-    // rotation and margins — which is what keeps the glyphs of one exactly
-    // under the glyphs of the other.
-    const layers: Layer[] = style.outline ? ['plate', 'stroke'] : ['plate']
-    return layers.map(
+    // Each pass goes on the layer above the last, so they paint in the order
+    // `layersFor` lists them. Every pass carries identical geometry — same size,
+    // spacing, rotation and margins, and the same `\pos` bar the shadow's own
+    // offset — which is what keeps the glyphs of one exactly over the glyphs of
+    // the next.
+    return layersFor(style).map(
       (layer, index) =>
         `Dialogue: ${index},${formatAssTimestamp(line.start)},${formatAssTimestamp(line.end)},` +
         `${STYLE_NAME[layer]},,${margin},${margin},0,,` +

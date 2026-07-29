@@ -41,6 +41,9 @@ export interface EditorLayout {
    */
   tabsRatio: number
   timelineRatio: number
+  /** The caption style panel's share of the subtitle column, the line list
+   *  taking the rest. A fraction like the two above, and for the same reason. */
+  captionStyleRatio: number
   chatOpen: boolean
   subtitlesOpen: boolean
 }
@@ -319,6 +322,11 @@ export interface LogcutApi {
    * saved" are read back identically.
    */
   saveEditorLayout(layout: EditorLayout): Promise<void>
+
+  /** Whether snapping is on, or null before the user has ever changed it —
+   *  which is not the same as false, so the default decides instead. */
+  getSnapEnabled(): Promise<boolean | null>
+  setSnapEnabled(on: boolean): Promise<void>
 
   /** Create an empty project; the editor opens on it right away. */
   createProject(name?: string): Promise<ProjectSummary>

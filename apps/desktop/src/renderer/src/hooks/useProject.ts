@@ -319,23 +319,40 @@ export function useProject(projectId: string): UseProjectResult {
   )
 
   const setCaptionStyles = useCallback(
-    // Through `guard` like every other mutation: on its own it swallowed
-    // failures whole. The caller fires it with `void`, so a rejection here
-    // surfaces nowhere at all — the font simply would not change and nothing
-    // would say why.
-    (styles: CaptionStyles, options: { record?: boolean } = {}) => {
+    // Not through `guard`, unlike every other mutation, and the reason is the
+    // line marked below. Errors are still surfaced — swallowing them was what
+    // made a rejected write show up nowhere at all, the caller firing this
+    // with `void`.
+    async (styles: CaptionStyles, options: { record?: boolean } = {}): Promise<void> => {
       if (options.record !== false) record()
       // On screen first, disk second. The caption is dragged on the picture,
       // and waiting for a round trip to the main process before showing the
-      // result would flash the old position for a frame on release. Main
-      // normalizes what it stores and returns it, so the value below is
-      // replaced by the authoritative one a moment later — the two agree
-      // unless something was out of range, in which case the clamped value
-      // wins, which is also the right answer.
+      // result would flash the old position for a frame on release.
       setProject((current) => (current ? { ...current, captionStyles: styles } : current))
-      return guard(() => window.logcut.setCaptionStyles(projectId, styles))
+      try {
+        const detail = await window.logcut.setCaptionStyles(projectId, styles)
+        // **Only the styling comes back out of the reply.** Main returns the
+        // whole project, and adopting it wholesale replaces `timeline` and
+        // `assets` with freshly deserialized arrays — which re-runs
+        // `layUtterances` over every subtitle and re-renders the whole
+        // timeline, once per frame of a colour drag, for a field neither of
+        // them contains.
+        //
+        // Compared rather than assigned for the same reason: main normalizes
+        // what it stores, and an out-of-range value has to come back and win,
+        // but the answer is identical on every frame that was already in
+        // range.
+        setProject((current) =>
+          current && JSON.stringify(current.captionStyles) !== JSON.stringify(detail.captionStyles)
+            ? { ...current, captionStyles: detail.captionStyles }
+            : current
+        )
+        setError(null)
+      } catch (cause: unknown) {
+        setError(errorMessageOf(cause))
+      }
     },
-    [guard, projectId, record]
+    [projectId, record]
   )
 
   const setExportSettings = useCallback(

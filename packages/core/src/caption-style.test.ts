@@ -5,6 +5,7 @@ import {
   CAPTION_STYLE_LIMITS,
   captionFontSizePct,
   captionLengthFor,
+  captionShadowOffset,
   captionSizePct,
   captionSizePx,
   captionWrapShare,
@@ -79,31 +80,76 @@ test('normalizing completes the base and leaves an override as it found it', () 
   })
 })
 
-test('every field survives a round trip through normalizing', () => {
-  const styles: unknown = {
-    base: {
-      fontFamily: 'Inter',
-      fontSizePct: 7.5,
-      scalePct: 140,
-      bold: true,
-      italic: true,
-      underline: true,
-      color: '#ff8800',
-      outline: true,
-      outlineColor: '#001122',
-      outlineOpacityPct: 40,
-      outlineWidth: 7,
-      letterSpacing: 12,
-      lineSpacing: 30,
-      align: 'left',
-      widthPct: 60,
-      x: 0.25,
-      y: 0.5,
-      rotation: -15
-    },
-    bySpeaker: {}
+test('the shadow offset is clockwise from due right, with y growing downward', () => {
+  const at = (shadowAngle: number, extraRotation = 0): { dx: number; dy: number } => {
+    const { dx, dy } = captionShadowOffset(
+      { shadowDistance: 10, shadowAngle },
+      CAPTION_REFERENCE_HEIGHT,
+      extraRotation
+    )
+    return { dx: Math.round(dx), dy: Math.round(dy) }
   }
+  assert.deepEqual(at(0), { dx: 10, dy: 0 })
+  // Down, not up: this is a screen, and every other y in the model grows the
+  // same way.
+  assert.deepEqual(at(90), { dx: 0, dy: 10 })
+  assert.deepEqual(at(180), { dx: -10, dy: 0 })
+  // The extra rotation adds to the angle rather than replacing it — it is for
+  // a caller whose own frame has not already turned the offset.
+  assert.deepEqual(at(0, 90), at(90))
+})
+
+test('the shadow distance scales with the picture, like every other length', () => {
+  const { dx } = captionShadowOffset({ shadowDistance: 10, shadowAngle: 0 }, 2160)
+  assert.equal(Math.round(dx), 20)
+})
+
+/** Every field, each set to something the default is not — so that a field the
+ *  readers drop shows up as a difference rather than as a coincidence. */
+const EVERY_FIELD = {
+  fontFamily: 'Inter',
+  fontSizePct: 7.5,
+  scalePct: 140,
+  bold: true,
+  italic: true,
+  underline: true,
+  color: '#ff8800',
+  fillOpacityPct: 80,
+  outline: true,
+  outlineColor: '#001122',
+  outlineOpacityPct: 40,
+  outlineWidth: 7,
+  shadow: true,
+  shadowColor: '#334455',
+  shadowOpacityPct: 70,
+  shadowBlur: 9,
+  shadowDistance: 11,
+  shadowAngle: -30,
+  background: false,
+  backgroundColor: '#223344',
+  backgroundOpacityPct: 35,
+  backgroundPadX: 20,
+  backgroundPadY: 9,
+  backgroundRadius: 14,
+  letterSpacing: 12,
+  lineSpacing: 30,
+  align: 'left',
+  widthPct: 60,
+  x: 0.25,
+  y: 0.5,
+  rotation: -15
+}
+
+test('every field survives a round trip through normalizing', () => {
+  const styles: unknown = { base: EVERY_FIELD, bySpeaker: {} }
   assert.deepEqual(normalizeCaptionStyles(styles), styles)
+})
+
+test('the round trip above is testing every field there is', () => {
+  // Without this, adding a field and forgetting the fixture leaves the test
+  // above passing on the fields it already knew about — which is the one
+  // failure a round-trip test exists to catch.
+  assert.deepEqual(Object.keys(EVERY_FIELD).sort(), Object.keys(DEFAULT_CAPTION_STYLE).sort())
 })
 
 test('numbers out of range are clamped, not dropped', () => {

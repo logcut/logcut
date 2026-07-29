@@ -39,7 +39,14 @@ import type { EditorLayout, MediaAssetSummary } from '../../../shared/ipc'
  *  tab panel and the player equal. */
 const DEFAULT_TIMELINE_RATIO = 0.4
 const DEFAULT_TABS_RATIO = 0.5
+/** The share the caption style panel opens on. It was once a fixed 40% of the
+ *  column; the reason it had to become draggable is in SubtitleEditor.md. */
+const DEFAULT_CAPTION_STYLE_RATIO = 0.4
 const MIN_TIMELINE_HEIGHT = 96
+/** Enough of the style panel to show a heading and a row under it, and enough
+ *  of the list to show more than one line. Neither half may be dragged shut. */
+const MIN_CAPTION_STYLE_HEIGHT = 120
+const MIN_SUBTITLE_LIST_HEIGHT = 120
 const MIN_PANES_HEIGHT = 200
 
 const MIN_TABS_WIDTH = 260
@@ -60,6 +67,7 @@ function defaultLayout(): EditorLayout {
     subtitlesWidth: DEFAULT_SUBTITLES_WIDTH,
     tabsRatio: DEFAULT_TABS_RATIO,
     timelineRatio: DEFAULT_TIMELINE_RATIO,
+    captionStyleRatio: DEFAULT_CAPTION_STYLE_RATIO,
     chatOpen: true,
     subtitlesOpen: false
   }
@@ -149,6 +157,9 @@ export default function EditorPage({
    */
   const playheadRef = useRef(0)
   const [snapEnabled, setSnapEnabled] = useState(true)
+  /** The same guard as `layoutLoaded` below, for the same reason: the default
+   *  above must not be written over the stored value before it has arrived. */
+  const [snapLoaded, setSnapLoaded] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
   /** The right-hand column, closed on open. Nothing but the user ever closes
    *  it again — see EditorPage.md. */
@@ -159,6 +170,7 @@ export default function EditorPage({
   /** Fractions of what they divide, never pixels — see `EditorLayout`. */
   const [tabsRatio, setTabsRatio] = useState(DEFAULT_TABS_RATIO)
   const [timelineRatio, setTimelineRatio] = useState(DEFAULT_TIMELINE_RATIO)
+  const [captionStyleRatio, setCaptionStyleRatio] = useState(DEFAULT_CAPTION_STYLE_RATIO)
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH)
   const [subtitlesWidth, setSubtitlesWidth] = useState(DEFAULT_SUBTITLES_WIDTH)
   /** False until the saved arrangement has been read, so the defaults on screen
@@ -372,6 +384,7 @@ export default function EditorPage({
     )
     setTabsRatio(ratioOrDefault(layout.tabsRatio, DEFAULT_TABS_RATIO))
     setTimelineRatio(ratioOrDefault(layout.timelineRatio, DEFAULT_TIMELINE_RATIO))
+    setCaptionStyleRatio(ratioOrDefault(layout.captionStyleRatio, DEFAULT_CAPTION_STYLE_RATIO))
     setChatOpen(layout.chatOpen)
     setSubtitlesOpen(layout.subtitlesOpen)
   }, [])
@@ -405,12 +418,41 @@ export default function EditorPage({
         subtitlesWidth,
         tabsRatio,
         timelineRatio,
+        captionStyleRatio,
         chatOpen,
         subtitlesOpen
       })
     }, LAYOUT_SAVE_DELAY_MS)
     return () => clearTimeout(id)
-  }, [layoutLoaded, chatWidth, subtitlesWidth, tabsRatio, timelineRatio, chatOpen, subtitlesOpen])
+  }, [
+    layoutLoaded,
+    chatWidth,
+    subtitlesWidth,
+    tabsRatio,
+    timelineRatio,
+    captionStyleRatio,
+    chatOpen,
+    subtitlesOpen
+  ])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.logcut.getSnapEnabled().then((saved) => {
+      if (cancelled) return
+      if (saved !== null) setSnapEnabled(saved)
+      setSnapLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** No debounce, unlike the layout above: this changes on a click or a
+   *  keystroke, never on every frame of a drag. */
+  useEffect(() => {
+    if (!snapLoaded) return
+    void window.logcut.setSnapEnabled(snapEnabled)
+  }, [snapLoaded, snapEnabled])
 
   /** Written straight through rather than left to the debounce above: a reset
    *  the user immediately follows by quitting still has to survive. */
@@ -428,6 +470,27 @@ export default function EditorPage({
       clamp(current - delta / room, MIN_TIMELINE_HEIGHT / room, 1 - MIN_PANES_HEIGHT / room)
     )
   }
+
+  /**
+   * The split inside the subtitle column. The height comes from there rather
+   * than from a ref here, because that column is the only thing that knows how
+   * much of itself the toolbar has already taken.
+   *
+   * Memoized, and it has to be: `SubtitleEditor` holds a memoized panel and a
+   * memoized list, and a fresh callback here would re-render both on every
+   * frame the playhead moves.
+   */
+  const resizeCaptionStyle = useCallback((delta: number, room: number): void => {
+    const available = room - PANE_GAP
+    if (available <= 0) return
+    setCaptionStyleRatio((current) =>
+      clamp(
+        current + delta / available,
+        MIN_CAPTION_STYLE_HEIGHT / available,
+        1 - MIN_SUBTITLE_LIST_HEIGHT / available
+      )
+    )
+  }, [])
 
   /** The dialog speaks the transcript's own ids, the timeline speaks composite
    *  ones — the same line has two names and this is the crossing point. */
@@ -1162,6 +1225,8 @@ export default function EditorPage({
                 onReplaceAll={handleReplaceAll}
                 style={scopedStyle}
                 onChange={applyStylePatch}
+                styleRatio={captionStyleRatio}
+                onStyleResize={resizeCaptionStyle}
                 scope={captionScope}
                 onScopeChange={setCaptionScope}
                 hasSelection={selectedLine !== null}

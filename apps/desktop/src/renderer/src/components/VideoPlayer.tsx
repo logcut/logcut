@@ -2,6 +2,7 @@ import {
   CAPTION_STYLE_LIMITS,
   captionFontSizePct,
   captionLengthFor,
+  captionShadowOffset,
   captionWrapShare,
   DEFAULT_LINE_RATIO,
   formatTimecode,
@@ -191,6 +192,8 @@ export default function VideoPlayer({
     horizontal: moving && style.y === CENTRE
   }
 
+  const shadowOffset = captionShadowOffset(style, frame.height)
+
   /** Everything about the caption's type that comes from the document. */
   const captionCss = {
     fontFamily: captionFontStack,
@@ -198,7 +201,7 @@ export default function VideoPlayer({
     fontWeight: style.bold ? 700 : 400,
     fontStyle: style.italic ? 'italic' : 'normal',
     textDecoration: style.underline ? 'underline' : 'none',
-    color: style.color,
+    color: withAlpha(style.color, style.fillOpacityPct),
     // Both spacings are stored against the reference frame, so they scale with
     // the picture exactly as the size does — otherwise tightening the letters
     // in the preview would leave them untouched at export.
@@ -213,7 +216,28 @@ export default function VideoPlayer({
       ? captionLengthFor(style.outlineWidth, frame.height) * 2
       : 0,
     WebkitTextStrokeColor: withAlpha(style.outlineColor, style.outlineOpacityPct),
-    paintOrder: 'stroke fill'
+    paintOrder: 'stroke fill',
+    // No rotation passed in: this shadow lives inside the block, so the block's
+    // own transform has already turned it. The burn has to add the rotation
+    // itself, `\pos` being in screen space (see caption-style.ts).
+    textShadow: style.shadow
+      ? `${shadowOffset.dx}px ${shadowOffset.dy}px ${captionLengthFor(style.shadowBlur, frame.height)}px ${withAlpha(style.shadowColor, style.shadowOpacityPct)}`
+      : 'none',
+    // The plate, and the three measurements that shape it. All three are
+    // lengths against the reference frame rather than design tokens: a token
+    // holds still while the picture grows, which at 4K is a hairline around
+    // type twenty times its size.
+    backgroundColor: style.background
+      ? withAlpha(style.backgroundColor, style.backgroundOpacityPct)
+      : 'transparent',
+    // Padding goes with the plate rather than outliving it. Under ASS the
+    // padding *is* the plate's border widths, so a plate switched off has none
+    // — and a block that kept its inset would sit in a different place on
+    // screen from the one that burns.
+    padding: style.background
+      ? `${captionLengthFor(style.backgroundPadY, frame.height)}px ${captionLengthFor(style.backgroundPadX, frame.height)}px`
+      : 0,
+    borderRadius: captionLengthFor(style.backgroundRadius, frame.height)
   } as const
 
   /**
@@ -546,7 +570,11 @@ export default function VideoPlayer({
                   // An outline and not a border for the edit state: a border
                   // would take a pixel out of the text's width on every side
                   // and move the wrap the moment the box was double-clicked.
-                  className={`pointer-events-auto max-w-full rounded-panel bg-black/60 px-stack py-inline text-balance whitespace-pre-wrap ${
+                  // The plate, its padding and its radius are all in
+                  // `captionCss` and none of them here: they are the caption's
+                  // own appearance, sized against the picture, not this
+                  // application's spacing scale.
+                  className={`pointer-events-auto max-w-full text-balance whitespace-pre-wrap ${
                     editing
                       ? 'outline-1 -outline-offset-1 outline-primary'
                       : selected

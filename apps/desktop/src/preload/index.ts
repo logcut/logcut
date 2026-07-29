@@ -35,6 +35,8 @@ const api: LogcutApi = {
   getWaveform: (projectId, assetId) => ipcRenderer.invoke('project:waveform', projectId, assetId),
   getEditorLayout: () => ipcRenderer.invoke('settings:get-layout'),
   saveEditorLayout: (layout) => ipcRenderer.invoke('settings:save-layout', layout),
+  getSnapEnabled: () => ipcRenderer.invoke('settings:get-snapping'),
+  setSnapEnabled: (on) => ipcRenderer.invoke('settings:set-snapping', on),
   getLanguagePreference: () => ipcRenderer.invoke('settings:get-language'),
   setLanguagePreference: (option) => ipcRenderer.invoke('settings:set-language', option),
 

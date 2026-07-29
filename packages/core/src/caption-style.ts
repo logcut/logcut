@@ -47,6 +47,14 @@ export interface CaptionStyle {
   /** CSS colour, `#rrggbb`. */
   color: string
   /**
+   * How solid the letterforms are. 0 is invisible, 100 is opaque.
+   *
+   * There is no switch beside it, unlike every other layer here: turning the
+   * fill off is the same act as taking it to 0, and a caption whose text can be
+   * made to vanish twice over has one way too many.
+   */
+  fillOpacityPct: number
+  /**
    * Whether the type is stroked.
    *
    * A switch rather than "width 0 means off", so that turning it off and on
@@ -69,6 +77,66 @@ export interface CaptionStyle {
    * this and paints the stroke under the fill.
    */
   outlineWidth: number
+  /**
+   * Whether the type casts a shadow. A switch for the same reason `outline` is
+   * one: the four fields below survive it being turned off.
+   */
+  shadow: boolean
+  /** CSS colour, `#rrggbb`. */
+  shadowColor: string
+  /** 0 is invisible, 100 is solid. */
+  shadowOpacityPct: number
+  /**
+   * How soft the shadow's edge is, in pixels at `CAPTION_REFERENCE_HEIGHT`. 0
+   * is a hard copy of the letterforms.
+   *
+   * **This is the one blur in the model, and it is here because it is the only
+   * one both renderers can produce.** A blur on the fill or on the stroke would
+   * have to be a blur of the whole caption in either engine — CSS filters the
+   * element, plate included, and libass's `\blur` takes the glyphs, the border
+   * and the shadow together. The shadow is separable because it is already its
+   * own thing on both sides: a `text-shadow` in the preview, its own event in
+   * the burn.
+   */
+  shadowBlur: number
+  /**
+   * How far the shadow falls from the type, in pixels at
+   * `CAPTION_REFERENCE_HEIGHT`. A true distance along `shadowAngle`, not a
+   * per-axis offset.
+   */
+  shadowDistance: number
+  /** Which way the shadow falls: degrees clockwise from due right, so 45 is
+   *  down and to the right. */
+  shadowAngle: number
+  /**
+   * Whether the caption sits on a plate.
+   *
+   * **On by default**, and at the black the plate has always been — every
+   * caption this build has ever burned had one, and a default of off would
+   * change the look of projects nobody touched.
+   */
+  background: boolean
+  /** CSS colour, `#rrggbb`. */
+  backgroundColor: string
+  /** 0 is invisible, 100 is solid. */
+  backgroundOpacityPct: number
+  /**
+   * How far the plate stands out past the text, in pixels at
+   * `CAPTION_REFERENCE_HEIGHT`.
+   *
+   * Two numbers rather than one, because the plate the project started with was
+   * never square — 12 against 4 — and folding them into a single spread would
+   * restyle every existing caption on the way past.
+   */
+  backgroundPadX: number
+  backgroundPadY: number
+  /**
+   * The plate's corner radius, in pixels at `CAPTION_REFERENCE_HEIGHT`.
+   *
+   * **Preview only.** ASS's opaque box is square and has no radius to set, so a
+   * value here rounds the corners on screen and not in the export (see ass.md).
+   */
+  backgroundRadius: number
   /**
    * Extra space between characters, in pixels at `CAPTION_REFERENCE_HEIGHT`.
    * 0 is the font's own spacing.
@@ -128,12 +196,29 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   italic: false,
   underline: false,
   color: '#ffffff',
+  fillOpacityPct: 100,
   outline: false,
   outlineColor: '#000000',
   outlineOpacityPct: 100,
   // About a tenth of the default type size, which is where a stroke reads as
   // an edge rather than as a second weight of the same letter.
   outlineWidth: 5,
+  shadow: false,
+  shadowColor: '#000000',
+  shadowOpacityPct: 100,
+  shadowBlur: 5,
+  shadowDistance: 4,
+  // Down and to the right, where a light source above and behind the viewer
+  // puts it — the direction every other shadow on the screen already falls.
+  shadowAngle: 45,
+  // The plate every caption in this build has had, stated as data rather than
+  // baked into the two renderers.
+  background: true,
+  backgroundColor: '#000000',
+  backgroundOpacityPct: 60,
+  backgroundPadX: 12,
+  backgroundPadY: 4,
+  backgroundRadius: 8,
   letterSpacing: 0,
   lineSpacing: 0,
   align: 'center',
@@ -196,6 +281,25 @@ export function captionWrapShare(widthPct: number): number {
   return widthPct === 0 ? 1 : widthPct / 100
 }
 
+/**
+ * Where the shadow falls, in pixels for a picture of the given height.
+ *
+ * `extraRotation` is whatever the caller's own coordinate frame does not
+ * already apply. The preview passes 0 — its shadow lives inside the block, so
+ * the block's own transform has already turned it. ASS passes the caption's
+ * rotation, because `\pos` is in screen space and nothing there has turned
+ * anything. Both are clockwise, and y grows downward in both.
+ */
+export function captionShadowOffset(
+  style: Pick<CaptionStyle, 'shadowDistance' | 'shadowAngle'>,
+  frameHeight: number,
+  extraRotation = 0
+): { dx: number; dy: number } {
+  const distance = captionLengthFor(style.shadowDistance, frameHeight)
+  const radians = ((style.shadowAngle + extraRotation) * Math.PI) / 180
+  return { dx: distance * Math.cos(radians), dy: distance * Math.sin(radians) }
+}
+
 /** Pixels at the reference height → the share this build stores. */
 export function captionSizePct(px: number): number {
   // Rounded to the same precision the slider steps in, so that typing the
@@ -222,8 +326,19 @@ export const DEFAULT_LINE_RATIO = 1.3
 export const CAPTION_STYLE_LIMITS = {
   fontSizePct: { min: 1, max: 20 },
   scalePct: { min: 10, max: 500 },
+  fillOpacityPct: { min: 0, max: 100 },
   outlineOpacityPct: { min: 0, max: 100 },
   outlineWidth: { min: 0, max: 40 },
+  shadowOpacityPct: { min: 0, max: 100 },
+  shadowBlur: { min: 0, max: 40 },
+  shadowDistance: { min: 0, max: 100 },
+  // The same clockwise degrees `rotation` is stated in, and the same range, so
+  // that the two angles in this model cannot be read on different dials.
+  shadowAngle: { min: -180, max: 180 },
+  backgroundOpacityPct: { min: 0, max: 100 },
+  backgroundPadX: { min: 0, max: 200 },
+  backgroundPadY: { min: 0, max: 200 },
+  backgroundRadius: { min: 0, max: 100 },
   letterSpacing: { min: -20, max: 100 },
   lineSpacing: { min: -40, max: 200 },
   // 0 is auto, so the low bound is not a width — every control offering this
@@ -258,6 +373,30 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 /**
+ * A number the caller has bounds for, clamped into them.
+ *
+ * **Out of range is clamped, not rejected**: the value is still one somebody
+ * meant, just further than this build goes. `NaN` and the infinities are not
+ * numbers anyone meant, so they fall back to the default instead.
+ */
+function bounded(key: keyof typeof CAPTION_STYLE_LIMITS) {
+  return (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? clamp(value, CAPTION_STYLE_LIMITS[key].min, CAPTION_STYLE_LIMITS[key].max)
+      : undefined
+}
+
+function bool(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+/** Whitelisted, not merely typed: these reach an inline style, and any string
+ *  at all would be a CSS injection with a door held open for it. */
+function colour(value: unknown): string | undefined {
+  return typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined
+}
+
+/**
  * One reader per field: takes whatever was on disk, returns the field or
  * nothing. A table rather than a chain of ifs because both callers below need
  * the same per-field rule — one to build a complete style, one to build a
@@ -268,61 +407,39 @@ const READERS: {
   [K in keyof CaptionStyle]: (value: unknown) => CaptionStyle[K] | undefined
 } = {
   fontFamily: (value) => (typeof value === 'string' && value !== '' ? value : undefined),
-  fontSizePct: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.fontSizePct.min, CAPTION_STYLE_LIMITS.fontSizePct.max)
-      : undefined,
-  scalePct: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.scalePct.min, CAPTION_STYLE_LIMITS.scalePct.max)
-      : undefined,
-  bold: (value) => (typeof value === 'boolean' ? value : undefined),
-  italic: (value) => (typeof value === 'boolean' ? value : undefined),
-  underline: (value) => (typeof value === 'boolean' ? value : undefined),
-  color: (value) => (typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined),
-  outline: (value) => (typeof value === 'boolean' ? value : undefined),
-  outlineColor: (value) =>
-    typeof value === 'string' && HEX_COLOUR.test(value) ? value : undefined,
-  outlineOpacityPct: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(
-          value,
-          CAPTION_STYLE_LIMITS.outlineOpacityPct.min,
-          CAPTION_STYLE_LIMITS.outlineOpacityPct.max
-        )
-      : undefined,
-  outlineWidth: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.outlineWidth.min, CAPTION_STYLE_LIMITS.outlineWidth.max)
-      : undefined,
-  letterSpacing: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.letterSpacing.min, CAPTION_STYLE_LIMITS.letterSpacing.max)
-      : undefined,
-  lineSpacing: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.lineSpacing.min, CAPTION_STYLE_LIMITS.lineSpacing.max)
-      : undefined,
+  fontSizePct: bounded('fontSizePct'),
+  scalePct: bounded('scalePct'),
+  bold: bool,
+  italic: bool,
+  underline: bool,
+  color: colour,
+  fillOpacityPct: bounded('fillOpacityPct'),
+  outline: bool,
+  outlineColor: colour,
+  outlineOpacityPct: bounded('outlineOpacityPct'),
+  outlineWidth: bounded('outlineWidth'),
+  shadow: bool,
+  shadowColor: colour,
+  shadowOpacityPct: bounded('shadowOpacityPct'),
+  shadowBlur: bounded('shadowBlur'),
+  shadowDistance: bounded('shadowDistance'),
+  shadowAngle: bounded('shadowAngle'),
+  background: bool,
+  backgroundColor: colour,
+  backgroundOpacityPct: bounded('backgroundOpacityPct'),
+  backgroundPadX: bounded('backgroundPadX'),
+  backgroundPadY: bounded('backgroundPadY'),
+  backgroundRadius: bounded('backgroundRadius'),
+  letterSpacing: bounded('letterSpacing'),
+  lineSpacing: bounded('lineSpacing'),
   align: (value) =>
     typeof value === 'string' && (ALIGNMENTS as string[]).includes(value)
       ? (value as CaptionAlign)
       : undefined,
-  widthPct: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.widthPct.min, CAPTION_STYLE_LIMITS.widthPct.max)
-      : undefined,
-  x: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.x.min, CAPTION_STYLE_LIMITS.x.max)
-      : undefined,
-  y: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.y.min, CAPTION_STYLE_LIMITS.y.max)
-      : undefined,
-  rotation: (value) =>
-    typeof value === 'number' && Number.isFinite(value)
-      ? clamp(value, CAPTION_STYLE_LIMITS.rotation.min, CAPTION_STYLE_LIMITS.rotation.max)
-      : undefined
+  widthPct: bounded('widthPct'),
+  x: bounded('x'),
+  y: bounded('y'),
+  rotation: bounded('rotation')
 }
 
 const KEYS = Object.keys(READERS) as (keyof CaptionStyle)[]

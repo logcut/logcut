@@ -29,6 +29,7 @@ export {
   CAPTION_STYLE_LIMITS,
   captionFontSizePct,
   captionLengthFor,
+  captionShadowOffset,
   captionSizePct,
   captionSizePx,
   captionWrapShare,

@@ -20,8 +20,9 @@ import {
   Undo2,
   X
 } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
+import ResizeHandle from '@/components/ResizeHandle'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -152,6 +153,12 @@ function NumberField({
   )
 }
 
+/** How long a pause has to be before the next colour counts as a new pick.
+ *  The picker reports every movement of the cursor inside it and has **no event
+ *  for the gesture ending**, so a gap in time is all there is to separate one
+ *  drag from the next. */
+const COLOUR_GESTURE_GAP_MS = 400
+
 /**
  * A colour, shown as a swatch and its hex.
  *
@@ -170,8 +177,10 @@ function ColourField({
   value: string
   label: string
   disabled?: boolean
-  onChange(next: string): void
+  onChange(next: string, options?: { continuing?: boolean }): void
 }): JSX.Element {
+  const lastChangeRef = useRef(0)
+
   return (
     <label
       className={`flex h-control-md items-center gap-component rounded-md border border-input px-compact ${
@@ -189,9 +198,169 @@ function ColourField({
         aria-label={label}
         disabled={disabled}
         className="sr-only"
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => {
+          const now = performance.now()
+          const continuing = now - lastChangeRef.current < COLOUR_GESTURE_GAP_MS
+          lastChangeRef.current = now
+          onChange(event.target.value, { continuing })
+        }}
       />
     </label>
+  )
+}
+
+/**
+ * One collapsible group of settings, with its own heading.
+ *
+ * **Open to begin with, every one of them.** Collapsing is for reaching the
+ * list sooner, not a way of admitting a group is secondary.
+ *
+ * The gap above is `stack` and not `block`: with five of these in a column they
+ * are adjacent items in one list, not five separate blocks of content — and in
+ * a panel this short the difference is a third of a control row per group. The
+ * gap below belongs to the content, so closing a group actually gets it back.
+ */
+function StyleGroup({
+  title,
+  action,
+  children
+}: {
+  title: string
+  /** Whatever sits at the right of the heading: a switch for the layers that
+   *  have one, a reset for Layout. */
+  action?: ReactNode
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <Collapsible defaultOpen>
+      <div className="mt-stack flex items-center gap-component">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="group flex flex-1 cursor-pointer items-center gap-inline border-0 bg-transparent p-0 text-caption font-medium text-foreground"
+          >
+            {/* The chevron turns rather than swapping icons, so the open state
+                reads as one control moving instead of two icons alternating. */}
+            <ChevronDown
+              size={14}
+              className="text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90"
+            />
+            <h2 className="m-0 font-medium">{title}</h2>
+          </button>
+        </CollapsibleTrigger>
+        {action}
+      </div>
+      <CollapsibleContent className="flex flex-col gap-component pt-component">
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/**
+ * The switch in a layer's heading, rather than a row of its own.
+ *
+ * It answers "is there a shadow at all", while the rows below only describe the
+ * one there is — the same relationship the scope select has to the Style
+ * heading.
+ */
+function LayerSwitch({
+  label,
+  on,
+  onChange
+}: {
+  label: string
+  on: boolean
+  onChange(on: boolean): void
+}): JSX.Element {
+  return (
+    <Toggle variant="outline" size="sm" aria-label={label} pressed={on} onPressedChange={onChange}>
+      {on ? 'On' : 'Off'}
+    </Toggle>
+  )
+}
+
+/** The colour of one layer. Four of the five groups open with this row, and it
+ *  is the same row each time. */
+function ColourRow({
+  label,
+  value,
+  disabled,
+  onChange
+}: {
+  label: string
+  value: string
+  disabled?: boolean
+  onChange(next: string, options?: { continuing?: boolean }): void
+}): JSX.Element {
+  return (
+    <StyleRow label="Colour">
+      <ColourField
+        value={value}
+        label={`${label} colour`}
+        disabled={disabled}
+        onChange={onChange}
+      />
+    </StyleRow>
+  )
+}
+
+/**
+ * A number this panel drags or types: slider, readout box, and the three
+ * callbacks a drag needs.
+ *
+ * **Dragging and typing are not the same event**, which is why they are two
+ * props rather than one. Every frame of a drag goes through `onSlide`, which
+ * folds into the one undo step the gesture is worth; a typed value is a single
+ * step of its own and goes through `onCommit`.
+ */
+function ValueRow({
+  label,
+  value,
+  limits,
+  name,
+  title,
+  disabled,
+  onSlide,
+  onSlideEnd,
+  onCommit
+}: {
+  label: string
+  value: number
+  limits: { min: number; max: number }
+  /** What the control announces itself as, which is rarely just the label. */
+  name: string
+  title?: string
+  disabled?: boolean
+  onSlide(next: number): void
+  onSlideEnd(): void
+  onCommit(next: number): void
+}): JSX.Element {
+  return (
+    <StyleRow
+      label={label}
+      readout={
+        <NumberField
+          value={Math.round(value)}
+          min={limits.min}
+          max={limits.max}
+          label={name}
+          title={title}
+          disabled={disabled}
+          onCommit={onCommit}
+        />
+      }
+    >
+      <Slider
+        value={[value]}
+        min={limits.min}
+        max={limits.max}
+        step={1}
+        disabled={disabled}
+        onValueChange={([next]) => onSlide(next)}
+        onValueCommit={onSlideEnd}
+      />
+    </StyleRow>
   )
 }
 
@@ -219,13 +388,32 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
   hasSelection
 }: {
   style: CaptionStyle
-  onChange(patch: Partial<CaptionStyle>): void
+  onChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
   scope: CaptionScope
   onScopeChange(scope: CaptionScope): void
   speakerIds: string[]
   hasSelection: boolean
 }): JSX.Element {
   const fonts = useCaptionFonts()
+
+  /**
+   * A slider writes on every frame it moves, and only the first of those is a
+   * step worth going back to — without this one drag buries the history under a
+   * hundred entries of itself.
+   *
+   * A ref, not state: it is read by the very handler that sets it, and a
+   * re-render in between would be a re-render per frame for nothing. One flag
+   * for all five sliders is enough — a pointer can only hold one of them.
+   */
+  const sliding = useRef(false)
+  const slide = (patch: Partial<CaptionStyle>): void => {
+    onChange(patch, { continuing: sliding.current })
+    sliding.current = true
+  }
+  /** Radix fires this on release, and on the keyboard too. */
+  const endSlide = (): void => {
+    sliding.current = false
+  }
   // The scope is a tagged union in the model and a flat string in the control;
   // this is the one place the two meet.
   const scopeValue = scope.kind === 'speaker' ? `speaker:${scope.speakerId}` : scope.kind
@@ -241,7 +429,7 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
   }
 
   return (
-    <section className="h-[40%] shrink-0 overflow-y-auto border-b border-border p-component">
+    <section className="min-h-0 flex-1 overflow-y-auto border-b border-border p-component">
       {/* What the controls below write to — the question "which subtitles
               are we talking about", which is why it lives in the heading and not
               in a row of its own (see SubtitleEditor.md). Resolution rules are
@@ -312,7 +500,8 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
             min={sizeRange.min}
             max={sizeRange.max}
             step={1}
-            onValueChange={([next]) => onChange({ fontSizePct: captionSizePct(next) })}
+            onValueChange={([next]) => slide({ fontSizePct: captionSizePct(next) })}
+            onValueCommit={endSlide}
           />
         </StyleRow>
 
@@ -343,14 +532,6 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
               <Italic />
             </ToggleGroupItem>
           </ToggleGroup>
-        </StyleRow>
-
-        <StyleRow label="Colour">
-          <ColourField
-            value={style.color}
-            label="Caption colour"
-            onChange={(color) => onChange({ color })}
-          />
         </StyleRow>
 
         {/* Both on one row, typed rather than dragged: they are adjustments
@@ -409,34 +590,12 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
       </div>
 
       {/* Where the caption sits and how big it is — the four fields the handles
-          on the picture drag. A second heading rather than four more rows above:
-          these answer "where is it", while everything above answers "what does
-          it look like", and the reset below only makes sense over the first.
-
-          Open to begin with. Collapsing is for reaching the list sooner, not a
-          way of admitting these four are secondary.
-
-          The gap above is `block` and not `section`: this panel is 40% of a
-          column, around 330px, and a section-scale gap spends a seventh of it
-          on one space — enough that the section scrolled with the group shut.
-          The gap below belongs to the content, so closing the group actually
-          gets it back. */}
-      <Collapsible defaultOpen>
-        <div className="mt-block flex items-center gap-component">
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="group flex flex-1 cursor-pointer items-center gap-inline border-0 bg-transparent p-0 text-caption font-medium text-foreground"
-            >
-              {/* The chevron turns rather than swapping icons, so the open state
-                  reads as one control moving instead of two icons alternating. */}
-              <ChevronDown
-                size={14}
-                className="text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90"
-              />
-              <h2 className="m-0 font-medium">Layout</h2>
-            </button>
-          </CollapsibleTrigger>
+          on the picture drag. A heading rather than four more rows above: these
+          answer "where is it", while everything above answers "what does it
+          look like", and the reset only makes sense over the first. */}
+      <StyleGroup
+        title="Layout"
+        action={
           <Button
             variant="ghost"
             size="icon-sm"
@@ -445,199 +604,287 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
           >
             <RotateCcw size={14} />
           </Button>
-        </div>
-
-        <CollapsibleContent className="flex flex-col gap-component pt-component">
-          {/* What the corner handles drag. Separate from Size because they answer
+        }
+      >
+        {/* What the corner handles drag. Separate from Size because they answer
             different questions — see CaptionStyle. */}
-          <StyleRow
-            label="Scale"
-            readout={
-              <NumberField
-                value={Math.round(style.scalePct)}
-                min={CAPTION_STYLE_LIMITS.scalePct.min}
-                max={CAPTION_STYLE_LIMITS.scalePct.max}
-                label="Caption scale, as a percentage"
-                title="A percentage of the size set above. Dragging a corner on the picture changes this, not the size."
-                onCommit={(next) => onChange({ scalePct: next })}
-              />
-            }
-          >
-            <Slider
-              value={[style.scalePct]}
-              min={CAPTION_STYLE_LIMITS.scalePct.min}
-              max={CAPTION_STYLE_LIMITS.scalePct.max}
-              step={1}
-              onValueChange={([next]) => onChange({ scalePct: next })}
-            />
-          </StyleRow>
+        <ValueRow
+          label="Scale"
+          value={style.scalePct}
+          limits={CAPTION_STYLE_LIMITS.scalePct}
+          name="Caption scale, as a percentage"
+          title="A percentage of the size set above. Dragging a corner on the picture changes this, not the size."
+          onSlide={(next) => slide({ scalePct: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ scalePct: next })}
+        />
 
-          {/* Two numbers, so the row gives up its readout column the way Spacing
+        {/* Two numbers, so the row gives up its readout column the way Spacing
             does. Shown as percentages of the picture, which is how they are
             stored — pixels would mean nothing without saying at what size. */}
-          <StyleRow label="Pos" wide>
-            <div className="flex flex-1 items-center gap-component">
-              <span className="shrink-0 text-caption font-normal text-muted-foreground">X</span>
-              <NumberField
-                value={Math.round(style.x * 100)}
-                min={CAPTION_STYLE_LIMITS.x.min * 100}
-                max={CAPTION_STYLE_LIMITS.x.max * 100}
-                label="Caption centre across the picture, as a percentage"
-                onCommit={(next) => onChange({ x: next / 100 })}
-              />
-              <span className="shrink-0 text-caption font-normal text-muted-foreground">Y</span>
-              <NumberField
-                value={Math.round(style.y * 100)}
-                min={CAPTION_STYLE_LIMITS.y.min * 100}
-                max={CAPTION_STYLE_LIMITS.y.max * 100}
-                label="Caption centre down the picture, as a percentage"
-                onCommit={(next) => onChange({ y: next / 100 })}
-              />
-            </div>
-          </StyleRow>
+        <StyleRow label="Pos" wide>
+          <div className="flex flex-1 items-center gap-component">
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">X</span>
+            <NumberField
+              value={Math.round(style.x * 100)}
+              min={CAPTION_STYLE_LIMITS.x.min * 100}
+              max={CAPTION_STYLE_LIMITS.x.max * 100}
+              label="Caption centre across the picture, as a percentage"
+              onCommit={(next) => onChange({ x: next / 100 })}
+            />
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Y</span>
+            <NumberField
+              value={Math.round(style.y * 100)}
+              min={CAPTION_STYLE_LIMITS.y.min * 100}
+              max={CAPTION_STYLE_LIMITS.y.max * 100}
+              label="Caption centre down the picture, as a percentage"
+              onCommit={(next) => onChange({ y: next / 100 })}
+            />
+          </div>
+        </StyleRow>
 
-          {/* No slider: 0 is auto rather than the narrowest width, so a track
+        {/* No slider: 0 is auto rather than the narrowest width, so a track
             running from it would put the widest behaviour at the narrow end.
             The toggle says which of the two states this is, and the box is the
             width when there is one. */}
-          <StyleRow label="Width" wide>
-            <div className="flex flex-1 items-center gap-component">
-              <Toggle
-                variant="outline"
-                pressed={style.widthPct === 0}
-                // Leaving auto adopts the width auto already resolves to, so the
-                // caption itself does not move on the way out.
-                onPressedChange={(auto) => onChange({ widthPct: auto ? 0 : 100 })}
-              >
-                Auto
-              </Toggle>
-              <NumberField
-                value={style.widthPct}
-                min={1}
-                max={CAPTION_STYLE_LIMITS.widthPct.max}
-                label="Caption width, as a percentage of the picture"
-                title="Where the caption wraps. Drag either side handle on the picture to set it."
-                disabled={style.widthPct === 0}
-                onCommit={(next) => onChange({ widthPct: next })}
-              />
-            </div>
-          </StyleRow>
-
-          <StyleRow
-            label="Rotate"
-            readout={
-              <NumberField
-                value={Math.round(style.rotation)}
-                min={CAPTION_STYLE_LIMITS.rotation.min}
-                max={CAPTION_STYLE_LIMITS.rotation.max}
-                label="Caption rotation in degrees"
-                onCommit={(next) => onChange({ rotation: next })}
-              />
-            }
-          >
-            <Slider
-              value={[style.rotation]}
-              min={CAPTION_STYLE_LIMITS.rotation.min}
-              max={CAPTION_STYLE_LIMITS.rotation.max}
-              step={1}
-              onValueChange={([next]) => onChange({ rotation: next })}
-            />
-          </StyleRow>
-        </CollapsibleContent>
-      </Collapsible>
-
-      {/* A stroke around the glyphs. The switch is in the heading rather than a
-          row of its own, because it answers "is there an outline at all" and
-          the rows below only describe the one there is — the same shape the
-          scope select has in the Style heading. */}
-      <Collapsible defaultOpen>
-        <div className="mt-block flex items-center gap-component">
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="group flex flex-1 cursor-pointer items-center gap-inline border-0 bg-transparent p-0 text-caption font-medium text-foreground"
+        <StyleRow label="Width" wide>
+          <div className="flex flex-1 items-center gap-component">
+            <Toggle
+              variant="outline"
+              pressed={style.widthPct === 0}
+              // Leaving auto adopts the width auto already resolves to, so the
+              // caption itself does not move on the way out.
+              onPressedChange={(auto) => onChange({ widthPct: auto ? 0 : 100 })}
             >
-              <ChevronDown
-                size={14}
-                className="text-muted-foreground transition-transform group-data-[state=closed]:-rotate-90"
-              />
-              <h2 className="m-0 font-medium">Outline</h2>
-            </button>
-          </CollapsibleTrigger>
-          <Toggle
-            variant="outline"
-            size="sm"
-            aria-label="Outline the caption"
-            pressed={style.outline}
-            onPressedChange={(outline) => onChange({ outline })}
-          >
-            {style.outline ? 'On' : 'Off'}
-          </Toggle>
-        </div>
-
-        {/* Left in place and disabled rather than hidden while the outline is
-            off: the values are still there, and a row that disappears reads as
-            "this setting does not exist" rather than "it is not in use". */}
-        <CollapsibleContent className="flex flex-col gap-component pt-component">
-          <StyleRow label="Colour">
-            <ColourField
-              value={style.outlineColor}
-              label="Outline colour"
-              disabled={!style.outline}
-              onChange={(outlineColor) => onChange({ outlineColor })}
+              Auto
+            </Toggle>
+            <NumberField
+              value={style.widthPct}
+              min={1}
+              max={CAPTION_STYLE_LIMITS.widthPct.max}
+              label="Caption width, as a percentage of the picture"
+              title="Where the caption wraps. Drag either side handle on the picture to set it."
+              disabled={style.widthPct === 0}
+              onCommit={(next) => onChange({ widthPct: next })}
             />
-          </StyleRow>
+          </div>
+        </StyleRow>
 
-          <StyleRow
-            label="Opacity"
-            readout={
-              <NumberField
-                value={Math.round(style.outlineOpacityPct)}
-                min={CAPTION_STYLE_LIMITS.outlineOpacityPct.min}
-                max={CAPTION_STYLE_LIMITS.outlineOpacityPct.max}
-                label="Outline opacity, as a percentage"
-                disabled={!style.outline}
-                onCommit={(next) => onChange({ outlineOpacityPct: next })}
-              />
-            }
-          >
-            <Slider
-              value={[style.outlineOpacityPct]}
-              min={CAPTION_STYLE_LIMITS.outlineOpacityPct.min}
-              max={CAPTION_STYLE_LIMITS.outlineOpacityPct.max}
-              step={1}
-              disabled={!style.outline}
-              onValueChange={([next]) => onChange({ outlineOpacityPct: next })}
-            />
-          </StyleRow>
+        <ValueRow
+          label="Rotate"
+          value={style.rotation}
+          limits={CAPTION_STYLE_LIMITS.rotation}
+          name="Caption rotation in degrees"
+          onSlide={(next) => slide({ rotation: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ rotation: next })}
+        />
+      </StyleGroup>
 
-          {/* Pixels at the reference height, like the two spacings — every
-              length in this panel means the same thing. */}
-          <StyleRow
-            label="Width"
-            readout={
-              <NumberField
-                value={style.outlineWidth}
-                min={CAPTION_STYLE_LIMITS.outlineWidth.min}
-                max={CAPTION_STYLE_LIMITS.outlineWidth.max}
-                label="Outline width"
-                title={REFERENCE_HINT}
-                disabled={!style.outline}
-                onCommit={(next) => onChange({ outlineWidth: next })}
-              />
-            }
-          >
-            <Slider
-              value={[style.outlineWidth]}
-              min={CAPTION_STYLE_LIMITS.outlineWidth.min}
-              max={CAPTION_STYLE_LIMITS.outlineWidth.max}
-              step={1}
-              disabled={!style.outline}
-              onValueChange={([next]) => onChange({ outlineWidth: next })}
+      {/* The letterforms themselves.
+
+          **No switch on this one, unlike the three below it.** Turning the fill
+          off is the same act as taking its opacity to nothing, and a control
+          that duplicates another one only asks the user which of the two the
+          program is really watching. */}
+      <StyleGroup title="Fill">
+        <ColourRow
+          label="Fill"
+          value={style.color}
+          onChange={(color, options) => onChange({ color }, options)}
+        />
+        <ValueRow
+          label="Opacity"
+          value={style.fillOpacityPct}
+          limits={CAPTION_STYLE_LIMITS.fillOpacityPct}
+          name="Fill opacity, as a percentage"
+          onSlide={(next) => slide({ fillOpacityPct: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ fillOpacityPct: next })}
+        />
+      </StyleGroup>
+
+      {/* A stroke around the glyphs.
+
+          Its rows are left in place and disabled rather than hidden while it is
+          off: the values are still there, and a row that disappears reads as
+          "this setting does not exist" rather than "it is not in use". Every
+          group below does the same. */}
+      <StyleGroup
+        title="Outline"
+        action={
+          <LayerSwitch
+            label="Outline the caption"
+            on={style.outline}
+            onChange={(outline) => onChange({ outline })}
+          />
+        }
+      >
+        <ColourRow
+          label="Outline"
+          value={style.outlineColor}
+          disabled={!style.outline}
+          onChange={(outlineColor, options) => onChange({ outlineColor }, options)}
+        />
+        <ValueRow
+          label="Opacity"
+          value={style.outlineOpacityPct}
+          limits={CAPTION_STYLE_LIMITS.outlineOpacityPct}
+          name="Outline opacity, as a percentage"
+          disabled={!style.outline}
+          onSlide={(next) => slide({ outlineOpacityPct: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ outlineOpacityPct: next })}
+        />
+        <ValueRow
+          label="Width"
+          value={style.outlineWidth}
+          limits={CAPTION_STYLE_LIMITS.outlineWidth}
+          name="Outline width"
+          title={REFERENCE_HINT}
+          disabled={!style.outline}
+          onSlide={(next) => slide({ outlineWidth: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ outlineWidth: next })}
+        />
+      </StyleGroup>
+
+      {/* A second copy of the letterforms, laid under them and pushed aside. */}
+      <StyleGroup
+        title="Shadow"
+        action={
+          <LayerSwitch
+            label="Give the caption a shadow"
+            on={style.shadow}
+            onChange={(shadow) => onChange({ shadow })}
+          />
+        }
+      >
+        <ColourRow
+          label="Shadow"
+          value={style.shadowColor}
+          disabled={!style.shadow}
+          onChange={(shadowColor, options) => onChange({ shadowColor }, options)}
+        />
+        <ValueRow
+          label="Opacity"
+          value={style.shadowOpacityPct}
+          limits={CAPTION_STYLE_LIMITS.shadowOpacityPct}
+          name="Shadow opacity, as a percentage"
+          disabled={!style.shadow}
+          onSlide={(next) => slide({ shadowOpacityPct: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ shadowOpacityPct: next })}
+        />
+        {/* The one blur in the panel, and it is here because the shadow is the
+            only layer either renderer can blur on its own — see CaptionStyle. */}
+        <ValueRow
+          label="Blur"
+          value={style.shadowBlur}
+          limits={CAPTION_STYLE_LIMITS.shadowBlur}
+          name="Shadow blur"
+          title={REFERENCE_HINT}
+          disabled={!style.shadow}
+          onSlide={(next) => slide({ shadowBlur: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ shadowBlur: next })}
+        />
+        {/* Two numbers on one row, so it gives up its readout column the way
+            Spacing and Pos do. They are one quantity between them — where the
+            shadow falls — and neither is worth a track of its own. */}
+        <StyleRow label="Offset" wide>
+          <div className="flex flex-1 items-center gap-component">
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Dist</span>
+            <NumberField
+              value={style.shadowDistance}
+              min={CAPTION_STYLE_LIMITS.shadowDistance.min}
+              max={CAPTION_STYLE_LIMITS.shadowDistance.max}
+              label="How far the shadow falls"
+              title={REFERENCE_HINT}
+              disabled={!style.shadow}
+              onCommit={(next) => onChange({ shadowDistance: next })}
             />
-          </StyleRow>
-        </CollapsibleContent>
-      </Collapsible>
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Angle</span>
+            <NumberField
+              value={Math.round(style.shadowAngle)}
+              min={CAPTION_STYLE_LIMITS.shadowAngle.min}
+              max={CAPTION_STYLE_LIMITS.shadowAngle.max}
+              label="Which way the shadow falls, in degrees"
+              title="Degrees clockwise from due right, so 45 is down and to the right."
+              disabled={!style.shadow}
+              onCommit={(next) => onChange({ shadowAngle: next })}
+            />
+          </div>
+        </StyleRow>
+      </StyleGroup>
+
+      {/* The plate behind the type. On by default, because every caption this
+          program has ever burned had one. */}
+      <StyleGroup
+        title="Background"
+        action={
+          <LayerSwitch
+            label="Put the caption on a plate"
+            on={style.background}
+            onChange={(background) => onChange({ background })}
+          />
+        }
+      >
+        <ColourRow
+          label="Background"
+          value={style.backgroundColor}
+          disabled={!style.background}
+          onChange={(backgroundColor, options) => onChange({ backgroundColor }, options)}
+        />
+        <ValueRow
+          label="Opacity"
+          value={style.backgroundOpacityPct}
+          limits={CAPTION_STYLE_LIMITS.backgroundOpacityPct}
+          name="Background opacity, as a percentage"
+          disabled={!style.background}
+          onSlide={(next) => slide({ backgroundOpacityPct: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ backgroundOpacityPct: next })}
+        />
+        {/* Two numbers, because the plate was never square: it stands further
+            out at the sides than above and below, which is what stops a caption
+            reading as a label stuck to the picture. */}
+        <StyleRow label="Padding" wide>
+          <div className="flex flex-1 items-center gap-component">
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">X</span>
+            <NumberField
+              value={style.backgroundPadX}
+              min={CAPTION_STYLE_LIMITS.backgroundPadX.min}
+              max={CAPTION_STYLE_LIMITS.backgroundPadX.max}
+              label="How far the plate stands out at the sides"
+              title={REFERENCE_HINT}
+              disabled={!style.background}
+              onCommit={(next) => onChange({ backgroundPadX: next })}
+            />
+            <span className="shrink-0 text-caption font-normal text-muted-foreground">Y</span>
+            <NumberField
+              value={style.backgroundPadY}
+              min={CAPTION_STYLE_LIMITS.backgroundPadY.min}
+              max={CAPTION_STYLE_LIMITS.backgroundPadY.max}
+              label="How far the plate stands out above and below"
+              title={REFERENCE_HINT}
+              disabled={!style.background}
+              onCommit={(next) => onChange({ backgroundPadY: next })}
+            />
+          </div>
+        </StyleRow>
+        <ValueRow
+          label="Radius"
+          value={style.backgroundRadius}
+          limits={CAPTION_STYLE_LIMITS.backgroundRadius}
+          name="Plate corner radius"
+          title={`${REFERENCE_HINT} Rounds the corners in the preview only — a burned-in plate has square ones.`}
+          disabled={!style.background}
+          onSlide={(next) => slide({ backgroundRadius: next })}
+          onSlideEnd={endSlide}
+          onCommit={(next) => onChange({ backgroundRadius: next })}
+        />
+      </StyleGroup>
     </section>
   )
 })
@@ -661,12 +908,19 @@ interface SubtitleEditorProps {
   onReplaceAll(find: string, replace: string): number
   /** The style as it resolves for the scope currently selected. */
   style: CaptionStyle
-  /** One field or several; the caller writes them into the selected scope. */
-  onChange(patch: Partial<CaptionStyle>): void
+  /** One field or several; the caller writes them into the selected scope.
+   *  `continuing` marks a frame in the middle of a drag — see the panel. */
+  onChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
   scope: CaptionScope
   onScopeChange(scope: CaptionScope): void
   /** Whether a line is selected, which is what `line` scope needs. */
   hasSelection: boolean
+  /** The style panel's share of the column, the list taking the rest. */
+  styleRatio: number
+  /** How far the handle moved, and the height it moved within. The bound is
+   *  the caller's to apply — every other minimum in this layout is stated
+   *  there, and a ratio has no pixels of its own to check against. */
+  onStyleResize(delta: number, room: number): void
 }
 
 /**
@@ -696,12 +950,22 @@ export default function SubtitleEditor({
   onChange,
   scope,
   onScopeChange,
-  hasSelection
+  hasSelection,
+  styleRatio,
+  onStyleResize
 }: SubtitleEditorProps): JSX.Element {
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [replaceText, setReplaceText] = useState('')
   const [message, setMessage] = useState('')
+
+  /** The two rows the split divides. Measured per drag rather than tracked, so
+   *  a resized window never leaves a stale height behind. */
+  const splitRef = useRef<HTMLDivElement>(null)
+  const resizeStyle = (delta: number): void => {
+    const room = splitRef.current?.clientHeight ?? 0
+    if (room > 0) onStyleResize(delta, room)
+  }
 
   const replaceAll = (): void => {
     const count = onReplaceAll(findText, replaceText)
@@ -757,30 +1021,42 @@ export default function SubtitleEditor({
         </p>
       )}
 
-      {/* Style settings — the captions burned into the picture. Above the
-              list, at a fixed share of the column, and writing `base` only: all
-              three are deliberate, see SubtitleEditor.md. */}
-      <CaptionStylePanel
-        style={style}
-        onChange={onChange}
-        scope={scope}
-        onScopeChange={onScopeChange}
-        speakerIds={speakerIds}
-        hasSelection={hasSelection}
-      />
+      {/* The style settings above the list, and the handle that decides how
+          much of the column each one gets. Both are deliberate — see
+          SubtitleEditor.md for why the settings are on top, and why the split
+          is dragged rather than fixed. */}
+      <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
+        {/* A plain element carries the share, not the panel itself: the panel
+            is memoized, and an inline style object handed to it would be a new
+            prop on every frame the playhead moves. */}
+        <div className="flex min-h-0 flex-col" style={{ flexGrow: styleRatio, flexBasis: 0 }}>
+          <CaptionStylePanel
+            style={style}
+            onChange={onChange}
+            scope={scope}
+            onScopeChange={onScopeChange}
+            speakerIds={speakerIds}
+            hasSelection={hasSelection}
+          />
+        </div>
 
-      <SubtitleList
-        utterances={utterances}
-        activeId={activeId}
-        onSeek={onSeek}
-        onEditSave={onEditSave}
-        onTimeSave={onTimeSave}
-        onAdd={onAdd}
-        onMerge={onMerge}
-        speakerIds={speakerIds}
-        nextSpeakerId={nextSpeakerId}
-        onSpeakerSave={onSpeakerSave}
-      />
+        <ResizeHandle orientation="horizontal" onResize={resizeStyle} />
+
+        <div className="flex min-h-0 flex-col" style={{ flexGrow: 1 - styleRatio, flexBasis: 0 }}>
+          <SubtitleList
+            utterances={utterances}
+            activeId={activeId}
+            onSeek={onSeek}
+            onEditSave={onEditSave}
+            onTimeSave={onTimeSave}
+            onAdd={onAdd}
+            onMerge={onMerge}
+            speakerIds={speakerIds}
+            nextSpeakerId={nextSpeakerId}
+            onSpeakerSave={onSpeakerSave}
+          />
+        </div>
+      </div>
     </div>
   )
 }

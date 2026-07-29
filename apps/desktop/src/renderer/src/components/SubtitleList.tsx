@@ -194,8 +194,10 @@ const SubtitleRow = memo(function SubtitleRow({
       ref={active ? activeRef : undefined}
     >
       <div
-        className={`AimText grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-component gap-y-inline px-inset py-inline transition-colors ${
-          selected || active ? 'bg-muted/60' : ''
+        // The left edge carries the selection, and every row reserves it so
+        // nothing shifts by a pixel when a row takes or loses it.
+        className={`AimText grid grid-cols-[auto_auto_minmax(0,1fr)] items-start gap-x-component gap-y-inline border-l px-inset py-inline transition-colors ${
+          selected || active ? 'border-l-primary bg-muted/60' : 'border-l-transparent'
         }`}
       >
         {/* A two-row grid, not two stacked columns: the pairs have to
@@ -218,6 +220,23 @@ const SubtitleRow = memo(function SubtitleRow({
                   0.08em of tracking to every one of them, and each box
                   carries a border and horizontal padding. */}
         {timecodeCell('start', 'text-muted-foreground')}
+
+        {/* The rule that closes the two timecodes into one cell, so the pair
+            reads as one line's start and end rather than as two entries.
+            **A grid item spanning both rows, not a border on the timecode
+            cells.** Two borders would break at the row gap — a gap that falls
+            exactly between the two halves of one line, which is the boundary
+            this rule exists to deny. Spanning the rows covers the gap too.
+            It cannot live on the timecode controls for a second reason: their
+            own border already means something (transparent at rest, visible on
+            hover, brand while typing), so it changes colour under the pointer.
+            `-my-inline` cancels this element's share of the row's own padding,
+            which is what carries the rule out to the row's top and bottom edges
+            so it meets the rule in the row above and below. Stretched without
+            it, every line's rule stops 4px short at each end and the column
+            reads as a dashed one. It reaches the edge and no further, so paint
+            containment on the row has nothing to clip. */}
+        <div className="col-start-2 row-span-2 row-start-1 -my-inline self-stretch border-r border-border" />
 
         {/* Always present, even on a line the ASR left unattributed:
                   it is the only place a speaker can be assigned, so hiding it
@@ -350,8 +369,22 @@ function GapOverlay({
       // Measured against the scroller and offset by how far it is scrolled:
       // the overlay is absolute *inside* the scrolled content, so it travels
       // with the rows and needs no scroll listener of its own.
+      //
+      // Rounded so the strip's 2px rules land on whole pixels and stay crisp.
+      // Row boundaries never are: body text is 13px at 1.6 leading, so every
+      // line box is 20.8px and the error accumulates down the list.
+      //
+      // **This is not what stops the strip twitching as it fades in** — that
+      // is the layer the strip holds for itself, see `transform-gpu` below.
+      // Horizontally it lands on fractions no matter what, and there is no
+      // value here to round to fix it. Removing this rounding would not bring
+      // the twitch back, only the blur.
+      //
+      // The hit test works off the row rects, not this value, so snapping
+      // costs nothing.
       const box = element.getBoundingClientRect()
-      const toContent = (viewportY: number): number => viewportY - box.top + element.scrollTop
+      const toContent = (viewportY: number): number =>
+        Math.round(viewportY - box.top + element.scrollTop)
       // The first line has no boundary above it and the last none below —
       // there has to be a line on both sides for Add or Merge to mean anything.
       if (event.clientY - rect.top <= GAP_HIT_PX && index > 0) {
@@ -395,7 +428,18 @@ function GapOverlay({
   return (
     <div
       data-gap
-      className="absolute inset-x-0 z-10 flex h-[14px] -translate-y-1/2 animate-in items-center gap-component fade-in-0"
+      // **`transform-gpu` is load-bearing, not a performance hint.** The strip
+      // never lands on whole pixels horizontally: the two rules are `flex-1`
+      // and split whatever the buttons leave over, and button width comes from
+      // text metrics, so the icons sit at x.xx regardless of how wide the panel
+      // is. That is fine on its own — until the entrance animation ends. The
+      // `enter` keyframes write `transform`, which puts the strip on its own
+      // compositing layer for those 150ms; with nothing holding a transform
+      // afterwards the layer is thrown away, the fraction gets resolved a
+      // different way, and the whole strip twitches as the fade lands. The
+      // icons show it worst, being 1px strokes. Holding a transform of our own
+      // means there is one layer throughout and nothing to switch between.
+      className="absolute inset-x-0 z-10 flex h-[14px] -translate-y-1/2 transform-gpu animate-in items-center gap-component fade-in-0"
       style={{ top: gap.top }}
     >
       <span className="h-adjust flex-1 rounded-full bg-primary" />
@@ -455,7 +499,17 @@ interface SubtitleListProps {
   onSpeakerSave(id: string, speakerId: string): void
 }
 
-export default function SubtitleList({
+/**
+ * The lines themselves.
+ *
+ * **Memoized for the same reason the rows are**, one level up: a style edit
+ * re-renders the editor around this list on every frame it is dragged, and
+ * without this the `utterances.map` below rebuilds several hundred elements
+ * each time — `memo` on the row stops them re-rendering but cannot stop them
+ * being created. Every prop it takes is already stable upstream (see
+ * pages/EditorPage.tsx); passing an inline arrow undoes all of it, silently.
+ */
+const SubtitleList = memo(function SubtitleList({
   utterances,
   activeId,
   onSeek,
@@ -816,4 +870,6 @@ export default function SubtitleList({
       </div>
     </div>
   )
-}
+})
+
+export default SubtitleList

@@ -12,6 +12,9 @@ interface SettingsFile {
   /** How the editor was last arranged. Application-wide, not per project: it
    *  is a working habit, and it should not change when a project is opened. */
   editorLayout?: EditorLayout
+  /** Whether snapping is on. Application-wide for the same reason as the
+   *  layout above. */
+  snapEnabled?: boolean
 }
 
 function settingsPath(): string {
@@ -72,4 +75,12 @@ export function getEditorLayout(): EditorLayout | null {
 
 export function setEditorLayout(layout: EditorLayout): void {
   writeSettingsFile({ ...readSettingsFile(), editorLayout: layout })
+}
+
+export function getSnapEnabled(): boolean | null {
+  return readSettingsFile().snapEnabled ?? null
+}
+
+export function setSnapEnabled(on: boolean): void {
+  writeSettingsFile({ ...readSettingsFile(), snapEnabled: on })
 }
