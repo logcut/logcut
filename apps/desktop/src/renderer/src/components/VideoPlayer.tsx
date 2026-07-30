@@ -31,14 +31,12 @@ interface VideoPlayerProps {
   /** Commit an edit made on the picture. The caller knows which line is
    *  showing; this component only knows what it says. */
   onCaptionEdit(text: string): void
-  /** Position, size and rotation dragged on the picture. Called **once per
-   *  gesture, on release**, never per frame — see VideoPlayer.md. */
-  onCaptionStyleChange(patch: Partial<CaptionStyle>): void
+  /** Position, size and rotation changed on the picture. A drag calls it
+   *  **once, on release**, never per frame; an arrow key calls it per press and
+   *  passes `continuing` while the key is held — see VideoPlayer.md. */
+  onCaptionStyleChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
   /** CSS font-family for the caption; resolved by the caller. */
   captionFontStack: string
-  /** Whether a dragged caption lands on the centre of the picture — the same
-   *  switch the timeline obeys (see core/snap.md). */
-  snapEnabled: boolean
   /** Everything else about the caption's appearance, already resolved. */
   captionStyle: CaptionStyle
 }
@@ -62,6 +60,19 @@ const ROTATE_STALK = 24
 
 /** The one landmark a dragged caption lands on, per axis. */
 const CENTRE = 0.5
+
+/** How far one arrow-key press moves the caption, in pixels at
+ *  `CAPTION_REFERENCE_HEIGHT`, and with Shift held. */
+const NUDGE_PX = 1
+const NUDGE_PX_COARSE = 10
+
+/** Which axis each arrow key moves the caption along, and which way. */
+const NUDGES: Record<string, { axis: 'x' | 'y'; by: number }> = {
+  ArrowLeft: { axis: 'x', by: -1 },
+  ArrowRight: { axis: 'x', by: 1 },
+  ArrowUp: { axis: 'y', by: -1 },
+  ArrowDown: { axis: 'y', by: 1 }
+}
 
 const CORNERS = [
   { name: 'top left', x: '0%', y: '0%', cursor: 'cursor-nwse-resize' },
@@ -113,8 +124,7 @@ export default function VideoPlayer({
   onCaptionEdit,
   onCaptionStyleChange,
   captionFontStack,
-  captionStyle,
-  snapEnabled
+  captionStyle
 }: VideoPlayerProps): JSX.Element {
   /** Fullscreen takes the controls with the picture, so it is the whole pane. */
   const paneRef = useRef<HTMLDivElement>(null)
@@ -241,18 +251,17 @@ export default function VideoPlayer({
     if (drag.mode === 'move') {
       // The tolerance is a distance the hand can hold, so it is stated on
       // screen and divided by the picture to reach the share this is measured
-      // in. Snapping off makes it zero, which `snapToNearest` reads as "do not".
-      const tolerance = snapEnabled ? SNAP_TOLERANCE_PX : 0
+      // in.
       preview({
         x: snapToNearest(
           clamp01(drag.style.x + (event.clientX - drag.from.x) / frame.width),
           [CENTRE],
-          tolerance / frame.width
+          SNAP_TOLERANCE_PX / frame.width
         ),
         y: snapToNearest(
           clamp01(drag.style.y + (event.clientY - drag.from.y) / frame.height),
           [CENTRE],
-          tolerance / frame.height
+          SNAP_TOLERANCE_PX / frame.height
         )
       })
       return
@@ -328,11 +337,32 @@ export default function VideoPlayer({
   useEffect(() => {
     if (!selected) return
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setSelected(false)
+      if (event.key === 'Escape') {
+        setSelected(false)
+        return
+      }
+      // While typing, the arrows belong to the caret.
+      if (editing) return
+      const nudge = NUDGES[event.key]
+      if (!nudge || captionText === null || frame.width === 0) return
+      event.preventDefault()
+      const px = (event.shiftKey ? NUDGE_PX_COARSE : NUDGE_PX) * nudge.by
+      // Stated against the reference height like every other length, so a press
+      // moves the same distance in the export whatever the preview's size —
+      // then divided by the picture to reach the share x and y are stored as.
+      const onScreen = captionLengthFor(px, frame.height)
+      onCaptionStyleChange(
+        nudge.axis === 'x'
+          ? { x: clamp01(style.x + onScreen / frame.width) }
+          : { y: clamp01(style.y + onScreen / frame.height) },
+        // A held key repeats about thirty times a second, and one press-and-hold
+        // is one thing the user did: only the first of them opens an undo step.
+        { continuing: event.repeat }
+      )
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selected])
+  }, [selected, editing, captionText, frame, style.x, style.y, onCaptionStyleChange])
 
   // A seek can replace the line under an open editor; the edit is dropped
   // rather than written onto whichever line arrived (see VideoPlayer.md).

@@ -479,10 +479,11 @@ export default function EditorPage({
   const applyStylePatch = useCallback(
     (
       patch: Partial<CaptionStyle>,
-      // Set while a control is being dragged. The panel's sliders still write
-      // on every frame, so only the first of them is a step worth going back
-      // to. The picture's own gestures do not need this: they commit once, on
-      // release (see components/VideoPlayer.tsx).
+      // Set while one continuous action is still under way: the panel's sliders
+      // write on every frame of a drag, and an arrow key held on the picture
+      // repeats — only the first write of either is a step worth going back to.
+      // A drag on the picture does not need it, committing once on release
+      // (see components/VideoPlayer.tsx).
       options: { continuing?: boolean } = {}
     ): void => {
       const record = !options.continuing
@@ -974,7 +975,6 @@ export default function EditorPage({
                   onCaptionStyleChange={applyStylePatch}
                   captionFontStack={captionFontStack}
                   captionStyle={captionStyle}
-                  snapEnabled={snapEnabled}
                 />
               ) : (
                 <div className="flex flex-1 flex-col items-center justify-center gap-component text-muted-foreground">
