@@ -156,8 +156,9 @@ function NumberField({
 const COLOUR_GESTURE_GAP_MS = 400
 
 /** A colour, shown as a swatch and its hex. **The platform's own picker, not a
- *  swatch grid of ours** (see SubtitleEditor.md). The real `<input>` is only
- *  visually hidden, so it keeps its keyboard behaviour and its label. */
+ *  swatch grid of ours** (see SubtitleEditor.md). The real `<input>` is still
+ *  there, transparent and over the whole row, so it keeps its keyboard
+ *  behaviour and its label. */
 function ColourField({
   value,
   label,
@@ -172,8 +173,12 @@ function ColourField({
   const lastChangeRef = useRef(0)
 
   return (
+    // **The platform anchors the colour picker to the `<input>`'s own box**, so
+    // that box has to be this row: `relative` here, and the input stretched over
+    // it below. Both halves are load-bearing and neither shows up on screen —
+    // see SubtitleEditor.md for the two ways it goes wrong without them.
     <label
-      className={`flex h-control-md items-center gap-component rounded-md border border-input px-compact ${
+      className={`relative flex h-control-md items-center gap-component rounded-md border border-input px-compact focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50 ${
         disabled === true ? 'pointer-events-none opacity-50' : 'cursor-pointer'
       }`}
     >
@@ -187,7 +192,7 @@ function ColourField({
         value={value}
         aria-label={label}
         disabled={disabled}
-        className="sr-only"
+        className="absolute inset-0 size-full cursor-pointer opacity-0"
         onChange={(event) => {
           const now = performance.now()
           const continuing = now - lastChangeRef.current < COLOUR_GESTURE_GAP_MS

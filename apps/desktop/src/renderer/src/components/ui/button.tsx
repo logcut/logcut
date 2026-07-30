@@ -18,8 +18,15 @@ const buttonVariants = cva(
         // has to read as a form field: same border, surface and value weight as
         // a Select trigger. Without it a combobox sits beside a select and the
         // two look like different kinds of control.
+        //
+        // **`shrink` undoes the base class's `shrink-0`, and a field cannot do
+        // without it**: it is stretched to the row (`w-full`), and a flex item
+        // that wants the full width and refuses to shrink pushes the row wider
+        // than the panel — which is a horizontal scrollbar under everything, not
+        // just under this control. `cn` resolves the two through tailwind-merge,
+        // so the variant wins over the base.
         field:
-          'justify-between border border-input bg-transparent font-normal shadow-xs dark:bg-input/30 dark:hover:bg-input/50',
+          'shrink justify-between border border-input bg-transparent font-normal shadow-xs dark:bg-input/30 dark:hover:bg-input/50',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         quiet: 'text-foreground hover:text-primary aria-pressed:text-primary',
