@@ -191,7 +191,10 @@ test('planExport names the container, so the output extension need not', () => {
 test('planExport renders as soon as there is something to burn', () => {
   const plan = planExport(input({ captionTrackFile: 'captions.txt' }))
   assert.equal(plan.reencodes, true)
-  assert.match(graph(plan.args), /\[1:v\]format=rgba,setsar=1\[caps\];\[v0\]\[caps\]overlay=/)
+  assert.match(
+    graph(plan.args),
+    /\[1:v\]format=rgba,setsar=1\[caps\];\[v0\]\[caps\]overlay=0:0:format=auto:shortest=1/
+  )
   assert.deepEqual(plan.args.slice(plan.args.indexOf('-map'), plan.args.indexOf('-map') + 4), [
     '-map',
     '[vout]',
@@ -296,4 +299,12 @@ test('planExport totals the timeline whichever shape it takes', () => {
     planExport(input({ clips: [clip(), clip({ durationMs: 1500 })] })).totalDurationMs,
     6500
   )
+})
+
+test('planExport ends the film with the picture, not with the caption track', () => {
+  // The track is built to outlast the picture on purpose, so `overlay` has to be
+  // told to stop at the shorter input — otherwise the export gains the track's
+  // tail as a frozen frame (see export.md).
+  const chain = graph(planExport(input({ captionTrackFile: 'captions.txt' })).args)
+  assert.match(chain, /overlay=[^;]*shortest=1/)
 })

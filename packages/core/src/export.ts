@@ -206,10 +206,18 @@ export function planExport(input: ExportInput): ExportPlan {
     // two different ones; `format=auto` lets overlay pick a blending format
     // that keeps the alpha it was given.
     chains.push(`[${index}:v]format=rgba,setsar=1[caps]`)
-    // **`eof_action=repeat`, and the track ends on a transparent frame**: the
-    // caption list is built to outlast the picture, but a track that ended on a
-    // caption would otherwise hold that caption to the end of the film.
-    chains.push(`${videoOut}[caps]overlay=0:0:format=auto:eof_action=repeat[vout]`)
+    // **`shortest=1` is what makes the film end when the picture does.**
+    // `overlay` otherwise runs until its *longest* input is exhausted, and the
+    // caption track is deliberately built to outlast the picture — so without
+    // this the export gained the track's tail as a frozen frame at the end, and
+    // a fractional average frame rate with it (measured: a 5s clip came out
+    // 6.17s at 906/37 fps).
+    //
+    // The pair only works one way round. The track has to be the longer input,
+    // because `shortest` cuts at whichever input ends first — a track that fell
+    // short would truncate the film itself, which is the worse failure. The
+    // margin that guarantees it is in main/caption-render.ts.
+    chains.push(`${videoOut}[caps]overlay=0:0:format=auto:shortest=1:eof_action=repeat[vout]`)
     videoOut = '[vout]'
   }
 

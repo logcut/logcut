@@ -199,9 +199,12 @@ export function writeCaptionTrack({
     cursorMs = caption.endMs
   }
 
-  // A tail of transparency past the end of the picture, then the same file
-  // again: concat ignores the duration of the last entry, so without the repeat
-  // the final gap would be one frame long.
+  // **The track has to outlast the picture, and the extra second is what
+  // guarantees it.** `overlay` is given `shortest=1` so the film ends when the
+  // picture does (see packages/core/src/export.md); that cuts at whichever input
+  // ends first, so a track falling even a frame short would truncate the film.
+  // The margin covers the difference between a probe's duration and the real
+  // one. The repeat is concat's own rule: it ignores the last entry's duration.
   show(blank, Math.max(totalDurationMs - cursorMs, 0) + 1000)
   lines.push(`file '${blank}'`)
 
