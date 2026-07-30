@@ -126,7 +126,17 @@ export default function CaptionSurface({
         ref={textRef}
         {...textProps}
         className={`max-w-full text-balance whitespace-pre-wrap ${textProps?.className ?? ''}`}
-        style={{ ...captionCss, ...textProps?.style }}
+        style={{
+          ...captionCss,
+          // **The plate fills the block, so dragging the width drags the plate**
+          // (see CaptionSurface.md). `border-box` is what makes the two edges
+          // the same edge: the padding is drawn inside the width rather than
+          // added to it, so the plate is exactly what the handles enclose.
+          // On auto there is no width to fill — the block is `max-content`, and
+          // the plate ends up hugging the text, which is what auto means.
+          ...(style.widthPct === 0 ? {} : { width: '100%', boxSizing: 'border-box' }),
+          ...textProps?.style
+        }}
       >
         {text}
       </div>
