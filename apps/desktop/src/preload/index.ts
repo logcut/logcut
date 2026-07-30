@@ -37,6 +37,8 @@ const api: LogcutApi = {
   saveEditorLayout: (layout) => ipcRenderer.invoke('settings:save-layout', layout),
   getSnapEnabled: () => ipcRenderer.invoke('settings:get-snapping'),
   setSnapEnabled: (on) => ipcRenderer.invoke('settings:set-snapping', on),
+  getRecentFonts: () => ipcRenderer.invoke('settings:get-recent-fonts'),
+  rememberFont: (value) => ipcRenderer.invoke('settings:remember-font', value),
   getLanguagePreference: () => ipcRenderer.invoke('settings:get-language'),
   setLanguagePreference: (option) => ipcRenderer.invoke('settings:set-language', option),
 

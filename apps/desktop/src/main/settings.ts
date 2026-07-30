@@ -15,7 +15,13 @@ interface SettingsFile {
   /** Whether snapping is on. Application-wide for the same reason as the
    *  layout above. */
   snapEnabled?: boolean
+  /** Caption fonts most recently picked, newest first. Application-wide: the
+   *  fonts somebody reaches for are a habit, not a property of one project. */
+  recentFonts?: string[]
 }
+
+/** How many picks the font list remembers. */
+const RECENT_FONTS_LIMIT = 5
 
 function settingsPath(): string {
   return path.join(app.getPath('userData'), 'settings.json')
@@ -83,4 +89,24 @@ export function getSnapEnabled(): boolean | null {
 
 export function setSnapEnabled(on: boolean): void {
   writeSettingsFile({ ...readSettingsFile(), snapEnabled: on })
+}
+
+export function getRecentFonts(): string[] {
+  const stored = readSettingsFile().recentFonts
+  if (!Array.isArray(stored)) return []
+  return stored
+    .filter((value) => typeof value === 'string' && value !== '')
+    .slice(0, RECENT_FONTS_LIMIT)
+}
+
+/** **The list is built here, not by the caller**: the renderer says which font
+ *  was just used, and the order, deduplication and limit are settled in one
+ *  place — see main/settings.md. */
+export function rememberFont(value: string): string[] {
+  const next = [value, ...getRecentFonts().filter((font) => font !== value)].slice(
+    0,
+    RECENT_FONTS_LIMIT
+  )
+  writeSettingsFile({ ...readSettingsFile(), recentFonts: next })
+  return next
 }

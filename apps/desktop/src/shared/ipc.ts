@@ -270,6 +270,13 @@ export interface LogcutApi {
   getSnapEnabled(): Promise<boolean | null>
   setSnapEnabled(on: boolean): Promise<void>
 
+  /** Caption fonts most recently picked, newest first; empty before any pick. */
+  getRecentFonts(): Promise<string[]>
+  /** **Reports one pick and gets the whole list back**, rather than sending a
+   *  list to store: order, deduplication and the limit belong to one owner
+   *  (see main/settings.md). */
+  rememberFont(value: string): Promise<string[]>
+
   /** Create an empty project; the editor opens on it right away. */
   createProject(name?: string): Promise<ProjectSummary>
   listProjects(): Promise<ProjectSummary[]>

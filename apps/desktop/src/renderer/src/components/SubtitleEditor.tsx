@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
+import FontSelect from '@/components/FontSelect'
 import ResizeHandle from '@/components/ResizeHandle'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
@@ -37,7 +38,6 @@ import {
 import { Slider } from '@/components/ui/slider'
 import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 
 /**
  * Every length in this panel is quoted against the same reference frame, so a
@@ -357,8 +357,6 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
   speakerIds: string[]
   hasSelection: boolean
 }): JSX.Element {
-  const fonts = useCaptionFonts()
-
   /** Marks the frames of a drag that must not be recorded (see
    *  SubtitleEditor.md). **A ref, not state**: it is read by the very handler
    *  that sets it, and a re-render in between would be one per frame for
@@ -414,25 +412,12 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
 
       <div className="flex flex-col gap-component">
         <StyleRow label="Font">
-          <Select
+          {/* Not a Select: hundreds of installed fonts need a search box, and a
+              Select has nowhere to put one (see FontSelect.md). */}
+          <FontSelect
             value={style.fontFamily}
-            onValueChange={(value) => onChange({ fontFamily: value })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            {/* Hundreds of rows once the machine's own fonts are in, so the
-                    list scrolls rather than growing to the height of the window. */}
-            <SelectContent className="max-h-72">
-              {fonts.map((font) => (
-                // Each row set in the font it offers: the names alone say
-                // nothing about what the caption will look like.
-                <SelectItem key={font.value} value={font.value} style={{ fontFamily: font.stack }}>
-                  {font.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(fontFamily) => onChange({ fontFamily })}
+          />
         </StyleRow>
 
         {/* Shown and typed in pixels, stored as a share of the picture

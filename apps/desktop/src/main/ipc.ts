@@ -182,6 +182,8 @@ export function registerIpc(): void {
   ipcMain.handle('settings:set-snapping', (_event, on: boolean) => {
     settings.setSnapEnabled(on)
   })
+  ipcMain.handle('settings:get-recent-fonts', () => settings.getRecentFonts())
+  ipcMain.handle('settings:remember-font', (_event, value: string) => settings.rememberFont(value))
   ipcMain.handle('settings:get-language', () => settings.getLanguageOption())
   ipcMain.handle('settings:set-language', (_event, option: LanguageOption) => {
     settings.setLanguageOption(option)

@@ -14,6 +14,12 @@ const buttonVariants = cva(
           'bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40',
         outline:
           'border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50',
+        // A button that opens a picker rather than performing an action, so it
+        // has to read as a form field: same border, surface and value weight as
+        // a Select trigger. Without it a combobox sits beside a select and the
+        // two look like different kinds of control.
+        field:
+          'justify-between border border-input bg-transparent font-normal shadow-xs dark:bg-input/30 dark:hover:bg-input/50',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         quiet: 'text-foreground hover:text-primary aria-pressed:text-primary',
