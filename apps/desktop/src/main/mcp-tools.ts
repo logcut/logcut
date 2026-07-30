@@ -1,3 +1,4 @@
+import { randomId } from '@logcut/core'
 import type { EditCommand } from '@logcut/core'
 import { agentDispatch, agentQuery, agentSession } from './agent-bridge'
 
@@ -311,7 +312,14 @@ export async function callTool(name: string, args: ToolArgs): Promise<ToolOutcom
       )
 
     case 'insert_subtitle_after':
-      return dispatch([{ kind: 'subtitle.insertAfter', assetId, afterId: str(args['afterId']) }])
+      return dispatch([
+        {
+          kind: 'subtitle.insertAfter',
+          assetId,
+          afterId: str(args['afterId']),
+          newId: randomId()
+        }
+      ])
 
     case 'merge_subtitles':
       return dispatch(

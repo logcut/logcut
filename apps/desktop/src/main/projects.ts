@@ -1,5 +1,5 @@
 import { normalizeCaptionStyles, normalizeExportSettings, randomId } from '@logcut/core'
-import type { CaptionStyles, ExportSettings, Transcript } from '@logcut/core'
+import type { CaptionStyles, EditCommand, ExportSettings, Transcript } from '@logcut/core'
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -101,6 +101,17 @@ function transcriptPath(id: string, assetId: string): string {
 
 function rawPath(id: string, assetId: string): string {
   return path.join(projectDir(id), 'raw', `${assetId}.json`)
+}
+
+/** The transcript as it stood before the first edit — what the command log
+ *  replays onto (see main/projects.md). */
+function basePath(id: string, assetId: string): string {
+  return path.join(projectDir(id), 'transcripts', `${assetId}.base.json`)
+}
+
+/** The command log, project-wide: a batch can name more than one asset. */
+function historyPath(id: string): string {
+  return path.join(projectDir(id), 'history.json')
 }
 
 export function thumbnailPath(id: string, fileName: string): string {
@@ -355,6 +366,56 @@ export function loadTranscript(id: string, assetId: string): Transcript | null {
 export function saveRaw(id: string, assetId: string, raw: unknown): void {
   writeJsonAtomic(rawPath(id, assetId), raw)
 }
+
+/**
+ * Store the transcript the edit log starts from.
+ *
+ * **Written whenever the transcript is rebuilt rather than edited** — a
+ * transcription finishing, or a re-split at a new line length. Both mint fresh
+ * ids for every line, so every command already recorded names lines that no
+ * longer exist; the caller clears the log in the same breath.
+ */
+export function saveBaseTranscript(id: string, assetId: string, transcript: Transcript): void {
+  writeJsonAtomic(basePath(id, assetId), transcript)
+}
+
+export function loadBaseTranscript(id: string, assetId: string): Transcript | null {
+  try {
+    return JSON.parse(fs.readFileSync(basePath(id, assetId), 'utf8')) as Transcript
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The edit log: every batch that has been applied, in order.
+ *
+ * **Stored whole rather than appended to.** Undo has to take batches back off
+ * the end, so the file is never merely additive; and the renderer already holds
+ * the list it would have to send anyway. It is written on the same debounce as
+ * a transcript, for the same reason.
+ */
+export function saveHistory(id: string, batches: EditCommand[][]): void {
+  writeJsonAtomic(historyPath(id), { version: HISTORY_VERSION, batches })
+}
+
+export function loadHistory(id: string): EditCommand[][] {
+  try {
+    const stored = JSON.parse(fs.readFileSync(historyPath(id), 'utf8')) as {
+      version?: number
+      batches?: unknown
+    }
+    // A log written by a future version could name commands this build cannot
+    // apply. Replaying half of one is worse than replaying none.
+    if (stored.version !== HISTORY_VERSION || !Array.isArray(stored.batches)) return []
+    return stored.batches as EditCommand[][]
+  } catch {
+    return []
+  }
+}
+
+/** Bump when a command's shape changes in a way older logs cannot survive. */
+const HISTORY_VERSION = 1
 
 /**
  * The archived provider response, or null when this asset has none.

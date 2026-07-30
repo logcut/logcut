@@ -28,7 +28,25 @@ interface EditableState {
 }
 
 /** Deep enough that nobody reaches the end by working; bounded so it cannot grow forever. */
+/**
+ * One step back, and what it took to get here.
+ *
+ * **`batch` is null for the steps that are not commands** — adding a clip,
+ * resetting the project-wide caption styles. Undo has to move the edit log in
+ * step with itself, and only a step that appended to the log may take something
+ * off it (see useProject.md).
+ */
+interface HistoryEntry {
+  state: EditableState
+  batch: EditCommand[] | null
+}
+
 const HISTORY_LIMIT = 200
+
+/** How long the log sits still before it is written. Long enough that a run of
+ *  keystrokes is one write, short enough that a crash loses nothing anyone
+ *  would notice. */
+const LOG_SAVE_DELAY_MS = 500
 
 function sameClips(a: EditableState['clips'], b: EditableState['clips']): boolean {
   return a.length === b.length && a.every((clip, index) => clip.id === b[index]?.id)
@@ -105,13 +123,56 @@ export function useProject(projectId: string): UseProjectResult {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [asr, setAsr] = useState<AsrState>({ kind: 'idle' })
-  const [past, setPast] = useState<EditableState[]>([])
-  const [future, setFuture] = useState<EditableState[]>([])
+  const [past, setPast] = useState<HistoryEntry[]>([])
+  const [future, setFuture] = useState<HistoryEntry[]>([])
+  /**
+   * Every batch applied to this project, oldest first — **the edit as a list of
+   * intentions rather than a list of states**. Replaying it onto the base
+   * transcript reproduces what is on disk; that is checked by `verifyHistory`
+   * (see packages/core/src/commands/index.md).
+   *
+   * Unbounded, unlike the undo stack above: dropping the oldest step is fine for
+   * "how far back can I go" and fatal for "rebuild this project".
+   */
+  const [log, setLog] = useState<EditCommand[][]>([])
+  /** Batches taken off `log` by undo, newest first, waiting for redo. */
+  const [redoLog, setRedoLog] = useState<EditCommand[][]>([])
+  /** False until the stored log has arrived, so the empty one on screen in the
+   *  meantime is never written over it — the same guard the layout uses. */
+  const [logLoaded, setLogLoaded] = useState(false)
 
   // Distinct because the same asset may be laid down more than once, and a
   // joined key because an array identity would re-fetch on every render.
   const timelineAssetIds = project?.timeline.map((clip) => clip.assetId) ?? []
   const assetKey = [...new Set(timelineAssetIds)].sort().join(',')
+
+  // The stored edit log, read once alongside the project itself.
+  useEffect(() => {
+    let cancelled = false
+    setLogLoaded(false)
+    void window.logcut.loadHistory(projectId).then((batches) => {
+      if (cancelled) return
+      setLog(batches)
+      setRedoLog([])
+      setLogLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
+
+  // **Written whole on every change, on a debounce**: undo takes batches back
+  // off the end, so this is never an append (see main/projects.md). The gate is
+  // what stops the empty log on screen during loading from erasing the stored
+  // one.
+  useEffect(() => {
+    if (!logLoaded) return
+    const timer = setTimeout(
+      () => void window.logcut.saveHistory(projectId, log),
+      LOG_SAVE_DELAY_MS
+    )
+    return () => clearTimeout(timer)
+  }, [log, logLoaded, projectId])
 
   useEffect(() => {
     let cancelled = false
@@ -208,10 +269,13 @@ export function useProject(projectId: string): UseProjectResult {
     captionStyles: project?.captionStyles ?? DEFAULT_CAPTION_STYLES
   }
 
-  /** Push what is on screen now, and drop the redo branch it invalidates. */
-  const record = useCallback((): void => {
-    setPast((entries) => [...entries, stateRef.current].slice(-HISTORY_LIMIT))
+  /** Push what is on screen now, and drop the redo branch it invalidates.
+   *  `batch` is what this step is about to apply, or null when the step is not
+   *  a command at all. */
+  const record = useCallback((batch: EditCommand[] | null = null): void => {
+    setPast((entries) => [...entries, { state: stateRef.current, batch }].slice(-HISTORY_LIMIT))
     setFuture([])
+    setRedoLog([])
   }, [])
 
   const importMedia = useCallback(
@@ -278,6 +342,11 @@ export function useProject(projectId: string): UseProjectResult {
         // deleted rather than written (see useProject.md).
         setPast([])
         setFuture([])
+        // The log goes with it, and for a stronger reason than the undo stack's:
+        // recognition writes a new base transcript, so every batch already
+        // recorded names lines that no longer exist (see main/projects.md).
+        setLog([])
+        setRedoLog([])
         setAsr({ kind: 'idle' })
         // transcriptStatus lives on the asset, so the project record is stale now.
         setProject(await window.logcut.openProject(projectId))
@@ -339,6 +408,10 @@ export function useProject(projectId: string): UseProjectResult {
       setTranscripts((current) => ({ ...current, ...result.transcripts }))
       setPast([])
       setFuture([])
+      // Main has already cleared the stored log and written a new base; this
+      // keeps the copy in hand from writing the old one back over it.
+      setLog([])
+      setRedoLog([])
       setProject(result.project)
       return result.skipped
     },
@@ -392,7 +465,18 @@ export function useProject(projectId: string): UseProjectResult {
 
       // A caption dragged on the picture dispatches on every frame; only the
       // first of them is a step worth going back to.
-      if (options.record !== false) record()
+      if (options.record !== false) {
+        record(commands)
+        setLog((entries) => [...entries, commands])
+      } else {
+        // The middle of a gesture: it continues the step already recorded, so
+        // it replaces that step's batch instead of adding one. Without this a
+        // four-second drag would leave hundreds of batches in the log, and
+        // replaying them would walk the caption across the picture again.
+        setLog((entries) =>
+          entries.length === 0 ? [commands] : [...entries.slice(0, -1), commands]
+        )
+      }
       const changes = result.changed.flatMap((assetId) => {
         const transcript = result.doc.transcripts[assetId]
         return transcript ? [{ assetId, transcript }] : []
@@ -414,16 +498,30 @@ export function useProject(projectId: string): UseProjectResult {
     const previous = past[past.length - 1]
     if (!previous) return
     setPast((entries) => entries.slice(0, -1))
-    setFuture((entries) => [stateRef.current, ...entries])
-    void restore(previous)
+    setFuture((entries) => [{ state: stateRef.current, batch: previous.batch }, ...entries])
+    // Only a step that put a batch on the log takes one off it. The undo stack
+    // also holds steps that are not commands at all.
+    if (previous.batch) {
+      setLog((entries) => entries.slice(0, -1))
+      setRedoLog((entries) => [previous.batch as EditCommand[], ...entries])
+    }
+    void restore(previous.state)
   }, [past, restore])
 
   const redo = useCallback((): void => {
     const next = future[0]
     if (!next) return
     setFuture((entries) => entries.slice(1))
-    setPast((entries) => [...entries, stateRef.current].slice(-HISTORY_LIMIT))
-    void restore(next)
+    setPast((entries) =>
+      [...entries, { state: stateRef.current, batch: next.batch }].slice(-HISTORY_LIMIT)
+    )
+    // The mirror of undo: the batch it took off the log goes back on, in the
+    // order it was applied the first time.
+    if (next.batch) {
+      setLog((entries) => [...entries, next.batch as EditCommand[]])
+      setRedoLog((entries) => entries.slice(1))
+    }
+    void restore(next.state)
   }, [future, restore])
 
   const exportSrt = useCallback(

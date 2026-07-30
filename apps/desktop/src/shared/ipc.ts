@@ -32,6 +32,15 @@ export interface EditorLayout {
   subtitlesOpen: boolean
 }
 
+/** One asset's answer to "does the log still rebuild this?" — see
+ *  packages/core/src/commands/index.md for what the question means. */
+export interface HistoryCheck {
+  assetId: string
+  /** `no-base` means this asset predates the log, not that anything is wrong. */
+  status: 'matches' | 'differs' | 'no-base'
+  batches?: number
+}
+
 export interface SettingsStatus {
   hasApiKey: boolean
   /** Last 4 characters of the configured key, for display only. */
@@ -264,6 +273,16 @@ export interface LogcutApi {
    *  saved" read back identically, so resetting is this call with the defaults
    *  in it. */
   saveEditorLayout(layout: EditorLayout): Promise<void>
+
+  /** The edit log: every batch applied to this project, oldest first. Empty for
+   *  a project edited only by builds that did not keep one. */
+  loadHistory(projectId: string): Promise<EditCommand[][]>
+  /** **The whole log, not an append.** Undo takes batches back off the end, so
+   *  it is never merely additive (see main/projects.md). */
+  saveHistory(projectId: string, batches: EditCommand[][]): Promise<void>
+  /** Replay the log onto the base and compare with what is saved — the command
+   *  model's claim, checked against a real project. */
+  verifyHistory(projectId: string): Promise<HistoryCheck[]>
 
   /** Whether snapping is on, or null before the user has ever changed it —
    *  which is not the same as false, so the default decides instead. */

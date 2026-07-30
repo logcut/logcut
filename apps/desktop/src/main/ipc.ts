@@ -4,11 +4,13 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   DEFAULT_MAX_CHARS,
   parseVolcanoResponse,
+  replayCommands,
   segmentTranscript,
   toSrt
 } from '@logcut/core'
 import type {
   CaptionStyles,
+  EditCommand,
   ExportSettings,
   LanguageOption,
   TranscribeConfig,
@@ -20,6 +22,7 @@ import path from 'node:path'
 import type {
   EditorLayout,
   ExportCapabilities,
+  HistoryCheck,
   ExportSrtResult,
   ExportVideoResult,
   ImportMediaResult,
@@ -276,6 +279,42 @@ export function registerIpc(): void {
       projects.loadTranscript(projectId, assetId)
   )
 
+  ipcMain.handle('history:load', (_event, projectId: string): EditCommand[][] =>
+    projects.loadHistory(projectId)
+  )
+
+  ipcMain.handle('history:save', (_event, projectId: string, batches: EditCommand[][]) => {
+    projects.saveHistory(projectId, batches)
+  })
+
+  /**
+   * Replay the log onto the base and say whether it lands on what is saved.
+   *
+   * **The command model's central claim, checked against a real project rather
+   * than a fixture.** An asset with no base has never been transcribed by a
+   * build that wrote one, and is reported as such instead of failing.
+   */
+  ipcMain.handle('history:verify', (_event, projectId: string): HistoryCheck[] => {
+    const project = requireProject(projectId)
+    const batches = projects.loadHistory(projectId)
+    return project.assets.map((asset) => {
+      const base = projects.loadBaseTranscript(projectId, asset.id)
+      const live = projects.loadTranscript(projectId, asset.id)
+      if (!base || !live) return { assetId: asset.id, status: 'no-base' as const }
+      const replayed = replayCommands({ transcripts: { [asset.id]: base } }, batches).transcripts[
+        asset.id
+      ]
+      return {
+        assetId: asset.id,
+        status:
+          JSON.stringify(replayed) === JSON.stringify(live)
+            ? ('matches' as const)
+            : ('differs' as const),
+        batches: batches.length
+      }
+    })
+  })
+
   ipcMain.handle(
     'transcript:save',
     (_event, projectId: string, assetId: string, transcript: Transcript) => {
@@ -309,6 +348,7 @@ export function registerIpc(): void {
 
       const transcripts: Record<string, Transcript> = {}
       const skipped: string[] = []
+      let resplit = false
       for (const asset of project.assets) {
         if (asset.transcriptStatus !== 'ready') continue
         const raw = projects.loadRaw(projectId, asset.id)
@@ -320,8 +360,14 @@ export function registerIpc(): void {
           maxChars: project.maxChars
         })
         projects.saveTranscript(projectId, asset.id, transcript, { immediate: true })
+        // **Re-splitting rebuilds the document rather than editing it**, and
+        // mints a fresh id for every line — so every batch already recorded
+        // names lines that no longer exist. The base moves and the log goes.
+        projects.saveBaseTranscript(projectId, asset.id, transcript)
+        resplit = true
         transcripts[asset.id] = transcript
       }
+      if (resplit) projects.saveHistory(projectId, [])
       return { project: toDetail(project), transcripts, skipped }
     }
   )
@@ -367,6 +413,10 @@ export function registerIpc(): void {
           maxChars: requireProject(projectId).maxChars ?? DEFAULT_MAX_CHARS
         })
         projects.saveTranscript(projectId, assetId, transcript, { immediate: true })
+        // The point the edit log replays from. Written with the transcript, not
+        // after it: a crash in between would leave a log with nothing to stand
+        // on (see main/projects.md).
+        projects.saveBaseTranscript(projectId, assetId, transcript)
         projects.saveRaw(projectId, assetId, raw)
         projects.updateAsset(projectId, assetId, {
           transcriptStatus: 'ready',

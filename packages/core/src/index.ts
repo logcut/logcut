@@ -12,7 +12,7 @@ export type { UtteranceQuery, UtteranceQueryResult, UtteranceView } from './quer
 
 export { resolveShortId, shortIdMap, SHORT_ID_FLOOR } from './short-id.ts'
 
-export { applyCommand, applyCommands } from './commands/index.ts'
+export { applyCommand, applyCommands, replayCommands } from './commands/index.ts'
 export type { CommandOutcome, CommandResult, EditCommand, EditDocument } from './commands/index.ts'
 export type { SubtitleCommand, SubtitleOutcome } from './commands/subtitle.ts'
 

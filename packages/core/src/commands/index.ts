@@ -82,6 +82,31 @@ export function applyCommand(doc: EditDocument, command: EditCommand): CommandRe
   return applyCommands(doc, [command])
 }
 
+/**
+ * Replay a whole edit history onto the document it started from.
+ *
+ * **This is the property the command model exists for**: an edit session is not
+ * a sequence of states we happen to have kept, it is a list of intentions that
+ * can be applied again to the same starting point and land in the same place.
+ * `replay(base, log)` deep-equals what was saved, or one of the two is
+ * wrong — and that equality is a test, not a hope (see commands/index.md).
+ *
+ * Two things had to be true before this could work, and both are enforced by
+ * the types rather than by care:
+ *
+ * - **No command may invent identity.** `split` and `insertAfter` carry the ids
+ *   they create; a replay that minted fresh ones would produce lines no later
+ *   command in the list could name.
+ * - **No command may read a clock or a random source.** Every field a command
+ *   needs is in the command.
+ *
+ * A batch that changes nothing is applied all the same and changes nothing
+ * again — the log records what was asked for, not what happened to work.
+ */
+export function replayCommands(base: EditDocument, log: EditCommand[][]): EditDocument {
+  return log.reduce((doc, batch) => applyCommands(doc, batch).doc, base)
+}
+
 function missingTranscript(command: EditCommand): CommandOutcome {
   const base = { changed: false, focus: null, lines: [] }
   if (command.kind === 'subtitle.replaceAll') return { ...base, kind: command.kind, count: 0 }

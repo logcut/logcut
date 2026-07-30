@@ -35,7 +35,16 @@ export type SubtitleCommand =
       edge: 'start' | 'end'
       timeMs: number
     }
-  | { kind: 'subtitle.insertAfter'; assetId: string; afterId: string }
+  | {
+      kind: 'subtitle.insertAfter'
+      assetId: string
+      afterId: string
+      /** The id the new line takes. **Carried by the command, not invented
+       *  while applying it** — a command list that invents identity replays
+       *  into a different transcript than the one it recorded. See
+       *  commands/index.md. */
+      newId: string
+    }
   | { kind: 'subtitle.merge'; assetId: string; firstId: string }
   | {
       kind: 'subtitle.split'
@@ -43,6 +52,8 @@ export type SubtitleCommand =
       id: string
       /** On the transcript's own clock, not the timeline's. */
       timeMs: number
+      /** The ids the two halves take, for the reason given on `insertAfter`. */
+      newIds: [string, string]
     }
   | { kind: 'subtitle.remove'; assetId: string; ids: string[] }
   | { kind: 'subtitle.replaceAll'; assetId: string; find: string; replace: string }
@@ -165,7 +176,7 @@ export function applySubtitleCommand(
       // looking afterwards found nothing and silently focused the first line of
       // the whole transcript.
       const at = transcript.utterances.findIndex((utterance) => utterance.id === command.id)
-      const next = splitUtterance(transcript, command.id, command.timeMs)
+      const next = splitUtterance(transcript, command.id, command.timeMs, command.newIds)
       if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
       // Focus goes to the second half: the cut is made to work on what follows
       // it, and the first half is already what it was.
@@ -185,7 +196,7 @@ export function applySubtitleCommand(
     case 'subtitle.insertAfter': {
       const after = find(transcript, command.afterId)
       if (!after) return { transcript, outcome: unchanged(command.kind) }
-      const next = insertUtteranceAfter(transcript, after.id)
+      const next = insertUtteranceAfter(transcript, after.id, command.newId)
       if (next === transcript) return { transcript, outcome: unchanged(command.kind) }
       // The new line goes directly after the named one, and it is the line the
       // caller wants in view: an empty subtitle is written by looking at the

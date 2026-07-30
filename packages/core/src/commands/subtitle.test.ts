@@ -68,6 +68,7 @@ test('naming an asset with no transcript is a no-op, not a throw', () => {
 test('insertAfter focuses the line it created, not the one named', () => {
   const result = applyCommand(doc(), {
     kind: 'subtitle.insertAfter',
+    newId: 'inserted',
     assetId: 'asset1',
     afterId: 'a'
   })
@@ -84,6 +85,7 @@ test('insertAfter where two lines already touch changes nothing', () => {
   const before = doc()
   const result = applyCommand(before, {
     kind: 'subtitle.insertAfter',
+    newId: 'inserted',
     assetId: 'asset1',
     afterId: 'b'
   })
@@ -310,6 +312,7 @@ test('setTime clamps into the room the neighbours leave', () => {
 test('split focuses the second half, not the first line of the transcript', () => {
   const result = applyCommand(doc(), {
     kind: 'subtitle.split',
+    newIds: ['half1', 'half2'],
     assetId: 'asset1',
     id: 'b',
     timeMs: 600
@@ -327,6 +330,7 @@ test('split on a line bound changes nothing', () => {
   const before = doc()
   const result = applyCommand(before, {
     kind: 'subtitle.split',
+    newIds: ['half1', 'half2'],
     assetId: 'asset1',
     id: 'b',
     timeMs: 500

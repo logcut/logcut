@@ -1,4 +1,3 @@
-import { randomId } from './id.ts'
 import type { CaptionStyle } from './caption-style.ts'
 import type { Transcript, Utterance } from './types.ts'
 
@@ -73,7 +72,15 @@ export function setUtteranceStyle(
  * Returns the same transcript when `timeMs` is on or outside the line's own
  * bounds, so such a cut costs no undo entry. See transcript.md.
  */
-export function splitUtterance(transcript: Transcript, id: string, timeMs: number): Transcript {
+export function splitUtterance(
+  transcript: Transcript,
+  id: string,
+  timeMs: number,
+  /** The ids the two halves take. **Given rather than generated**, so that
+   *  replaying this edit produces the same document and not merely a similar
+   *  one — see commands/index.md. */
+  newIds: readonly [string, string]
+): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === id)
   if (index === -1) return transcript
 
@@ -84,8 +91,8 @@ export function splitUtterance(transcript: Transcript, id: string, timeMs: numbe
   utterances.splice(
     index,
     1,
-    { ...line, id: randomId(), end: timeMs },
-    { ...line, id: randomId(), start: timeMs }
+    { ...line, id: newIds[0], end: timeMs },
+    { ...line, id: newIds[1], start: timeMs }
   )
   return { ...transcript, utterances }
 }
@@ -187,14 +194,19 @@ export function removeUtterances(transcript: Transcript, ids: string[]): Transcr
 /** Put an empty utterance in the silence after `afterId`, filling the gap
  *  exactly. Returns the same object when there is nowhere to put it — unknown
  *  or last id, or the two lines already touch. */
-export function insertUtteranceAfter(transcript: Transcript, afterId: string): Transcript {
+export function insertUtteranceAfter(
+  transcript: Transcript,
+  afterId: string,
+  /** The new line's id, given for the same reason as `splitUtterance`'s. */
+  newId: string
+): Transcript {
   const index = transcript.utterances.findIndex((utterance) => utterance.id === afterId)
   const before = transcript.utterances[index]
   const after = transcript.utterances[index + 1]
   if (!before || !after || after.start <= before.end) return transcript
 
   const inserted: Utterance = {
-    id: randomId(),
+    id: newId,
     start: before.end,
     end: after.start,
     text: '',

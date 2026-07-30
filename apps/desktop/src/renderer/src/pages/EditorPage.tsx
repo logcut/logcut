@@ -5,6 +5,7 @@ import {
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
   nextSpeakerId,
+  randomId,
   resolveCaptionStyle,
   speakerIdsOf
 } from '@logcut/core'
@@ -545,7 +546,10 @@ export default function EditorPage({
         kind: 'subtitle.split',
         assetId: line.assetId,
         id: line.sourceId,
-        timeMs: timeMs - (clip?.startMs ?? 0)
+        timeMs: timeMs - (clip?.startMs ?? 0),
+        // Minted here rather than inside the command, so the edit replays into
+        // the same document rather than a similar one (see core/commands.md).
+        newIds: [randomId(), randomId()]
       }
     ])
   }, [clips, dispatch, selectedUtteranceIds, utterances])
@@ -680,7 +684,11 @@ export default function EditorPage({
   const handleAdd = useCallback(
     (afterId: string): void => {
       if (!subtitleAssetId) return
-      followFocus(dispatch([{ kind: 'subtitle.insertAfter', assetId: subtitleAssetId, afterId }]))
+      followFocus(
+        dispatch([
+          { kind: 'subtitle.insertAfter', assetId: subtitleAssetId, afterId, newId: randomId() }
+        ])
+      )
     },
     [dispatch, followFocus, subtitleAssetId]
   )

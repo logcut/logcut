@@ -174,7 +174,7 @@ test('mergeUtterances is a no-op on the last line or an unknown id', () => {
 
 test('insertUtteranceAfter fills the gap exactly', () => {
   const source: Transcript = { audioDurationMs: 2000, utterances: gapped() }
-  const result = insertUtteranceAfter(source, 'a')
+  const result = insertUtteranceAfter(source, 'a', 'new')
   assert.equal(result.utterances.length, 4)
   const inserted = result.utterances[1]
   assert.equal(inserted.start, 400)
@@ -186,9 +186,9 @@ test('insertUtteranceAfter fills the gap exactly', () => {
 
 test('insertUtteranceAfter is a no-op when the lines already touch', () => {
   const source = fixture()
-  assert.equal(insertUtteranceAfter(source, 'a'), source)
-  assert.equal(insertUtteranceAfter(source, 'c'), source)
-  assert.equal(insertUtteranceAfter(source, 'nope'), source)
+  assert.equal(insertUtteranceAfter(source, 'a', 'new'), source)
+  assert.equal(insertUtteranceAfter(source, 'c', 'new'), source)
+  assert.equal(insertUtteranceAfter(source, 'nope', 'new'), source)
 })
 
 test('setUtteranceTime moves the edge it is given', () => {
@@ -318,7 +318,7 @@ test('setUtteranceStyle leaves every other line alone', () => {
 
 test('splitUtterance gives both halves the whole text', () => {
   const t = fixture()
-  const out = splitUtterance(t, 'b', 600)
+  const out = splitUtterance(t, 'b', 600, ['x1', 'x2'])
   const [first, second] = out.utterances.slice(1, 3)
   // The playhead divides the block, not what it says.
   assert.equal(first.text, '卷子卷子不是 Agent')
@@ -329,7 +329,7 @@ test('splitUtterance gives both halves the whole text', () => {
 
 test('splitUtterance leaves the lines around it alone', () => {
   const t = fixture()
-  const out = splitUtterance(t, 'b', 600)
+  const out = splitUtterance(t, 'b', 600, ['x1', 'x2'])
   assert.equal(out.utterances.length, 4)
   assert.deepEqual(out.utterances[0], t.utterances[0])
   assert.deepEqual(out.utterances[3], t.utterances[2])
@@ -343,7 +343,7 @@ test('splitUtterance carries speaker, styling and words across whole', () => {
     style: { bold: true },
     words: [{ word: '卷', start: 400, end: 500, suspect: false }]
   }
-  const out = splitUtterance(t, 'b', 600)
+  const out = splitUtterance(t, 'b', 600, ['x1', 'x2'])
   for (const half of out.utterances.slice(1, 3)) {
     assert.equal(half.speakerId, '3')
     assert.equal(half.style?.bold, true)
@@ -352,22 +352,23 @@ test('splitUtterance carries speaker, styling and words across whole', () => {
   }
 })
 
-test('splitUtterance gives each half a new id', () => {
-  const out = splitUtterance(fixture(), 'b', 600)
+test('splitUtterance gives each half the id it was handed', () => {
+  // Handed in rather than generated: the two halves have to be nameable by a
+  // later command in a replayed log (see commands/index.md).
+  const out = splitUtterance(fixture(), 'b', 600, ['x1', 'x2'])
   const [first, second] = out.utterances.slice(1, 3)
-  assert.notEqual(first.id, second.id)
-  assert.notEqual(first.id, 'b')
-  assert.notEqual(second.id, 'b')
+  assert.equal(first.id, 'x1')
+  assert.equal(second.id, 'x2')
 })
 
 test('splitUtterance refuses a cut that would leave a zero-length half', () => {
   const t = fixture()
   // On either bound, or outside it, one half would have no duration at all.
-  assert.equal(splitUtterance(t, 'b', 400), t)
-  assert.equal(splitUtterance(t, 'b', 800), t)
-  assert.equal(splitUtterance(t, 'b', 100), t)
-  assert.equal(splitUtterance(t, 'b', 900), t)
-  assert.equal(splitUtterance(t, 'nope', 600), t)
+  assert.equal(splitUtterance(t, 'b', 400, ['x1', 'x2']), t)
+  assert.equal(splitUtterance(t, 'b', 800, ['x1', 'x2']), t)
+  assert.equal(splitUtterance(t, 'b', 100, ['x1', 'x2']), t)
+  assert.equal(splitUtterance(t, 'b', 900, ['x1', 'x2']), t)
+  assert.equal(splitUtterance(t, 'nope', 600, ['x1', 'x2']), t)
 })
 
 test('splitUtterance cuts a single-word line like any other', () => {
@@ -375,7 +376,7 @@ test('splitUtterance cuts a single-word line like any other', () => {
     audioDurationMs: 1000,
     utterances: [{ id: 'only', start: 0, end: 400, text: '你', words: [] }]
   }
-  const out = splitUtterance(t, 'only', 200)
+  const out = splitUtterance(t, 'only', 200, ['x1', 'x2'])
   // Nothing about the text decides this any more, so one word is no obstacle.
   assert.equal(out.utterances.length, 2)
   assert.ok(out.utterances.every((u) => u.text === '你'))
