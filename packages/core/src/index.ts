@@ -78,6 +78,7 @@ export { formatTimecode, formatTimecodeFull, parseTimecode } from './timecode.ts
 
 export {
   clampUtteranceTime,
+  clearUtteranceStyles,
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
   insertUtteranceAfter,

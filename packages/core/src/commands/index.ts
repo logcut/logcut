@@ -109,7 +109,9 @@ export function replayCommands(base: EditDocument, log: EditCommand[][]): EditDo
 
 function missingTranscript(command: EditCommand): CommandOutcome {
   const base = { changed: false, focus: null, lines: [] }
-  if (command.kind === 'subtitle.replaceAll') return { ...base, kind: command.kind, count: 0 }
+  if (command.kind === 'subtitle.replaceAll' || command.kind === 'subtitle.clearStyle') {
+    return { ...base, kind: command.kind, count: 0 }
+  }
   if (command.kind === 'subtitle.remove') return { ...base, kind: command.kind, removedIds: [] }
   return { ...base, kind: command.kind }
 }

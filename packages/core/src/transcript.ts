@@ -61,6 +61,24 @@ export function setUtteranceStyle(
   return { ...transcript, utterances }
 }
 
+/** Take the named lines back to inheriting: **the key is deleted, not set to
+ *  the default value.** The two are different on disk — a stored override keeps
+ *  masking whatever the layers below it later become, and `readPartial` in
+ *  caption-style.ts preserves that difference on purpose. Returns the same
+ *  transcript when none of them had any styling of their own. */
+export function clearUtteranceStyles(transcript: Transcript, ids: readonly string[]): Transcript {
+  const named = new Set(ids)
+  if (named.size === 0) return transcript
+  let changed = false
+  const utterances = transcript.utterances.map((utterance) => {
+    if (!named.has(utterance.id) || utterance.style === undefined) return utterance
+    changed = true
+    const { style: _dropped, ...rest } = utterance
+    return rest
+  })
+  return changed ? { ...transcript, utterances } : transcript
+}
+
 /**
  * Cut one line in two at `timeMs`. **Both halves keep the whole text.**
  *

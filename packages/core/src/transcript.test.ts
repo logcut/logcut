@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   clampUtteranceTime,
+  clearUtteranceStyles,
   findNearestUtteranceIndex,
   findUtteranceIndexAt,
   insertUtteranceAfter,
@@ -314,6 +315,30 @@ test('setUtteranceStyle leaves every other line alone', () => {
   assert.deepEqual(after.utterances[0], before.utterances[0])
   assert.equal(after.utterances[0].style, undefined)
   assert.equal(after.utterances[2].style, undefined)
+})
+
+// Deleted, not set to the default: a key that is present keeps masking the
+// layers below it, whatever they later become.
+test('clearUtteranceStyles drops the key rather than defaulting it', () => {
+  const styled = setUtteranceStyle(fixture(), 'b', { bold: true })
+  const cleared = clearUtteranceStyles(styled, ['b'])
+  assert.equal('style' in cleared.utterances[1], false)
+})
+
+test('clearUtteranceStyles only touches the lines it names', () => {
+  let t = setUtteranceStyle(fixture(), 'a', { bold: true })
+  t = setUtteranceStyle(t, 'b', { italic: true })
+  const cleared = clearUtteranceStyles(t, ['b'])
+  assert.deepEqual(cleared.utterances[0].style, { bold: true })
+  assert.equal(cleared.utterances[1].style, undefined)
+})
+
+test('clearUtteranceStyles returns the same transcript when there is nothing to clear', () => {
+  const plain = fixture()
+  assert.equal(clearUtteranceStyles(plain, ['a', 'b', 'c']), plain)
+  assert.equal(clearUtteranceStyles(plain, []), plain)
+  const styled = setUtteranceStyle(plain, 'b', { bold: true })
+  assert.equal(clearUtteranceStyles(styled, ['a', 'missing']), styled)
 })
 
 test('splitUtterance gives both halves the whole text', () => {

@@ -1,6 +1,7 @@
 import type { UtteranceView } from '../query.ts'
 import { resolveShortId } from '../short-id.ts'
 import {
+  clearUtteranceStyles,
   insertUtteranceAfter,
   mergeUtterances,
   removeUtterances,
@@ -55,13 +56,21 @@ export type SubtitleCommand =
       /** The ids the two halves take, for the reason given on `insertAfter`. */
       newIds: [string, string]
     }
+  | {
+      kind: 'subtitle.clearStyle'
+      assetId: string
+      /** The lines to take back to inheriting. **Named rather than "all of
+       *  them"**: the caller already knows which lines carry an override, since
+       *  it had to count them to ask before overwriting. */
+      ids: string[]
+    }
   | { kind: 'subtitle.remove'; assetId: string; ids: string[] }
   | { kind: 'subtitle.replaceAll'; assetId: string; find: string; replace: string }
 
 /** What one command did. **`changed: false` is an ordinary answer, not a
  *  failure** — it is what keeps a pointless click out of the undo history.
- *  Two commands report no `lines`, for opposite reasons: `remove` names what is
- *  gone, `replaceAll` may touch hundreds. */
+ *  Three commands report no `lines`: `remove` names what is gone, `replaceAll`
+ *  and `clearStyle` may touch hundreds. */
 interface OutcomeBase {
   changed: boolean
   focus: EditFocus | null
@@ -69,10 +78,17 @@ interface OutcomeBase {
   lines: UtteranceView[]
 }
 
+/** The kinds whose outcome is nothing but `OutcomeBase`. **Named once and
+ *  referred to**, because the three helpers below and the union arm all have to
+ *  agree about it, and a fourth command reporting a count of its own would
+ *  otherwise be four edits with no error if one is missed. */
+type PlainOutcomeKind = Exclude<
+  SubtitleCommand['kind'],
+  'subtitle.remove' | 'subtitle.replaceAll' | 'subtitle.clearStyle'
+>
+
 export type SubtitleOutcome =
-  | (OutcomeBase & {
-      kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>
-    })
+  | (OutcomeBase & { kind: PlainOutcomeKind })
   | (OutcomeBase & {
       kind: 'subtitle.remove'
       /** The lines actually dropped — may be fewer than the command named. */
@@ -81,6 +97,11 @@ export type SubtitleOutcome =
   | (OutcomeBase & {
       kind: 'subtitle.replaceAll'
       /** Occurrences replaced across the whole transcript; 0 when none matched. */
+      count: number
+    })
+  | (OutcomeBase & {
+      kind: 'subtitle.clearStyle'
+      /** Lines that actually had styling of their own; 0 when none did. */
       count: number
     })
 
@@ -205,6 +226,32 @@ export function applySubtitleCommand(
       return landed(command.kind, next, command.assetId, next.utterances[index + 1])
     }
 
+    case 'subtitle.clearStyle': {
+      // Resolved before clearing, for the same reason `remove` does it: a
+      // caller naming lines by prefix must be answered about the lines that
+      // were actually reached.
+      const named = command.ids.flatMap((id) => {
+        const line = find(transcript, id)
+        return line ? [line.id] : []
+      })
+      const before = transcript.utterances.filter(
+        (utterance) => named.includes(utterance.id) && utterance.style !== undefined
+      ).length
+      const next = clearUtteranceStyles(transcript, named)
+      return {
+        transcript: next,
+        outcome: {
+          kind: command.kind,
+          changed: next !== transcript,
+          // Nothing moved and nothing was said differently, so there is no
+          // line to put in view: this only takes a look away.
+          focus: null,
+          lines: [],
+          count: next === transcript ? 0 : before
+        }
+      }
+    }
+
     case 'subtitle.remove': {
       // Resolved before removing, so a caller naming lines by prefix is
       // answered with the ids that were actually dropped.
@@ -248,7 +295,7 @@ export function applySubtitleCommand(
 
 /** The tail of a case that definitely changed something. */
 function landed(
-  kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>,
+  kind: PlainOutcomeKind,
   transcript: Transcript,
   assetId: string,
   utterance: Utterance | undefined
@@ -266,7 +313,7 @@ function landed(
 
 /** The shared tail of the cases whose function reports a no-op by identity. */
 function settle(
-  kind: Exclude<SubtitleCommand['kind'], 'subtitle.remove' | 'subtitle.replaceAll'>,
+  kind: PlainOutcomeKind,
   before: Transcript,
   after: Transcript,
   assetId: string,
@@ -278,7 +325,9 @@ function settle(
 
 function unchanged(kind: SubtitleCommand['kind']): SubtitleOutcome {
   const base = { changed: false, focus: null, lines: [] }
-  if (kind === 'subtitle.replaceAll') return { ...base, kind, count: 0 }
+  if (kind === 'subtitle.replaceAll' || kind === 'subtitle.clearStyle') {
+    return { ...base, kind, count: 0 }
+  }
   if (kind === 'subtitle.remove') return { ...base, kind, removedIds: [] }
   return { ...base, kind }
 }

@@ -6,7 +6,7 @@ import {
   DEFAULT_CAPTION_STYLE
 } from '@logcut/core'
 import type { CaptionAlign, CaptionStyle, Utterance } from '@logcut/core'
-import type { CaptionScope } from '@/lib/caption-scope'
+import type { CaptionApplyTarget } from '@/lib/caption-apply'
 import {
   AlignCenter,
   AlignLeft,
@@ -17,8 +17,8 @@ import {
   RotateCcw,
   Search,
   Underline,
-  Undo2,
-  X
+  UserRound,
+  Users
 } from 'lucide-react'
 import { memo, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
@@ -27,14 +27,13 @@ import ResizeHandle from '@/components/ResizeHandle'
 import SubtitleList from '@/components/SubtitleList'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Slider } from '@/components/ui/slider'
 import { Toggle } from '@/components/ui/toggle'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -204,10 +203,11 @@ function ColourField({
   )
 }
 
-/** One collapsible group of settings. **Open to begin with, every one of them**
- *  — collapsing is for reaching the list sooner, not for admitting a group is
- *  secondary. The gap below belongs to the content, so closing a group actually
- *  gets it back. */
+/** One collapsible group of settings. **Closed to begin with, every one of
+ *  them**, so the panel opens as a list of what it can do rather than a screen
+ *  of controls. The gap below belongs to the content, so a closed group takes up
+ *  its heading and nothing else — which is what lets the panel shrink to fit
+ *  (see SubtitleEditor.md). */
 function StyleGroup({
   title,
   action,
@@ -220,7 +220,7 @@ function StyleGroup({
   children: ReactNode
 }): JSX.Element {
   return (
-    <Collapsible defaultOpen>
+    <Collapsible>
       <div className="mt-stack flex items-center gap-component">
         <CollapsibleTrigger asChild>
           <button
@@ -350,17 +350,13 @@ function ValueRow({
 const CaptionStylePanel = memo(function CaptionStylePanel({
   style,
   onChange,
-  scope,
-  onScopeChange,
-  speakerIds,
-  hasSelection
+  onApply,
+  speakerIds
 }: {
   style: CaptionStyle
   onChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
-  scope: CaptionScope
-  onScopeChange(scope: CaptionScope): void
+  onApply(target: CaptionApplyTarget): void
   speakerIds: string[]
-  hasSelection: boolean
 }): JSX.Element {
   /** Marks the frames of a drag that must not be recorded (see
    *  SubtitleEditor.md). **A ref, not state**: it is read by the very handler
@@ -375,13 +371,6 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
   const endSlide = (): void => {
     sliding.current = false
   }
-  // The scope is a tagged union in the model and a flat string in the control;
-  // this is the one place the two meet.
-  const scopeValue = scope.kind === 'speaker' ? `speaker:${scope.speakerId}` : scope.kind
-  const onScopeSelect = (value: string): void => {
-    if (value === 'all' || value === 'line') onScopeChange({ kind: value })
-    else onScopeChange({ kind: 'speaker', speakerId: value.slice('speaker:'.length) })
-  }
 
   // The slider's own bounds, in the pixels both it and the box speak.
   const sizeRange = {
@@ -390,32 +379,41 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
   }
 
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto border-b border-border p-component">
-      {/* What the controls below write to — the question "which subtitles
-              are we talking about", which is why it lives in the heading and not
-              in a row of its own (see SubtitleEditor.md). Resolution rules are
-              with `styleForScope`. */}
-      <div className="mb-component flex items-center gap-component">
+    // `min-h-0` is what lets it be shorter than its content and scroll: a flex
+    // item in a column defaults to `min-height: auto`, which refuses to shrink
+    // past the content and would push the list off the bottom instead.
+    <section className="min-h-0 overflow-y-auto border-b border-border p-component">
+      {/* Everything below writes to the line the list is highlighting, and this
+          button is how that look gets anywhere else (see SubtitleEditor.md).
+          **An action, not a scope**: nothing has to be chosen before editing. */}
+      <div className="flex items-center gap-component">
         <h2 className="m-0 flex-1 text-caption font-medium text-foreground">Style</h2>
-        <Select value={scopeValue} onValueChange={onScopeSelect}>
-          <SelectTrigger size="sm" className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All subtitles</SelectItem>
-            {/* Only offerable with a line in hand; without one there is
-                    nothing for "this line" to mean. */}
-            {hasSelection && <SelectItem value="line">This line</SelectItem>}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" title="Give other subtitles this line's look">
+              Apply to
+              <ChevronDown />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => onApply({ kind: 'all' })}>
+              <Users />
+              All subtitles
+            </DropdownMenuItem>
             {speakerIds.map((speakerId) => (
-              <SelectItem key={speakerId} value={`speaker:${speakerId}`}>
+              <DropdownMenuItem
+                key={speakerId}
+                onSelect={() => onApply({ kind: 'speaker', speakerId })}
+              >
+                <UserRound />
                 Speaker {speakerId}
-              </SelectItem>
+              </DropdownMenuItem>
             ))}
-          </SelectContent>
-        </Select>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <div className="flex flex-col gap-component">
+      <StyleGroup title="Basic">
         <StyleRow label="Font">
           {/* Not a Select: hundreds of installed fonts need a search box, and a
               Select has nowhere to put one (see FontSelect.md). */}
@@ -535,12 +533,12 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
             </ToggleGroupItem>
           </ToggleGroup>
         </StyleRow>
-      </div>
+      </StyleGroup>
 
       {/* Where the caption sits and how big it is — the four fields the handles
-          on the picture drag. A heading rather than four more rows above: these
-          answer "where is it", while everything above answers "what does it
-          look like", and the reset only makes sense over the first. */}
+          on the picture drag. Its own group rather than four more rows in Basic:
+          these answer "where is it", while Basic answers "what does it look
+          like", and the reset only makes sense over the first. */}
       <StyleGroup
         title="Layout"
         action={
@@ -831,30 +829,27 @@ const CaptionStylePanel = memo(function CaptionStylePanel({
 interface SubtitleEditorProps {
   utterances: Utterance[]
   activeId: string | null
-  canUndo: boolean
-  onClose(): void
   onSeek(utterance: Utterance): void
   onEditSave(id: string, text: string): void
   onTimeSave(id: string, edge: 'start' | 'end', timeMs: number): void
   onAdd(afterId: string): void
   onMerge(firstId: string): void
-  /** Both the speaker dropdown's options and the scopes on offer — one list,
+  /** Both the speaker dropdown's options and the Apply targets — one list,
    *  because they are the same speakers. */
   speakerIds: string[]
   nextSpeakerId: string
   onSpeakerSave(id: string, speakerId: string): void
-  onUndo(): void
   onReplaceAll(find: string, replace: string): number
-  /** The style as it resolves for the scope currently selected. */
+  /** The style as it resolves for the line being edited. */
   style: CaptionStyle
-  /** One field or several; the caller writes them into the selected scope.
-   *  `continuing` marks a frame in the middle of a drag — see the panel. */
+  /** One field or several, written to the line being edited. `continuing` marks
+   *  a frame in the middle of a drag — see the panel. */
   onChange(patch: Partial<CaptionStyle>, options?: { continuing?: boolean }): void
-  scope: CaptionScope
-  onScopeChange(scope: CaptionScope): void
-  /** Whether a line is selected, which is what `line` scope needs. */
-  hasSelection: boolean
-  /** The style panel's share of the column, the list taking the rest. */
+  /** Push that line's whole look onto a wider layer. Whether it overwrites the
+   *  narrower ones is settled with the user, not here. */
+  onApply(target: CaptionApplyTarget): void
+  /** The style panel's share of the column — a ceiling rather than a fixed
+   *  height, see SubtitleEditor.md. */
   styleRatio: number
   /** How far the handle moved, and the height it moved within. The bound is
    *  the caller's to apply — every other minimum in this layout is stated
@@ -862,13 +857,11 @@ interface SubtitleEditorProps {
   onStyleResize(delta: number, room: number): void
 }
 
-/** Subtitle editing: the toolbar, the style panel, and the list of lines.
+/** Subtitle editing: the style panel and the list of lines.
  *  **Nothing about it is modal** — see SubtitleEditor.md. */
 export default function SubtitleEditor({
   utterances,
   activeId,
-  canUndo,
-  onClose,
   onSeek,
   onEditSave,
   onTimeSave,
@@ -877,13 +870,10 @@ export default function SubtitleEditor({
   speakerIds,
   nextSpeakerId,
   onSpeakerSave,
-  onUndo,
   onReplaceAll,
   style,
   onChange,
-  scope,
-  onScopeChange,
-  hasSelection,
+  onApply,
   styleRatio,
   onStyleResize
 }: SubtitleEditorProps): JSX.Element {
@@ -910,69 +900,84 @@ export default function SubtitleEditor({
   return (
     // Fills the tab's content area; the Panel and the tab strip are above it.
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-component border-b border-border p-component">
-        <span className="flex-1 text-label font-medium text-foreground">Subtitles</span>
-        <Button variant="ghost" size="icon-sm" title="Undo" disabled={!canUndo} onClick={onUndo}>
-          <Undo2 size={14} />
-        </Button>
-        <Button
-          variant={findOpen ? 'secondary' : 'ghost'}
-          size="icon-sm"
-          title="Find and replace"
-          onClick={() => setFindOpen((open) => !open)}
-        >
-          <Search size={14} />
-        </Button>
-        <Button variant="ghost" size="icon-sm" title="Close" onClick={onClose}>
-          <X size={14} />
-        </Button>
+      {/* Nothing but the column's name. Undo and closing both had a button here
+          and both have a better home — see SubtitleEditor.md. */}
+      <div className="flex shrink-0 items-center border-b border-border p-component">
+        <span className="text-label font-medium text-foreground">Subtitles</span>
       </div>
-
-      {findOpen && (
-        <div className="flex shrink-0 items-center gap-component border-b border-border p-component">
-          <Input
-            placeholder="Find"
-            value={findText}
-            className="h-control-sm"
-            onChange={(event) => setFindText(event.target.value)}
-          />
-          <Input
-            placeholder="Replace"
-            value={replaceText}
-            className="h-control-sm"
-            onChange={(event) => setReplaceText(event.target.value)}
-          />
-          <Button size="sm" disabled={findText === ''} onClick={replaceAll}>
-            All
-          </Button>
-        </div>
-      )}
-
-      {message !== '' && (
-        <p className="m-0 shrink-0 px-component pt-component text-caption font-normal text-muted-foreground">
-          {message}
-        </p>
-      )}
 
       {/* Settings above the list, split by a handle — see SubtitleEditor.md. */}
       <div ref={splitRef} className="flex min-h-0 flex-1 flex-col">
         {/* A plain element carries the share, not the panel itself: the panel
             is memoized, and an inline style object handed to it would be a new
-            prop on every frame the playhead moves. */}
-        <div className="flex min-h-0 flex-col" style={{ flexGrow: styleRatio, flexBasis: 0 }}>
+            prop on every frame the playhead moves.
+            **A ceiling, not a height** (`flex: 0 1 auto` + `maxHeight`): with
+            every group closed the panel is a stack of headings, and a fixed
+            share would hold a band of nothing open under them. */}
+        <div
+          className="flex min-h-0 flex-col"
+          style={{ flex: '0 1 auto', maxHeight: `${styleRatio * 100}%` }}
+        >
           <CaptionStylePanel
             style={style}
             onChange={onChange}
-            scope={scope}
-            onScopeChange={onScopeChange}
+            onApply={onApply}
             speakerIds={speakerIds}
-            hasSelection={hasSelection}
           />
         </div>
 
         <ResizeHandle orientation="horizontal" onResize={resizeStyle} />
 
-        <div className="flex min-h-0 flex-col" style={{ flexGrow: 1 - styleRatio, flexBasis: 0 }}>
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* Find and replace sits with the lines it rewrites, not up in the
+              column's heading (see SubtitleEditor.md). One row either way: the
+              toggle stays at its right end and the fields open beside it. */}
+          <div className="flex shrink-0 items-center gap-component border-b border-border p-component">
+            {findOpen && (
+              <>
+                <Input
+                  autoFocus
+                  placeholder="Find"
+                  value={findText}
+                  className="h-control-sm"
+                  onChange={(event) => setFindText(event.target.value)}
+                />
+                <Input
+                  placeholder="Replace"
+                  value={replaceText}
+                  className="h-control-sm"
+                  onChange={(event) => setReplaceText(event.target.value)}
+                />
+                <Button size="sm" disabled={findText === ''} onClick={replaceAll}>
+                  All
+                </Button>
+              </>
+            )}
+            <Button
+              variant="quiet"
+              size="icon-sm"
+              title="Find and replace"
+              aria-pressed={findOpen}
+              className="ml-auto"
+              onClick={() => {
+                setFindOpen((open) => !open)
+                // The report goes with the row that produced it. Left behind, it
+                // keeps a line of text between the search and the subtitles for
+                // the rest of the session, and this half has a floor of 120px to
+                // spend.
+                setMessage('')
+              }}
+            >
+              <Search />
+            </Button>
+          </div>
+
+          {message !== '' && (
+            <p className="m-0 shrink-0 px-component pt-component text-caption font-normal text-muted-foreground">
+              {message}
+            </p>
+          )}
+
           <SubtitleList
             utterances={utterances}
             activeId={activeId}

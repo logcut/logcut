@@ -150,6 +150,44 @@ test('replaceAll that matches nothing reports a count of zero', () => {
   assert.equal(outcome.kind === 'subtitle.replaceAll' ? outcome.count : -1, 0)
 })
 
+test('clearStyle counts the lines that had styling of their own', () => {
+  const styled = applyCommands(doc(), [
+    { kind: 'subtitle.setStyle', assetId: 'asset1', id: 'a', style: { bold: true } },
+    { kind: 'subtitle.setStyle', assetId: 'asset1', id: 'b', style: { italic: true } }
+  ])
+
+  const result = applyCommand(styled.doc, {
+    kind: 'subtitle.clearStyle',
+    assetId: 'asset1',
+    // 'c' was never styled, so it is not part of the count.
+    ids: ['a', 'b', 'c']
+  })
+
+  const outcome = result.outcomes[0]
+  assert.equal(outcome?.kind, 'subtitle.clearStyle')
+  assert.equal(outcome.kind === 'subtitle.clearStyle' ? outcome.count : -1, 2)
+  assert.equal(outcome?.focus, null)
+  assert.deepEqual(outcome?.lines, [])
+  assert.equal(
+    result.doc.transcripts.asset1?.utterances.every((utterance) => utterance.style === undefined),
+    true
+  )
+})
+
+test('clearStyle over lines that own nothing changes nothing', () => {
+  const before = doc()
+  const result = applyCommand(before, {
+    kind: 'subtitle.clearStyle',
+    assetId: 'asset1',
+    ids: ['a', 'b', 'c']
+  })
+
+  const outcome = result.outcomes[0]
+  assert.equal(result.doc, before)
+  assert.equal(outcome?.changed, false)
+  assert.equal(outcome.kind === 'subtitle.clearStyle' ? outcome.count : -1, 0)
+})
+
 test('a batch chains: the second command sees the first one applied', () => {
   const result = applyCommands(doc(), [
     { kind: 'subtitle.merge', assetId: 'asset1', firstId: 'a' },

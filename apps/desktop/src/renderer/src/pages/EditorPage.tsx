@@ -13,6 +13,7 @@ import type { CaptionStyle, CommandResult, Utterance } from '@logcut/core'
 import { Captions, Film } from 'lucide-react'
 import { Activity, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
+import ApplyStyleDialog from '@/components/ApplyStyleDialog'
 import EditorTopBar from '@/components/EditorTopBar'
 import ExportDialog from '@/components/ExportDialog'
 import ExportSettingsDialog from '@/components/ExportSettingsDialog'
@@ -32,8 +33,14 @@ import { useProject } from '@/hooks/useProject'
 import { useTimelinePlayback } from '@/hooks/useTimelinePlayback'
 import { useCaptionFonts } from '@/hooks/useCaptionFonts'
 import { captionFontStack as captionFontStackFor } from '@/lib/caption-fonts'
-import { liveScope, styleForScope, type CaptionScope } from '@/lib/caption-scope'
+import {
+  captionStylesAfterApply,
+  linesWithOwnStyle,
+  speakersWithOwnStyle,
+  type CaptionApplyTarget
+} from '@/lib/caption-apply'
 import { layUtterances } from '@/lib/timeline'
+import type { TimelineUtterance } from '@/lib/timeline'
 import type { EditorLayout, MediaAssetSummary } from '../../../shared/ipc'
 
 /** See EditorPage.md for what each of these divides. */
@@ -115,7 +122,6 @@ export default function EditorPage({
     dispatch,
     doc,
     undo,
-    canUndo,
     canRedo,
     redo,
     exportSrt,
@@ -150,9 +156,9 @@ export default function EditorPage({
   /** The right-hand column, closed on open. Nothing but the user ever closes
    *  it again — see EditorPage.md. */
   const [subtitlesOpen, setSubtitlesOpen] = useState(false)
-  /** Which subtitles the style panel writes to. Held raw; `liveScope` is what
-   *  the rest of the page reads, so a scope that vanishes cannot be used. */
-  const [storedScope, setCaptionScope] = useState<CaptionScope>({ kind: 'all' })
+  /** An Apply waiting on the user's answer about what it may overwrite. Null
+   *  whenever there was nothing to ask (see caption-apply.md). */
+  const [pendingApply, setPendingApply] = useState<CaptionApplyTarget | null>(null)
   /** Fractions of what they divide, never pixels — see `EditorLayout`. */
   const [tabsRatio, setTabsRatio] = useState(DEFAULT_TABS_RATIO)
   const [timelineRatio, setTimelineRatio] = useState(DEFAULT_TIMELINE_RATIO)
@@ -456,27 +462,38 @@ export default function EditorPage({
     captionLine ? { speakerId: captionLine.speakerId, style: captionLine.style } : undefined
   )
 
-  /** The line the style panel calls "this line". */
-  const selectedLine = utterances.find((utterance) => utterance.id === activeUtteranceId) ?? null
+  /** The line every style edit lands on: the one the list is highlighting. */
+  const editedLine = utterances.find((utterance) => utterance.id === activeUtteranceId) ?? null
 
-  /** A scope can stop existing while selected (the line is deselected, a
-   *  speaker's last line is reassigned). Resolved every render rather than
-   *  watched for, so no edit can land somewhere invisible. */
-  const captionScope = liveScope(storedScope, speakerIds, selectedLine !== null)
-
-  /** The selected line, but only when the panel is actually scoped to it.
-   *  `selectedLine` follows the playhead and changes every frame of a drag, so
-   *  pinning this to null at every other scope is what keeps the memos below —
-   *  and the whole style panel — still. */
-  const scopeLine = captionScope.kind === 'line' ? selectedLine : null
-
-  const scopedStyle = useMemo(
-    () => styleForScope(captionStyles, captionScope, scopeLine),
-    [captionStyles, captionScope, scopeLine]
+  const editedStyle = useMemo(
+    () =>
+      resolveCaptionStyle(
+        captionStyles,
+        editedLine ? { speakerId: editedLine.speakerId, style: editedLine.style } : undefined
+      ),
+    [captionStyles, editedLine]
   )
 
-  /** Where a style edit goes: the project-level scopes write the project file,
-   *  a line's own styling travels as a command — see EditorPage.md. */
+  /**
+   * The line a style edit writes to, read at the moment of the write.
+   *
+   * **A ref for two separate reasons.** It keeps `editedLine` out of
+   * `applyStylePatch`'s dependencies, so the callback survives the highlight
+   * moving — the style panel and the player are both memoized on it (see
+   * SubtitleEditor.md). And it is what makes the latch below possible at all.
+   */
+  const editedLineRef = useRef<TimelineUtterance | null>(null)
+  editedLineRef.current = editedLine
+  /** The line the gesture under way started on. **A drag does not change target
+   *  half way through**: the highlight follows the playhead, so dragging a
+   *  slider during playback would otherwise write the first half of the drag to
+   *  one line and the rest to the next — and the rest carries `record: false`,
+   *  so undo could not even take it back. */
+  const gestureLineRef = useRef<TimelineUtterance | null>(null)
+
+  /** Every style edit is an edit of one line, whether it came from the panel or
+   *  from the handles on the picture. Getting it onto other subtitles is a
+   *  separate, explicit act — see `applyStyleTo`. */
   const applyStylePatch = useCallback(
     (
       patch: Partial<CaptionStyle>,
@@ -487,42 +504,83 @@ export default function EditorPage({
       // (see components/VideoPlayer.tsx).
       options: { continuing?: boolean } = {}
     ): void => {
-      const record = !options.continuing
-      if (captionScope.kind === 'line') {
-        if (!scopeLine) return
-        dispatch(
-          [
-            {
-              kind: 'subtitle.setStyle',
-              assetId: scopeLine.assetId,
-              id: scopeLine.sourceId,
-              style: patch
-            }
-          ],
-          { record }
-        )
-        return
-      }
-      if (captionScope.kind === 'speaker') {
-        const { speakerId } = captionScope
-        void setCaptionStyles(
-          {
-            ...captionStyles,
-            bySpeaker: {
-              ...captionStyles.bySpeaker,
-              [speakerId]: { ...captionStyles.bySpeaker[speakerId], ...patch }
-            }
-          },
-          { record }
-        )
-        return
-      }
-      void setCaptionStyles(
-        { ...captionStyles, base: { ...captionStyles.base, ...patch } },
-        { record }
+      const line = options.continuing ? gestureLineRef.current : editedLineRef.current
+      gestureLineRef.current = line
+      if (!line) return
+      dispatch(
+        [{ kind: 'subtitle.setStyle', assetId: line.assetId, id: line.sourceId, style: patch }],
+        { record: !options.continuing }
       )
     },
-    [captionScope, captionStyles, dispatch, scopeLine, setCaptionStyles]
+    [dispatch]
+  )
+
+  /**
+   * Give a wider layer the edited line's whole look.
+   *
+   * `overwrite` also clears the layers *below* the one being written, which is
+   * the only way "all subtitles" can be true: a line's own styling outranks
+   * both project layers, so leaving it in place leaves that line looking exactly
+   * as it did.
+   *
+   * **The command goes first and the project write does not record.** Both
+   * halves land in one undo entry that way. Recording twice pushes the same
+   * pre-edit snapshot twice — the second Cmd+Z would appear to do nothing — and
+   * doing it the other way round is worse: an unrecorded `dispatch` *replaces*
+   * the last batch in the edit log (see hooks/useProject.md).
+   */
+  const applyStyleTo = useCallback(
+    (target: CaptionApplyTarget, overwrite: boolean): void => {
+      const style = editedLineRef.current
+        ? resolveCaptionStyle(captionStyles, {
+            speakerId: editedLineRef.current.speakerId,
+            style: editedLineRef.current.style
+          })
+        : resolveCaptionStyle(captionStyles)
+      const next = captionStylesAfterApply(captionStyles, target, style, overwrite)
+      // **Grouped by asset, not sent against the clip being edited.** The two
+      // project layers belong to the project, so an Apply reaches every clip on
+      // the timeline; a command names one transcript, so this is one command per
+      // asset in one batch — which is one undo entry.
+      const clearing = new Map<string, string[]>()
+      if (overwrite) {
+        for (const line of linesWithOwnStyle(utterances, target)) {
+          clearing.set(line.assetId, [...(clearing.get(line.assetId) ?? []), line.sourceId])
+        }
+      }
+      if (clearing.size > 0) {
+        dispatch(
+          [...clearing].map(([assetId, ids]) => ({
+            kind: 'subtitle.clearStyle' as const,
+            assetId,
+            ids
+          }))
+        )
+        void setCaptionStyles(next, { record: false })
+        return
+      }
+      // Applying a look the target already has: `setCaptionStyles` records
+      // unconditionally, and a Cmd+Z that visibly does nothing is worse than the
+      // button doing nothing. Compared as text, the same way the write itself
+      // decides whether main's answer differs (see hooks/useProject.ts).
+      if (JSON.stringify(next) === JSON.stringify(captionStyles)) return
+      void setCaptionStyles(next)
+    },
+    [captionStyles, dispatch, setCaptionStyles, utterances]
+  )
+
+  /** Ask first, but only when the answer can change anything. */
+  const beginApply = useCallback(
+    (target: CaptionApplyTarget): void => {
+      const lines = linesWithOwnStyle(utterances, target)
+      const speakers = target.kind === 'all' ? speakersWithOwnStyle(captionStyles) : []
+      if (lines.length === 0 && speakers.length === 0) {
+        applyStyleTo(target, false)
+        return
+      }
+      setPendingApply(target)
+    },
+    [applyStyleTo, captionStyles, utterances]
   )
   const captionFontStack = captionFontStackFor(captionStyle.fontFamily, captionFonts)
 
@@ -879,6 +937,19 @@ export default function EditorPage({
         onDismiss={dismissExport}
       />
 
+      <ApplyStyleDialog
+        target={pendingApply}
+        lineCount={pendingApply ? linesWithOwnStyle(utterances, pendingApply).length : 0}
+        speakerCount={pendingApply?.kind === 'all' ? speakersWithOwnStyle(captionStyles).length : 0}
+        onOpenChange={(open) => {
+          if (!open) setPendingApply(null)
+        }}
+        onConfirm={(overwrite) => {
+          if (pendingApply) applyStyleTo(pendingApply, overwrite)
+          setPendingApply(null)
+        }}
+      />
+
       {/* Full-height columns, each side one rendered only while it shows —
           not panes in the top row (see EditorPage.md). */}
       <div className="flex min-h-0 flex-1 px-component pb-component">
@@ -1049,8 +1120,6 @@ export default function EditorPage({
               <SubtitleEditor
                 utterances={subtitleTranscript.utterances}
                 activeId={activeSourceId}
-                canUndo={canUndo}
-                onClose={() => setSubtitlesOpen(false)}
                 onSeek={seekToUtterance}
                 onEditSave={handleEditSave}
                 onTimeSave={handleTimeSave}
@@ -1059,15 +1128,12 @@ export default function EditorPage({
                 speakerIds={speakerIds}
                 nextSpeakerId={newSpeakerId}
                 onSpeakerSave={handleSpeakerSave}
-                onUndo={undo}
                 onReplaceAll={handleReplaceAll}
-                style={scopedStyle}
+                style={editedStyle}
                 onChange={applyStylePatch}
+                onApply={beginApply}
                 styleRatio={captionStyleRatio}
                 onStyleResize={resizeCaptionStyle}
-                scope={captionScope}
-                onScopeChange={setCaptionScope}
-                hasSelection={selectedLine !== null}
               />
             ) : (
               <div className="flex min-h-0 flex-1 items-center justify-center p-inset">
