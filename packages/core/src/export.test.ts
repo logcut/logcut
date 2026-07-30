@@ -19,7 +19,7 @@ function input(overrides: Partial<ExportInput> = {}): ExportInput {
   return {
     clips: [clip()],
     frame: { width: 1920, height: 1080 },
-    subtitleFile: null,
+    captionTrackFile: null,
     videoArgs: ['-c:v', 'h264_videotoolbox', '-b:v', '8000k'],
     audioArgs: ['-c:a', 'aac', '-b:a', '192k'],
     fps: 0,
@@ -135,7 +135,7 @@ test('planExport re-encodes as soon as the export asks for anything', () => {
   const reasons: Partial<ExportInput>[] = [
     { frame: { width: 1280, height: 720 } },
     { fps: 30 },
-    { subtitleFile: 'x.ass' }
+    { captionTrackFile: 'captions.txt' }
   ]
   for (const reason of reasons) {
     assert.equal(planExport(input(reason)).reencodes, true, JSON.stringify(reason))
@@ -149,7 +149,7 @@ test('planExport drops the audio without decoding it when only the video is want
   assert.equal(remux.reencodes, false)
   assert.ok(remux.args.includes('-an'))
 
-  const render = planExport(input({ videoOnly: true, subtitleFile: 'x.ass' }))
+  const render = planExport(input({ videoOnly: true, captionTrackFile: 'captions.txt' }))
   assert.doesNotMatch(graph(render.args), /aformat|anullsrc/)
   assert.ok(!render.args.includes('-c:a'), 'no audio codec when there is no audio')
   assert.equal(render.args.filter((arg) => arg === '-map').length, 1)
@@ -163,7 +163,7 @@ test('planExport concatenates video alone when the audio is not wanted', () => {
 })
 
 test('planExport normalizes the frame rate only when one was asked for', () => {
-  assert.doesNotMatch(graph(planExport(input({ subtitleFile: 'x.ass' })).args), /fps=/)
+  assert.doesNotMatch(graph(planExport(input({ captionTrackFile: 'captions.txt' })).args), /fps=/)
   assert.match(graph(planExport(input({ fps: 30 })).args), /,fps=30,setparams=/)
 })
 
@@ -182,16 +182,16 @@ test('planExport names the container, so the output extension need not', () => {
   // The app renders to `<target>.part`, which ffmpeg cannot pick a muxer from:
   // without `-f mp4` it fails before writing a frame ("Unable to choose an
   // output format").
-  for (const subtitleFile of [null, 'x.ass']) {
-    const args = planExport(input({ subtitleFile, outputPath: '/out/film.mp4.part' })).args
+  for (const captionTrackFile of [null, 'captions.txt']) {
+    const args = planExport(input({ captionTrackFile, outputPath: '/out/film.mp4.part' })).args
     assert.deepEqual(args.slice(-3), ['-f', 'mp4', '/out/film.mp4.part'])
   }
 })
 
 test('planExport renders as soon as there is something to burn', () => {
-  const plan = planExport(input({ subtitleFile: 'abc123.ass' }))
+  const plan = planExport(input({ captionTrackFile: 'captions.txt' }))
   assert.equal(plan.reencodes, true)
-  assert.match(graph(plan.args), /\[v0\]ass=abc123\.ass\[vout\]/)
+  assert.match(graph(plan.args), /\[1:v\]format=rgba,setsar=1\[caps\];\[v0\]\[caps\]overlay=/)
   assert.deepEqual(plan.args.slice(plan.args.indexOf('-map'), plan.args.indexOf('-map') + 4), [
     '-map',
     '[vout]',
@@ -205,7 +205,7 @@ test('planExport renders more than one clip even with nothing to burn', () => {
   assert.equal(plan.reencodes, true)
   assert.match(graph(plan.args), /\[v0\]\[a0\]\[v1\]\[a1\]concat=n=2:v=1:a=1\[vcat\]\[acat\]/)
   // Nothing to burn, so the concat output is what gets mapped.
-  assert.doesNotMatch(graph(plan.args), /ass=/)
+  assert.doesNotMatch(graph(plan.args), /overlay=/)
   assert.deepEqual(plan.args.slice(plan.args.indexOf('-map'), plan.args.indexOf('-map') + 4), [
     '-map',
     '[vcat]',
@@ -234,7 +234,7 @@ test('planExport fits every input to the canvas without cropping it', () => {
 })
 
 test('planExport both converts the colour and labels it', () => {
-  const chain = graph(planExport(input({ subtitleFile: 'x.ass' })).args)
+  const chain = graph(planExport(input({ captionTrackFile: 'captions.txt' })).args)
   // Converting without labelling leaves a file nobody can identify, and the
   // muxer writes no `colr` atom until all three of primaries, transfer and
   // matrix are known — an untagged export is what every player guesses at.
@@ -255,21 +255,31 @@ test('planExport gives a silent clip a silence of exactly its own length', () =>
 
 test('planExport burns after concatenating, so the captions run on one clock', () => {
   const plan = planExport(
-    input({ clips: [clip(), clip({ path: '/media/b.mp4' })], subtitleFile: 'x.ass' })
+    input({ clips: [clip(), clip({ path: '/media/b.mp4' })], captionTrackFile: 'captions.txt' })
   )
-  assert.match(graph(plan.args), /concat=n=2:v=1:a=1\[vcat\]\[acat\];\[vcat\]ass=x\.ass\[vout\]/)
+  assert.match(
+    graph(plan.args),
+    /concat=n=2:v=1:a=1\[vcat\]\[acat\];\[2:v\]format=rgba,setsar=1\[caps\];\[vcat\]\[caps\]overlay=/
+  )
 })
 
 test('planExport passes the codec arguments through untouched', () => {
   const plan = planExport(
-    input({ subtitleFile: 'x.ass', videoArgs: ['-c:v', 'h264_mf'], audioArgs: ['-c:a', 'aac'] })
+    input({
+      captionTrackFile: 'captions.txt',
+      videoArgs: ['-c:v', 'h264_mf'],
+      audioArgs: ['-c:a', 'aac']
+    })
   )
   const joined = plan.args.join(' ')
   assert.match(joined, /-c:v h264_mf -c:a aac -movflags \+faststart/)
 })
 
 test('planExport always asks for the machine-readable progress feed', () => {
-  for (const plan of [planExport(input()), planExport(input({ subtitleFile: 'x.ass' }))]) {
+  for (const plan of [
+    planExport(input()),
+    planExport(input({ captionTrackFile: 'captions.txt' }))
+  ]) {
     assert.deepEqual(plan.args.slice(0, 5), [
       '-y',
       '-hide_banner',

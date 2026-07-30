@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- The offscreen surface the export screenshots. Same class as index.html so
+     the token layer resolves identically; nothing here is ever shown to a user. -->
+<html class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <title>LogCut caption render</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/caption-main.tsx"></script>
+  </body>
+</html>

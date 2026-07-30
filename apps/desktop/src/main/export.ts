@@ -4,30 +4,17 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   deriveBitrateKbps,
   planExport,
-  toAss
+  resolveCaptionStyle
 } from '@logcut/core'
 import type { ExportSettings, Transcript } from '@logcut/core'
 import { app } from 'electron'
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ExportVideoResult } from '../shared/ipc'
+import { renderCaptions, writeCaptionTrack } from './caption-render'
 import { probeMedia, runFfmpegProgress, videoEncoder } from './ffmpeg'
 import type { FfmpegRun } from './ffmpeg'
 import * as projects from './projects'
-
-/**
- * What `SYSTEM_FONT` becomes on the way into the picture.
- *
- * **libass takes one family name, not a stack**, so the CJK entry is the one to
- * pick — a face without those glyphs burns in as empty boxes, and Latin text
- * renders from these families too.
- */
-const SYSTEM_FONTS: Record<string, string> = {
-  darwin: 'PingFang SC',
-  win32: 'Microsoft YaHei'
-}
-const DEFAULT_SYSTEM_FONT = 'Noto Sans CJK SC'
 
 /** The canvas when the first clip could not be probed at all. */
 const FALLBACK_FRAME = { width: 1920, height: 1080 }
@@ -129,28 +116,32 @@ export async function exportVideo(
     throw new Error('NO_ENCODER: This build has no video encoder, so captions cannot be burned in')
   }
 
-  // Both the subtitle file and ffmpeg's working directory. A bare filename is
-  // the only form that survives a filtergraph unescaped — see export.ts in the
-  // core for why that matters more than it sounds like it should.
+  // Where the caption pictures and their list live, and ffmpeg's working
+  // directory. A bare filename is the only form that survives a filtergraph
+  // unescaped — see export.ts in the core for why that matters.
   const workDir = path.join(app.getPath('temp'), 'logcut')
   fs.mkdirSync(workDir, { recursive: true })
-  const subtitleFile =
-    lines.length > 0
-      ? `${crypto.createHash('sha1').update(`${projectId}:${targetPath}`).digest('hex').slice(0, 16)}.ass`
-      : null
 
-  if (subtitleFile) {
-    fs.writeFileSync(
-      path.join(workDir, subtitleFile),
-      toAss({
-        lines,
-        styles: project.captionStyles ?? DEFAULT_CAPTION_STYLES,
-        frame,
-        systemFont: SYSTEM_FONTS[process.platform] ?? DEFAULT_SYSTEM_FONT
-      }),
-      'utf8'
-    )
-  }
+  // **The captions are drawn by the editor's own component, offscreen**, and
+  // burned as pictures. There is no second renderer to disagree with the
+  // preview (see main/caption-render.md).
+  const styles = project.captionStyles ?? DEFAULT_CAPTION_STYLES
+  const rendered = await renderCaptions({
+    captions: lines.map((line) => ({
+      text: line.text,
+      style: resolveCaptionStyle(styles, line),
+      startMs: line.start,
+      endMs: line.end
+    })),
+    frame,
+    workDir
+  })
+  const captionTrackFile = writeCaptionTrack({
+    captions: rendered,
+    frame,
+    workDir,
+    totalDurationMs: probes.reduce((total, probe) => total + probe.durationMs, 0)
+  })
 
   // Written beside the target so the rename cannot cross a device, and so a
   // failed or cancelled export leaves nothing that looks like a finished film.
@@ -158,7 +149,7 @@ export async function exportVideo(
   const plan = planExport({
     clips,
     frame,
-    subtitleFile,
+    captionTrackFile,
     videoArgs: encoder === null ? [] : videoArgsFor(encoder, settings, frame),
     audioArgs: ['-c:a', 'aac', '-b:a', `${settings.audioBitrateKbps}k`],
     fps: settings.fps,
@@ -190,6 +181,10 @@ export async function exportVideo(
     throw error
   } finally {
     current = null
-    if (subtitleFile) fs.rm(path.join(workDir, subtitleFile), { force: true }, () => {})
+    // The pictures and their list, not just one file — and a failed export
+    // leaves as little behind as a finished one.
+    for (const file of [captionTrackFile, 'caption-blank.png', ...rendered.map((r) => r.file)]) {
+      if (file) fs.rm(path.join(workDir, file), { force: true }, () => {})
+    }
   }
 }

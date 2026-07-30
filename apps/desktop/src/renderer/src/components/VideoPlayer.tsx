@@ -1,10 +1,6 @@
 import {
   CAPTION_STYLE_LIMITS,
-  captionFontSizePct,
   captionLengthFor,
-  captionShadowOffset,
-  captionWrapShare,
-  DEFAULT_LINE_RATIO,
   formatTimecode,
   SNAP_TOLERANCE_PX,
   snapToNearest
@@ -13,6 +9,7 @@ import type { CaptionStyle } from '@logcut/core'
 import { Maximize, Minimize, Pause, Play } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { JSX, PointerEvent as ReactPointerEvent, RefObject } from 'react'
+import CaptionSurface, { captionWrapPx } from '@/components/CaptionSurface'
 import { Button } from '@/components/ui/button'
 
 interface VideoPlayerProps {
@@ -107,12 +104,6 @@ function angleAt(centre: { x: number; y: number }, x: number, y: number): number
   return (Math.atan2(y - centre.y, x - centre.x) * 180) / Math.PI + 90
 }
 
-/** `#rrggbb` and a percentage, as the eight-digit hex CSS takes. */
-function withAlpha(hex: string, opacityPct: number): string {
-  const alpha = Math.round(clamp01(opacityPct / 100) * 255)
-  return `${hex}${alpha.toString(16).padStart(2, '0')}`
-}
-
 export default function VideoPlayer({
   videoRef,
   src,
@@ -155,13 +146,9 @@ export default function VideoPlayer({
   /** What to draw: the document, with an unfinished gesture laid over it. */
   const style = pending === null ? captionStyle : { ...captionStyle, ...pending }
 
-  /** The caption's size in this pane's pixels. Every other length below is
-   *  derived from it or scaled the same way, so it is computed once. */
-  const fontSizePx = (frame.height * captionFontSizePct(style)) / 100
-
-  /** Where the text wraps, in this pane's pixels — the same limit the burn-in
-   *  takes from the event's margins. */
-  const wrapPx = frame.width * captionWrapShare(style.widthPct)
+  /** Where the text wraps, in this pane's pixels. Only the width handles need
+   *  it here; the caption itself is laid out by CaptionSurface. */
+  const wrapPx = captionWrapPx(style, frame.width)
 
   /** Read off the pending patch rather than held in state of its own: `x` only
    *  ever lands there during a move, so its presence *is* "a move is under way"
@@ -171,47 +158,6 @@ export default function VideoPlayer({
     vertical: moving && style.x === CENTRE,
     horizontal: moving && style.y === CENTRE
   }
-
-  const shadowOffset = captionShadowOffset(style, frame.height)
-
-  /** **The caption's only style source — not one design token belongs in here**
-   *  (see VideoPlayer.md). Every length is measured against the reference
-   *  frame, so the preview scales exactly the way the burn-in will. */
-  const captionCss = {
-    fontFamily: captionFontStack,
-    fontSize: fontSizePx,
-    fontWeight: style.bold ? 700 : 400,
-    fontStyle: style.italic ? 'italic' : 'normal',
-    textDecoration: style.underline ? 'underline' : 'none',
-    color: withAlpha(style.color, style.fillOpacityPct),
-    letterSpacing: captionLengthFor(style.letterSpacing, frame.height),
-    lineHeight: `${fontSizePx * DEFAULT_LINE_RATIO + captionLengthFor(style.lineSpacing, frame.height)}px`,
-    textAlign: style.align,
-    // **Doubled, and painted under the fill.** A CSS text stroke straddles the
-    // glyph's edge while ASS's `\bord` grows outward only, so twice the width
-    // with the fill on top leaves exactly the half that was asked for.
-    WebkitTextStrokeWidth: style.outline
-      ? captionLengthFor(style.outlineWidth, frame.height) * 2
-      : 0,
-    WebkitTextStrokeColor: withAlpha(style.outlineColor, style.outlineOpacityPct),
-    paintOrder: 'stroke fill',
-    // **No rotation passed in**: this shadow lives inside the block, whose own
-    // transform has already turned it. The burn has to add it, `\pos` being in
-    // screen space — same function, two callers (see core/caption-style.md).
-    textShadow: style.shadow
-      ? `${shadowOffset.dx}px ${shadowOffset.dy}px ${captionLengthFor(style.shadowBlur, frame.height)}px ${withAlpha(style.shadowColor, style.shadowOpacityPct)}`
-      : 'none',
-    backgroundColor: style.background
-      ? withAlpha(style.backgroundColor, style.backgroundOpacityPct)
-      : 'transparent',
-    // **Padding goes with the plate rather than outliving it**: under ASS the
-    // padding *is* the plate's border widths, so a block that kept its inset
-    // would sit somewhere else on screen than the one that burns.
-    padding: style.background
-      ? `${captionLengthFor(style.backgroundPadY, frame.height)}px ${captionLengthFor(style.backgroundPadX, frame.height)}px`
-      : 0,
-    borderRadius: captionLengthFor(style.backgroundRadius, frame.height)
-  } as const
 
   /** Every gesture is measured against the block's **centre**, taken once at
    *  the start — which is what lets scale and rotate ignore the rotation
@@ -469,62 +415,45 @@ export default function VideoPlayer({
                 <span className="pointer-events-none absolute inset-x-0 top-1/2 h-px bg-primary" />
               )}
 
-              {/* Positioned by its centre, then rotated about it — storing a
-                  corner instead would let scaling and rotation move the caption
-                  (see VideoPlayer.md). */}
-              <div
-                data-caption-block
-                // Flex and not `text-align`, so the box takes its height from
-                // the plate exactly — an inline-block adds the line box's
-                // descender and the selection frame then sits low.
-                className="absolute flex justify-center"
-                style={{
-                  left: `${style.x * 100}%`,
-                  top: `${style.y * 100}%`,
-                  transform: `translate(-50%, -50%) rotate(${style.rotation}deg)`,
-                  // **`max-content`, never `auto`.** An absolutely positioned
-                  // box shrink-to-fits against "containing block − `left`" —
-                  // half the picture at the default position — and the centring
-                  // translate runs after layout, so it hands none of that back.
-                  // `maxWidth` alone can then never be reached (VideoPlayer.md).
-                  width: style.widthPct === 0 ? 'max-content' : wrapPx,
-                  maxWidth: wrapPx
+              {/* **The same component the export screenshots** — the burn is
+                  not a second implementation of this (see CaptionSurface.md).
+                  Everything the player adds on top goes in through these props:
+                  the gestures, the edit state, and the handles below. */}
+              <CaptionSurface
+                text={captionText}
+                style={style}
+                fontStack={captionFontStack}
+                frame={frame}
+                blockProps={{
+                  onPointerMove: onDragMove,
+                  onPointerUp: endDrag,
+                  onPointerCancel: endDrag
                 }}
-                onPointerMove={onDragMove}
-                onPointerUp={endDrag}
-                onPointerCancel={endDrag}
-              >
-                {/* **Showing and editing are one element**, not two — a
-                    `<textarea>` cannot be made to break lines where this does
-                    (see VideoPlayer.md). */}
-                <div
-                  // Rebuilt whenever the mode flips, and that is what puts the
-                  // original text back on Escape: the browser owns this node's
-                  // text during an edit, and React will not rewrite children it
-                  // believes it already wrote.
-                  key={editing ? 'editing' : 'showing'}
-                  ref={captionRef}
-                  contentEditable={editing ? 'plaintext-only' : false}
-                  suppressContentEditableWarning
+                // Rebuilt whenever the mode flips, and that is what puts the
+                // original text back on Escape: the browser owns this node's
+                // text during an edit, and React will not rewrite children it
+                // believes it already wrote.
+                textKey={editing ? 'editing' : 'showing'}
+                textRef={captionRef}
+                textProps={{
+                  contentEditable: editing ? 'plaintext-only' : false,
+                  suppressContentEditableWarning: true,
                   // **An outline, never a border**, for the edit state: a border
                   // takes a pixel out of the text's width on every side and
                   // moves the wrap the instant the box is double-clicked.
-                  className={`pointer-events-auto max-w-full text-balance whitespace-pre-wrap ${
+                  className: `pointer-events-auto ${
                     editing
                       ? 'outline-1 -outline-offset-1 outline-primary'
                       : selected
                         ? 'cursor-move'
                         : 'cursor-pointer'
-                  }`}
-                  style={captionCss}
-                  title={
-                    editing
-                      ? undefined
-                      : selected
-                        ? 'Drag to move · double-click to edit'
-                        : 'Click to select'
-                  }
-                  onPointerDown={(event) => {
+                  }`,
+                  title: editing
+                    ? undefined
+                    : selected
+                      ? 'Drag to move · double-click to edit'
+                      : 'Click to select',
+                  onPointerDown: (event) => {
                     event.stopPropagation()
                     // While typing, a press is the caret being placed.
                     if (editing) return
@@ -532,10 +461,10 @@ export default function VideoPlayer({
                     // Only a drag that starts on the block itself moves it; the
                     // handles are siblings and start their own gestures.
                     if (selected) beginDrag(event, 'move')
-                  }}
-                  onDoubleClick={beginEditing}
-                  onBlur={commitEditing}
-                  onKeyDown={(event) => {
+                  },
+                  onDoubleClick: beginEditing,
+                  onBlur: commitEditing,
+                  onKeyDown: (event) => {
                     // An IME takes Enter to accept a candidate. Reading that as
                     // the commit ends the edit in the middle of a word.
                     if (event.nativeEvent.isComposing) return
@@ -544,11 +473,9 @@ export default function VideoPlayer({
                       commitEditing()
                     }
                     if (event.key === 'Escape') setEditing(false)
-                  }}
-                >
-                  {captionText}
-                </div>
-
+                  }
+                }}
+              >
                 {/* Handles only while selected and not typing — during an edit
                     they would fight the caret for the same pointer. */}
                 {selected && !editing && (
@@ -613,7 +540,7 @@ export default function VideoPlayer({
                     />
                   </>
                 )}
-              </div>
+              </CaptionSurface>
             </div>
           </div>
         )}

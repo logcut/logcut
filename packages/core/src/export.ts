@@ -1,5 +1,14 @@
-import type { AssLine } from './ass.ts'
+import type { CaptionStyle } from './caption-style.ts'
 import type { Transcript } from './types.ts'
+
+/** One caption on the timeline's clock, before its style has been resolved. */
+export interface CaptionLine {
+  start: number
+  end: number
+  text: string
+  speakerId?: string
+  style?: Partial<CaptionStyle>
+}
 
 /** Where a clip sits on the timeline, and what it is made of. */
 export interface ExportClip {
@@ -22,10 +31,13 @@ export interface ExportInput {
   clips: ExportClip[]
   /** The picture every clip is fitted into, in pixels. */
   frame: { width: number; height: number }
-  /** **A bare filename, never a path** — resolved against the `cwd` ffmpeg is
+  /** The captions to lay over the picture: a concat list naming one PNG per
+   *  caption, with the gaps between them filled by a transparent one.
+   *
+   * **A bare filename, never a path** — resolved against the `cwd` ffmpeg is
    *  spawned in. A filtergraph reads it through three levels of quoting where
    *  `:` and `\` are both syntax, so `C:\Users\…` is unspellable (export.md). */
-  subtitleFile: string | null
+  captionTrackFile: string | null
   /** Codec arguments in full. **The core knows no encoder's name** — which ones
    *  exist is a fact about the machine doing the export. */
   videoArgs: string[]
@@ -56,8 +68,8 @@ function audioFormat(audio: ExportInput['audio']): string {
 export function captionLinesFor(
   clips: CaptionClip[],
   transcripts: Readonly<Record<string, Transcript>>
-): AssLine[] {
-  const lines: AssLine[] = []
+): CaptionLine[] {
+  const lines: CaptionLine[] = []
   for (const clip of clips) {
     for (const utterance of transcripts[clip.assetId]?.utterances ?? []) {
       lines.push({
@@ -135,7 +147,7 @@ function audioChain(index: number, clip: ExportClip, audio: ExportInput['audio']
  * way no encoder setting can match. Everything else is rendered.
  */
 export function planExport(input: ExportInput): ExportPlan {
-  const { clips, frame, subtitleFile, fps, audio, videoOnly, outputPath } = input
+  const { clips, frame, captionTrackFile, fps, audio, videoOnly, outputPath } = input
   const totalDurationMs = clips.reduce((total, clip) => total + clip.durationMs, 0)
 
   // `-progress pipe:1` is the machine-readable feed the app follows. stderr
@@ -154,7 +166,7 @@ export function planExport(input: ExportInput): ExportPlan {
   // back a file that quietly disagrees with what the dialog said.
   const lone = clips.length === 1 ? clips[0] : null
   if (
-    subtitleFile === null &&
+    captionTrackFile === null &&
     lone !== null &&
     fps === 0 &&
     lone.width === frame.width &&
@@ -186,8 +198,18 @@ export function planExport(input: ExportInput): ExportPlan {
     videoOut = '[vcat]'
     audioOut = '[acat]'
   }
-  if (subtitleFile !== null) {
-    chains.push(`${videoOut}ass=${subtitleFile}[vout]`)
+  if (captionTrackFile !== null) {
+    // The captions arrive as their own input — the last one, so the clips keep
+    // the indices their chains were built with.
+    const index = clips.length
+    // `setsar=1` because a PNG carries no aspect and `overlay` refuses to mix
+    // two different ones; `format=auto` lets overlay pick a blending format
+    // that keeps the alpha it was given.
+    chains.push(`[${index}:v]format=rgba,setsar=1[caps]`)
+    // **`eof_action=repeat`, and the track ends on a transparent frame**: the
+    // caption list is built to outlast the picture, but a track that ended on a
+    // caption would otherwise hold that caption to the end of the film.
+    chains.push(`${videoOut}[caps]overlay=0:0:format=auto:eof_action=repeat[vout]`)
     videoOut = '[vout]'
   }
 
@@ -195,6 +217,9 @@ export function planExport(input: ExportInput): ExportPlan {
     args: [
       ...head,
       ...clips.flatMap((clip) => ['-i', clip.path]),
+      // `-safe 0` because the list names files rather than paths, and concat
+      // rejects even a bare filename without it.
+      ...(captionTrackFile === null ? [] : ['-f', 'concat', '-safe', '0', '-i', captionTrackFile]),
       '-filter_complex',
       chains.join(';'),
       '-map',

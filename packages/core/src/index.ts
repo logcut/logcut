@@ -53,10 +53,8 @@ export { SNAP_TOLERANCE_PX, snapToNearest, utteranceEdges } from './snap.ts'
 
 export { formatSrtTimestamp, toSrt } from './srt.ts'
 
-export { formatAssTimestamp, toAss } from './ass.ts'
-export type { AssInput, AssLine } from './ass.ts'
-
 export { captionLinesFor, planExport } from './export.ts'
+export type { CaptionLine } from './export.ts'
 export type { CaptionClip, ExportClip, ExportInput, ExportPlan } from './export.ts'
 
 export {
